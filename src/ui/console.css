@@ -1,0 +1,32 @@
+/* Throwaway engine console (M1.4): plain and dense; small art thumbnails for cards, generals and Catapults. The real UI is M4. */
+.cons { display:grid; grid-template-columns: minmax(420px, 1.3fr) minmax(360px, 1fr); gap:16px; align-items:start; }
+.cons h2 { margin:10px 0 4px; }
+.prompt { background:#fffbe9; border:2px solid var(--crimson); border-radius:6px; padding:8px 10px; font-weight:bold; }
+.prompt.over { background:#e6f4e0; border-color:#2a6a2a; }
+.err { color:#b00; min-height:1.3em; font-size:13px; }
+.acts { display:flex; flex-wrap:wrap; gap:5px; }
+.acts button, .bar button { font:12.5px Georgia, serif; border:1px solid var(--ink); background:var(--paper2); border-radius:4px; padding:3px 7px; cursor:pointer; }
+.acts button:hover, .bar button:hover { background:#fff; }
+.grp { margin:4px 0; } .grp > summary { cursor:pointer; font-size:12.5px; color:var(--crimson); }
+.row { display:inline-flex; gap:3px; align-items:center; } .row input { width:3.2em; }
+.bar { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:6px 0; font-size:13px; }
+.bar input[type=text] { width:9em; }
+table.pl { border-collapse:collapse; font-size:12.5px; width:100%; } .pl td, .pl th { border-bottom:1px solid var(--line); padding:2px 5px; text-align:left; }
+tr.active td { background:#fff3c4; } .under { color:#b00; font-weight:bold; }
+.log { height:520px; overflow:auto; background:#fff; border:1px solid var(--line); font:12px/1.35 Consolas, monospace; padding:4px 6px; }
+.log .r { color:#999; } .log .turn { font-weight:bold; color:var(--crimson); }
+details.json pre { max-height:340px; overflow:auto; background:#fff; border:1px solid var(--line); font-size:11px; }
+.setupform label { margin-right:10px; font-size:13px; }
+/* card / token / item thumbnails (style 3 art, approved 2026-10-21) */
+.pl img.thumb { width:30px; height:60px; object-fit:cover; border:1px solid var(--line); border-radius:3px; margin:1px; vertical-align:middle; }
+.pl img.token { width:24px; height:24px; border-radius:50%; vertical-align:middle; margin-right:4px; }
+tr.out td { color:#999; text-decoration:line-through; }
+.battle { background:#fdf1ee; border:1px solid var(--crimson); border-radius:6px; padding:6px 10px; margin:6px 0; font-size:13px; }
+.battle h3 { margin:0 0 4px; font-size:14px; color:var(--crimson); } .battle .hint { color:#555; font-style:italic; margin-top:3px; }
+
+/* M4 setup screen and AI seats */
+.setupform table.seats { border-collapse:collapse; margin:8px 0; }
+.setupform table.seats td, .setupform table.seats th { padding:3px 8px; text-align:left; font-size:13px; }
+.setupform .err { color:#a93226; min-height:1em; margin:6px 0; }
+.seatsline { font-size:13px; margin:4px 0 8px; color:#5d4a2f; }
+.prompt[data-ai] { border-left:4px solid #2471a3; }

@@ -1,0 +1,371 @@
+{
+ "_comment": "Game Cards (rules 18). 11 types, 31 cards (18.a, Vidi 2026-10-21). `type` is \"battle\" or \"other\": only battle cards get the Battle Card label and the builder step (PLAN 5.2, 10.8). Used cards go to the Game Card discard pile (18.l).",
+ "deck": "game",
+ "cards": [
+  {
+   "id": "elephants",
+   "deck": "game",
+   "copies": 5,
+   "name": "Elephants!",
+   "kind": "battle",
+   "type": "battle",
+   "rule": [
+    "18.a",
+    "18.b",
+    "18.h",
+    "18.i"
+   ],
+   "play": {
+    "windows": [
+     "battleCards"
+    ],
+    "delayTurns": 0,
+    "usesTurnCardSlot": false,
+    "excludeBattleModes": [
+     "decree"
+    ]
+   },
+   "text": "+1 to all of your dice in every round of one battle.",
+   "art": {
+    "front": "cards/game/elephants.png"
+   },
+   "effect": {
+    "handler": "battleModifier",
+    "params": {
+     "stat": "dieBonus",
+     "delta": 1,
+     "rounds": "all"
+    }
+   }
+  },
+  {
+   "id": "moral_boost",
+   "deck": "game",
+   "copies": 5,
+   "name": "Moral boost!",
+   "kind": "battle",
+   "type": "battle",
+   "rule": [
+    "18.a",
+    "18.c",
+    "18.i"
+   ],
+   "play": {
+    "windows": [
+     "battleCards"
+    ],
+    "delayTurns": 0,
+    "usesTurnCardSlot": false,
+    "excludeBattleModes": [
+     "decree"
+    ]
+   },
+   "text": "+1 to every one of your dice in the round you play it. A second copy may be played in a later round.",
+   "art": {
+    "front": "cards/game/moral_boost.png"
+   },
+   "effect": {
+    "handler": "battleModifier",
+    "params": {
+     "stat": "dieBonus",
+     "delta": 1,
+     "rounds": "thisRound",
+     "maxPerRound": 1
+    }
+   }
+  },
+  {
+   "id": "revolt",
+   "deck": "game",
+   "copies": 3,
+   "name": "Revolt!",
+   "kind": "action",
+   "type": "other",
+   "rule": [
+    "18.d",
+    "18.m"
+   ],
+   "play": {
+    "windows": [
+     "ownActionsStep"
+    ],
+    "delayTurns": 1,
+    "usesTurnCardSlot": true
+   },
+   "text": "Inspire a revolt in a province of another player (never Roma, never a province with 10 or more troops): half its minimum garrison + 1 troops die and the owner loses 1 Prestige. The owner may block it with Kill Revolt leader.",
+   "art": {
+    "front": "cards/game/revolt.png"
+   },
+   "effect": {
+    "handler": "inspireRevolt",
+    "params": {
+     "targets": "otherPlayerProvince",
+     "excludeHeldRoma": true,
+     "blockedBy": "kill_revolt_leader",
+     "killsHalfMinPlusOne": true,
+     "ownerLosesPrestige": 1,
+     "survivorsMoveToNearest": true,
+     "mayReachZero": true,
+     "excludeTroopsAtLeast": 10
+    }
+   }
+  },
+  {
+   "id": "assassin",
+   "deck": "game",
+   "copies": 3,
+   "name": "Assassin!",
+   "kind": "action",
+   "type": "other",
+   "rule": [
+    "18.e",
+    "18.i"
+   ],
+   "play": {
+    "windows": [
+     "ownActionsStep"
+    ],
+    "delayTurns": 1,
+    "usesTurnCardSlot": true
+   },
+   "text": "Kill up to 2 troops in enemy provinces (a held Roma too), on one province or split over two. A target needs 2+ troops and never drops below 1; each province only once per occupation. Unplayable (kept) with no legal target.",
+   "art": {
+    "front": "cards/game/assassin.png"
+   },
+   "effect": {
+    "handler": "killTroops",
+    "params": {
+     "upTo": 2,
+     "targets": "enemyProvinces",
+     "minTroopsInProvince": 2,
+     "neverBelow": 1,
+     "split": true,
+     "needsLegalTarget": true,
+     "oncePerOccupation": true,
+     "heldRomaTargetable": true
+    }
+   }
+  },
+  {
+   "id": "kill_revolt_leader",
+   "deck": "game",
+   "copies": 3,
+   "name": "Kill Revolt leader!",
+   "kind": "reaction",
+   "type": "other",
+   "rule": [
+    "18.f",
+    "18.h",
+    "18.m"
+   ],
+   "play": {
+    "windows": [
+     "revoltResponse"
+    ],
+    "delayTurns": 0,
+    "usesTurnCardSlot": false,
+    "instant": true
+   },
+   "text": "Instant: block a revolt aimed at you (Revolt Roll or Revolt card), even on the turn you draw it. Does not use the 1-card-per-turn slot.",
+   "art": {
+    "front": "cards/game/kill_revolt_leader.png"
+   },
+   "effect": {
+    "handler": "blockRevolt",
+    "params": {}
+   }
+  },
+  {
+   "id": "prestige",
+   "deck": "game",
+   "copies": 2,
+   "name": "Prestige!",
+   "kind": "auto",
+   "type": "other",
+   "rule": [
+    "18.g",
+    "18.k"
+   ],
+   "onDraw": "autoPlay",
+   "text": "+1 Prestige. Played as soon as it is drawn, then discarded.",
+   "art": {
+    "front": "cards/game/prestige.png"
+   },
+   "effect": {
+    "handler": "gainPrestige",
+    "params": {
+     "amount": 1
+    }
+   }
+  },
+  {
+   "id": "garrison_requirement",
+   "deck": "game",
+   "copies": 2,
+   "name": "Garrison Requirement -1!",
+   "kind": "auto",
+   "type": "other",
+   "rule": [
+    "18.t",
+    "18.a"
+   ],
+   "onDraw": "autoPlayInPlay",
+   "unique": {
+    "scope": "player",
+    "onDuplicate": "reshuffleAndRedraw"
+   },
+   "modifiers": [
+    {
+     "stat": "minGarrison",
+     "delta": -1,
+     "appliesTo": "ownProvinces"
+    }
+   ],
+   "text": "All your garrison minimums are 1 lower, never below the native count. Stays with you.",
+   "art": {
+    "front": "cards/game/garrison_requirement.png"
+   }
+  },
+  {
+   "id": "bribe_the_ally",
+   "deck": "game",
+   "copies": 2,
+   "name": "Bribe the Ally!",
+   "kind": "action",
+   "type": "other",
+   "rule": [
+    "18.v",
+    "17.j",
+    "19.s"
+   ],
+   "play": {
+    "windows": [
+     "ownActionsStep"
+    ],
+    "delayTurns": 1,
+    "usesTurnCardSlot": true
+   },
+   "text": "Pay Gold equal to the native troop count of a province allied against you to flip it to your side. Carthage can never be allied.",
+   "art": {
+    "front": "cards/game/bribe_the_ally.png"
+   },
+   "effect": {
+    "handler": "bribeAlly",
+    "params": {
+     "cost": "nativeCount",
+     "neverCarthage": true,
+     "otherPlayerTroopsFlee": true,
+     "fleeLoss": 1
+    }
+   }
+  },
+  {
+   "id": "battlefield_imperator",
+   "deck": "game",
+   "copies": 2,
+   "name": "Battlefield Imperator!",
+   "kind": "enabler",
+   "type": "other",
+   "rule": [
+    "18.w",
+    "12.h",
+    "12.g"
+   ],
+   "play": {
+    "windows": [
+     "attackRoma"
+    ],
+    "delayTurns": 1,
+    "usesTurnCardSlot": true
+   },
+   "text": "Needed to attack Roma. Hold at most 1 (a 2nd draw is shuffled back and redrawn). Must be held until the turn after it was drawn. Spent when used.",
+   "art": {
+    "front": "cards/game/battlefield_imperator.png"
+   },
+   "effect": {
+    "handler": "enableRomaAttack",
+    "params": {}
+   },
+   "unique": {
+    "scope": "player",
+    "onDuplicate": "reshuffleAndRedraw"
+   }
+  },
+  {
+   "id": "busy_little_bee",
+   "deck": "game",
+   "copies": 2,
+   "name": "Busy Little Bee!",
+   "kind": "reaction",
+   "type": "other",
+   "rule": [
+    "18.x",
+    "18.h",
+    "18.a"
+   ],
+   "play": {
+    "windows": [
+     "displeasedResponse"
+    ],
+    "delayTurns": 1,
+    "usesTurnCardSlot": true,
+    "costGold": 1,
+    "goldTo": "romaPile"
+   },
+   "text": "Redirect a Rome Is Displeased card aimed at you onto another player of your choice (they need not qualify). Costs 1 Gold to Roma's pile. Uses the 1-card-per-turn slot.",
+   "art": {
+    "front": "cards/game/busy_little_bee.png"
+   },
+   "effect": {
+    "handler": "redirectDispleased",
+    "params": {
+     "cost": 1,
+     "targetNeedNotQualify": true
+    }
+   }
+  },
+  {
+   "id": "horn_of_titus_pullus",
+   "deck": "game",
+   "copies": 2,
+   "name": "Horn of Titus Pullus!",
+   "kind": "reaction",
+   "type": "other",
+   "rule": [
+    "18.y",
+    "18.h",
+    "18.a",
+    "18.l"
+   ],
+   "play": {
+    "windows": [
+     "defenceAnnounced"
+    ],
+    "delayTurns": 0,
+    "usesTurnCardSlot": false
+   },
+   "unique": {
+    "scope": "player",
+    "onDuplicate": "reshuffleAndRedraw"
+   },
+   "text": "When your province is attacked, before the first roll: call reinforcements from ONE bordering province of yours (an allied one too, but from an ally only your own troops there, never its natives; no Road needed), any number of troops (no cap) leaving at least 1 behind (a held Roma keeps its 10, and Roma never goes above 20); your general may come. They fight as defenders and stay if the defence holds. Only one Horn per battle.",
+   "art": {
+    "front": "cards/game/horn_of_titus_pullus.png"
+   },
+   "effect": {
+    "handler": "callReinforcements",
+    "params": {
+     "fromOneBorderingOwnProvince": true,
+     "alliedSourcesAllowed": true,
+     "alliedSourceOwnTroopsOnly": true,
+     "noRoadNeeded": true,
+     "maxTroops": null,
+     "leaveAtLeast": 1,
+     "oncePerBattle": true,
+     "generalMayCome": true,
+     "stayAfterDefence": true
+    }
+   }
+  }
+ ]
+}

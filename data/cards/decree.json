@@ -1,0 +1,32 @@
+{
+ "_comment": "Senate Decree deck (rules 16.n): one card today; `numbers` and `activeWhen` make more a data change.",
+ "deck": "decree",
+ "cards": [
+  {
+   "id": "carthage_must_be_destroyed",
+   "deck": "decree",
+   "copies": 1,
+   "name": "Senate Decree! Carthage must be destroyed!",
+   "kind": "decree",
+   "type": "other",
+   "rule": [
+    "16.n"
+   ],
+   "numbers": [
+    2,
+    9
+   ],
+   "activeWhen": {
+    "carthageDefeated": false
+   },
+   "text": "Each player sends 1 legion to fight Carthage.",
+   "art": {
+    "front": "cards/decree/senate_decree.png"
+   },
+   "effect": {
+    "handler": "carthageDecree",
+    "params": {}
+   }
+  }
+ ]
+}

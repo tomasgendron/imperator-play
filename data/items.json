@@ -1,0 +1,30 @@
+{
+ "_comment": "Items bought with Gold (rules 19.j, 19.p, 19.u; Vidi 2026-10-21). A player owns a permanent count per item (state players[].items).",
+ "items": [
+  {
+   "id": "catapult",
+   "name": "Catapult",
+   "rule": [
+    "19.u",
+    "19.j",
+    "19.p",
+    "19.k"
+   ],
+   "cost": {
+    "gold": 5
+   },
+   "isAction": true,
+   "permanent": true,
+   "text": "5 Gold, permanent. In every battle you attack, each Catapult cancels the defender's Wall bonus for the first 2 rolls (they stack, also with Germanicus' Disciplined Advance and against Roma's and Carthage's Walls). Never in a Senate Decree battle.",
+   "art": {
+    "front": "cards/items/catapult.png"
+   },
+   "effect": {
+    "wallRollsIgnored": 2,
+    "stacks": true,
+    "attackOnly": true,
+    "notInDecree": true
+   }
+  }
+ ]
+}

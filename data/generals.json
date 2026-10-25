@@ -1,0 +1,409 @@
+{
+ "_comment": "Perk texts are the CURRENT rules wording, not the stale text printed on the art (Q51). Art ids map through data/assets.json.",
+ "_detailComment": "quote, intro, perks[].name/when/detail and common are the setup and in-game general view (M8.1). Each line is worded after rules.md (never edited from the build) and carries its rule labels; data.js checks every label exists.",
+ "common": [
+  {
+   "text": "A general's bonus only applies in a battle if that general is with the army taking part in it (for an attack, with the attacking army). A general left behind in another province gives no bonus.",
+   "rule": [
+    "15.f"
+   ]
+  },
+  {
+   "text": "No general perks apply in a Senate Decree battle.",
+   "rule": [
+    "16.n"
+   ]
+  },
+  {
+   "text": "Once per turn, during the Actions step (after the Revolt Roll), you may move your general to another of your own provinces, along the same routes as a troop Move: neutral Carthage is passable, and he pays no Gold for crossing an ally. This is free: it is not an action, and no troops need to go with him. A Move action carrying only the general is not allowed, but a troop Move can still take him along.",
+   "rule": [
+    "15.j",
+    "17.z",
+    "19.t"
+   ]
+  },
+  {
+   "text": "Setup offers all four generals; a random draw uses all four. Two players cannot have the same general.",
+   "rule": [
+    "15.i"
+   ]
+  }
+ ],
+ "generals": [
+  {
+   "id": "caesar",
+   "name": "Caesar",
+   "title": "Enemy Flees into the Hills",
+   "rule": [
+    "15.b",
+    "15.f"
+   ],
+   "art": {
+    "card": "generals/caesar.png",
+    "token": "tokens/general_caesar.png"
+   },
+   "text": "One enemy legion flees into the hills at the start of every battle Caesar takes part in with the army (not against a lone troop). If Caesar's army wins, that troop joins him (+1 troop); if it loses or retreats the troop returns home.",
+   "perks": [
+    {
+     "id": "enemy_flees",
+     "handler": "caesarFlee",
+     "needsWithArmy": true,
+     "hooks": [
+      "battleStart",
+      "battleEnd"
+     ],
+     "params": {
+      "enemyLoses": 1,
+      "joinOnWin": true,
+      "returnOnLoss": true,
+      "applies": [
+       "attack",
+       "defence"
+      ],
+      "minEnemyTroops": 2
+     },
+     "name": "Enemy flees into the hills",
+     "when": "Every battle Caesar takes part in with the army, attacking or defending",
+     "detail": [
+      {
+       "text": "At the start of the battle the enemy force is reduced by 1 troop (legion). The troop that flees is removed from the battle: it does not fight and cannot be killed in it.",
+       "rule": [
+        "15.b"
+       ]
+      },
+      {
+       "text": "Victory bonus: when Caesar's army wins a battle, attacking or defending, Caesar gains +1 troop (the troop that ran to the hills joins him). The new troop joins the victorious troops, wherever they end up.",
+       "rule": [
+        "15.b"
+       ]
+      },
+      {
+       "text": "If Caesar's army loses or retreats, the fled troop returns home to the enemy and is not lost. If the attacker retreats from a battle against Caesar, it counts as Caesar's win, so the fled troop joins Caesar (+1).",
+       "rule": [
+        "15.b",
+        "17.k"
+       ]
+      },
+      {
+       "text": "When Caesar defends against an army that includes borrowed troops, the troop that flees is a borrowed troop if there is one. A fled borrowed troop is not dead, so it does not lower the native count and does not trigger the extra Revolt Roll: it returns home to its province's natives if Caesar loses, and joins Caesar if he wins.",
+       "rule": [
+        "15.b",
+        "19.c",
+        "19.d",
+        "17.u"
+       ]
+      },
+      {
+       "text": "Caesar cannot reduce a force to 0: if the enemy force has only 1 troop (a lone defender, or a lone attacker when Caesar defends), no troop flees, the battle is fought with dice as normal, and there is no fled-troop victory bonus.",
+       "rule": [
+        "15.b"
+       ]
+      },
+      {
+       "text": "If Caesar is not with the army in that battle, there is no effect.",
+       "rule": [
+        "15.b",
+        "15.f"
+       ]
+      }
+     ]
+    }
+   ],
+   "quote": "One enemy legion will flee into the hills.",
+   "intro": [
+    {
+     "text": "Classic starting province: Iberia.",
+     "rule": [
+      "15.i"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "scipio",
+   "name": "Scipio",
+   "title": "Roll an Extra Die in Battle",
+   "rule": [
+    "15.c",
+    "15.f"
+   ],
+   "art": {
+    "card": "generals/scipio.png",
+    "token": "tokens/general_scipio.png"
+   },
+   "text": "Attacking only, with the army: roll an extra die (4 v 2 on land, 3 v 2 by sea). It applies by itself, no choice. No perks when defending.",
+   "perks": [
+    {
+     "id": "extra_die",
+     "handler": "scipioExtraDie",
+     "needsWithArmy": true,
+     "hooks": [
+      "diceCount"
+     ],
+     "attackOnly": true,
+     "params": {
+      "extraDice": 1
+     },
+     "name": "Roll an extra die in battle",
+     "when": "Attacking only, with the army; applies by itself",
+     "detail": [
+      {
+       "text": "Usable on land or sea: 4 dice versus 2 on land, 3 dice versus 2 by sea.",
+       "rule": [
+        "15.c",
+        "17.n",
+        "17.x"
+       ]
+      }
+     ]
+    }
+   ],
+   "quote": "One more die in every attack.",
+   "intro": [
+    {
+     "text": "Scipio's only perk is the extra die: there is no choice to make (the old 'add to a single die' perk was removed by Vidi, 2026-10-24).",
+     "rule": [
+      "15.c"
+     ]
+    },
+    {
+     "text": "The extra die applies ONLY when Scipio is attacking, and only if he is with the army. When Scipio is defending he gets no perks at all and has to defend the hard way: only battle Game Cards (Elephants, Moral boost) help him.",
+     "rule": [
+      "15.c",
+      "15.f",
+      "18.b",
+      "18.c"
+     ]
+    },
+    {
+     "text": "Classic starting province: Dalmacia.",
+     "rule": [
+      "15.i"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "pompey",
+   "name": "Pompey",
+   "title": "Master of the Sea",
+   "rule": [
+    "15.d",
+    "15.f"
+   ],
+   "art": {
+    "card": "generals/pompey.png",
+    "token": "tokens/general_pompey.png"
+   },
+   "text": "Sea attacks need no Road and roll an extra die (3 v 2), with the army. All your garrison minimums are 1 lower, always (a starting province stays at 1).",
+   "perks": [
+    {
+     "id": "sea_master",
+     "handler": "seaMaster",
+     "needsWithArmy": true,
+     "hooks": [
+      "diceCount",
+      "roadRequirement"
+     ],
+     "params": {
+      "ignoreRoadAtSea": true,
+      "extraDieAtSea": 1
+     },
+     "name": "(a) Master of the Sea",
+     "when": "Sea attacks, only when Pompey is with the attacking army",
+     "detail": [
+      {
+       "text": "Pompey's sea attacks do NOT need a Road on the province attacked from (this overrides 19.b for him).",
+       "rule": [
+        "15.d",
+        "19.b"
+       ]
+      },
+      {
+       "text": "He also gets the extra die in sea battles: when attacking by sea he rolls 3 dice versus 2 (the same as Scipio's perk 2 at sea).",
+       "rule": [
+        "15.d",
+        "15.c",
+        "17.n",
+        "17.x"
+       ]
+      },
+      {
+       "text": "Otherwise the normal sea attack rules apply.",
+       "rule": [
+        "15.d",
+        "17.n"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "garrison",
+     "needsWithArmy": false,
+     "modifiers": [
+      {
+       "stat": "minGarrison",
+       "delta": -1,
+       "appliesTo": "ownProvinces",
+       "breaksNativeFloor": true
+      }
+     ],
+     "name": "(b) Commands extreme loyalty",
+     "when": "All the time, in all of his provinces; he does not need to be present",
+     "detail": [
+      {
+       "text": "All of his provinces, including allied ones, have their garrison minimum lowered by 1. This stacks with the Garrison Requirement -1! card.",
+       "rule": [
+        "15.d",
+        "18.t"
+       ]
+      },
+      {
+       "text": "Exception: a starting province's minimum garrison is a flat 1, and Pompey's -1 never takes it below 1.",
+       "rule": [
+        "15.d",
+        "17.t"
+       ]
+      },
+      {
+       "text": "An allied province has no perk minimum, so for Pompey the native troops + 1 needed for its Game Roll reward drops to just its native troops, or 1 less with the Garrison Requirement -1! card, but never below 1 troop.",
+       "rule": [
+        "15.d",
+        "19.g",
+        "19.r"
+       ]
+      },
+      {
+       "text": "Exception to the native-count floor of 18.t: Pompey's garrison minimums CAN drop below the province's native troop count (also when stacked with the Garrison Requirement -1! card).",
+       "rule": [
+        "15.d",
+        "18.t"
+       ]
+      },
+      {
+       "text": "Everything based on a province's minimum garrison uses Pompey's LOWERED minimum, including which province perks are kept or lost and the revolt formula.",
+       "rule": [
+        "15.d",
+        "17.q",
+        "17.c",
+        "18.m"
+       ]
+      }
+     ]
+    }
+   ],
+   "quote": "Master of the Sea, commands extreme loyalty.",
+   "intro": [
+    {
+     "text": "Classic starting province: Greece.",
+     "rule": [
+      "15.i"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "germanicus",
+   "name": "Germanicus",
+   "title": "Fight to the Death",
+   "rule": [
+    "15.h",
+    "15.f",
+    "15.i"
+   ],
+   "art": {
+    "card": "generals/germanicus.png",
+    "token": "tokens/general_germanicus.png"
+   },
+   "text": "Fight to the Death: once his side has lost troops in this battle and is down to exactly 1 troop (one final die), +2 to that die, attacking or defending (no cap); an army that started with 1 troop never triggers it. Disciplined Advance (attacking only): the defender's Wall bonus is ignored for the first 2 rolls of each battle; stacks with Catapults.",
+   "perks": [
+    {
+     "id": "fight_to_the_death",
+     "handler": "fightToTheDeath",
+     "needsWithArmy": true,
+     "hooks": [
+      "dieAdjust"
+     ],
+     "params": {
+      "delta": 2,
+      "whenOwnTroops": 1,
+      "cap": null,
+      "applies": [
+       "attack",
+       "defence"
+      ]
+     },
+     "name": "Perk 1: Fight to the Death",
+     "when": "Any battle, attacking or defending, with the army",
+     "detail": [
+      {
+       "text": "When Germanicus' side has lost troops in this battle and is down to exactly 1 troop (rolling a single final die), add +2 to that die. There is no die cap.",
+       "rule": [
+        "15.h"
+       ]
+      },
+      {
+       "text": "An army that started the battle with only 1 troop never triggers it: the troops must have been lost in the rolls of this battle.",
+       "rule": [
+        "15.h"
+       ]
+      },
+      {
+       "text": "If his last 2 troops are both killed in the same roll, the perk never fires.",
+       "rule": [
+        "15.h"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "disciplined_advance",
+     "handler": "disciplinedAdvance",
+     "needsWithArmy": true,
+     "hooks": [
+      "wallBonus"
+     ],
+     "attackOnly": true,
+     "params": {
+      "wallRollsIgnored": 2,
+      "stacksWithCatapults": true
+     },
+     "name": "Perk 2: Disciplined Advance",
+     "when": "Attacking only, with the army",
+     "detail": [
+      {
+       "text": "The defender's Wall bonus is ignored for the first 2 rolls (rounds) of each battle.",
+       "rule": [
+        "15.h",
+        "19.k"
+       ]
+      },
+      {
+       "text": "This stacks with Catapults: each source adds 2 rolls, so Disciplined Advance plus one Catapult ignore the Wall bonus for the first 4 rolls.",
+       "rule": [
+        "15.h",
+        "19.u"
+       ]
+      }
+     ]
+    }
+   ],
+   "quote": "Fight to the Death and Disciplined Advance.",
+   "intro": [
+    {
+     "text": "Both perks always apply (he does not choose one, unlike Scipio), but only if Germanicus is with the army.",
+     "rule": [
+      "15.h",
+      "15.f"
+     ]
+    },
+    {
+     "text": "Classic starting province: Germanica.",
+     "rule": [
+      "15.i"
+     ]
+    }
+   ]
+  }
+ ]
+}

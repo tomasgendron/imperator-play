@@ -1,0 +1,152 @@
+{
+ "_comment": "Resource Cards (rules 20.d, 20.h, Vidi 2026-10-21): 6 types, 21 cards (6 Bonus 2 Gold + 5 x 3); gold_1 is gone. Used cards go to the Resource discard pile (18.l).",
+ "deck": "resource",
+ "cards": [
+  {
+   "id": "gold_2",
+   "deck": "resource",
+   "copies": 6,
+   "name": "Bonus 2 Gold",
+   "kind": "auto",
+   "type": "other",
+   "rule": [
+    "20.d",
+    "20.g",
+    "20.h"
+   ],
+   "onDraw": "applyNow",
+   "text": "Gain 2 Gold now.",
+   "art": {
+    "front": "cards/resource/gold_2.png"
+   },
+   "effect": {
+    "handler": "gainResources",
+    "params": {
+     "gold": 2
+    }
+   }
+  },
+  {
+   "id": "troops_2",
+   "deck": "resource",
+   "copies": 3,
+   "name": "Bonus 2 Troops",
+   "kind": "auto",
+   "type": "other",
+   "rule": [
+    "20.d",
+    "20.g",
+    "20.j"
+   ],
+   "onDraw": "applyNow",
+   "text": "Place 2 troops in any provinces you control.",
+   "art": {
+    "front": "cards/resource/troops_2.png"
+   },
+   "effect": {
+    "handler": "gainResources",
+    "params": {
+     "troops": 2,
+     "placement": "anywhere"
+    }
+   }
+  },
+  {
+   "id": "troop_1_gold_1",
+   "deck": "resource",
+   "copies": 3,
+   "name": "Bonus 1 Troop and 1 Gold",
+   "kind": "auto",
+   "type": "other",
+   "rule": [
+    "20.d",
+    "20.g",
+    "20.j"
+   ],
+   "onDraw": "applyNow",
+   "text": "Gain 1 Gold and place 1 troop anywhere you control.",
+   "art": {
+    "front": "cards/resource/troop_1_gold_1.png"
+   },
+   "effect": {
+    "handler": "gainResources",
+    "params": {
+     "gold": 1,
+     "troops": 1,
+     "placement": "anywhere"
+    }
+   }
+  },
+  {
+   "id": "troop_1",
+   "deck": "resource",
+   "copies": 3,
+   "name": "Bonus 1 Troop",
+   "kind": "auto",
+   "type": "other",
+   "rule": [
+    "20.d",
+    "20.g",
+    "20.j"
+   ],
+   "onDraw": "applyNow",
+   "text": "Place 1 troop in any province you control.",
+   "art": {
+    "front": "cards/resource/troop_1.png"
+   },
+   "effect": {
+    "handler": "gainResources",
+    "params": {
+     "troops": 1,
+     "placement": "anywhere"
+    }
+   }
+  },
+  {
+   "id": "road",
+   "deck": "resource",
+   "copies": 3,
+   "name": "Bonus Road",
+   "kind": "buildOrSave",
+   "type": "other",
+   "rule": [
+    "20.d",
+    "20.f"
+   ],
+   "onDraw": "buildOrSave",
+   "text": "Build a Road for free now, or save the card.",
+   "art": {
+    "front": "cards/resource/road.png"
+   },
+   "effect": {
+    "handler": "freeBuild",
+    "params": {
+     "piece": "road"
+    }
+   }
+  },
+  {
+   "id": "wall",
+   "deck": "resource",
+   "copies": 3,
+   "name": "Bonus Wall",
+   "kind": "buildOrSave",
+   "type": "other",
+   "rule": [
+    "20.d",
+    "20.f"
+   ],
+   "onDraw": "buildOrSave",
+   "text": "Build a Wall for free now, or save the card.",
+   "art": {
+    "front": "cards/resource/wall.png"
+   },
+   "effect": {
+    "handler": "freeBuild",
+    "params": {
+     "piece": "wall"
+    }
+   }
+  }
+ ]
+}

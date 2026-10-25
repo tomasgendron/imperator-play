@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Imperator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<!--importmap:start (tools/stamp-build.mjs: cache-busting, do not edit)--><script type="importmap">
+{
+ "imports": {
+  "./src/engine/actions.js": "./src/engine/actions.js?v=M10.1-20261025305p",
+  "./src/engine/ai.js": "./src/engine/ai.js?v=M10.1-20261025305p",
+  "./src/engine/aiConfig.js": "./src/engine/aiConfig.js?v=M10.1-20261025305p",
+  "./src/engine/apply.js": "./src/engine/apply.js?v=M10.1-20261025305p",
+  "./src/engine/battle.js": "./src/engine/battle.js?v=M10.1-20261025305p",
+  "./src/engine/cards.js": "./src/engine/cards.js?v=M10.1-20261025305p",
+  "./src/engine/core.js": "./src/engine/core.js?v=M10.1-20261025305p",
+  "./src/engine/data.js": "./src/engine/data.js?v=M10.1-20261025305p",
+  "./src/engine/dataNode.js": "./src/engine/dataNode.js?v=M10.1-20261025305p",
+  "./src/engine/displeased.js": "./src/engine/displeased.js?v=M10.1-20261025305p",
+  "./src/engine/index.js": "./src/engine/index.js?v=M10.1-20261025305p",
+  "./src/engine/legal.js": "./src/engine/legal.js?v=M10.1-20261025305p",
+  "./src/engine/odds.js": "./src/engine/odds.js?v=M10.1-20261025305p",
+  "./src/engine/registry.js": "./src/engine/registry.js?v=M10.1-20261025305p",
+  "./src/engine/rng.js": "./src/engine/rng.js?v=M10.1-20261025305p",
+  "./src/engine/selectors.js": "./src/engine/selectors.js?v=M10.1-20261025305p",
+  "./src/engine/setup.js": "./src/engine/setup.js?v=M10.1-20261025305p",
+  "./src/engine/state.js": "./src/engine/state.js?v=M10.1-20261025305p",
+  "./src/engine/turn.js": "./src/engine/turn.js?v=M10.1-20261025305p",
+  "./src/engine/view.js": "./src/engine/view.js?v=M10.1-20261025305p",
+  "./src/ui/assets.js": "./src/ui/assets.js?v=M10.1-20261025305p",
+  "./src/ui/buildLabel.js": "./src/ui/buildLabel.js?v=M10.1-20261025305p",
+  "./src/ui/console.js": "./src/ui/console.js?v=M10.1-20261025305p",
+  "./src/ui/consoleModel.js": "./src/ui/consoleModel.js?v=M10.1-20261025305p",
+  "./src/ui/game/app.js": "./src/ui/game/app.js?v=M10.1-20261025305p",
+  "./src/ui/game/model.js": "./src/ui/game/model.js?v=M10.1-20261025305p",
+  "./src/ui/game/sound.js": "./src/ui/game/sound.js?v=M10.1-20261025305p",
+  "./src/ui/loadData.js": "./src/ui/loadData.js?v=M10.1-20261025305p",
+  "./src/ui/main.js": "./src/ui/main.js?v=M10.1-20261025305p",
+  "./src/ui/viewModel.js": "./src/ui/viewModel.js?v=M10.1-20261025305p"
+ }
+}
+</script><!--importmap:end-->
+<link rel="stylesheet" href="src/ui/game/game.css?v=M10.1-20261025305p">
+</head>
+<body class="screen-setup">
+<!-- M5 game page: the approved mockup v12 look (mockup/mockup.template.html), wired to the engine by src/ui/game/app.js. -->
+<div class="app" id="app">
+
+  <header class="topbar">
+    <div class="brand">IMPERATOR<small>hot-seat · vs AI</small></div>
+    <span class="badge-ver" id="tbVer" title="Game page version and build time (Mountain Time). If this does not match what you were told, your browser shows an old cached copy: reload with Ctrl+F5.">v20</span>
+    <div class="tb-info" id="tbInfo"></div>
+    <div class="spacer"></div>
+    <label class="pill dark" title="How fast AI turns and battle animations play">AI speed
+      <select id="speed"><option value="1.6">slow</option><option value="1" selected>normal</option><option value="0.35">fast</option><option value="0.05">instant</option></select></label>
+    <button class="btn dark snd" id="bSound" aria-pressed="true" title="Sound effects on/off (remembered in this browser). Shortcut: M">
+      <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></svg>
+      <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z" fill="currentColor"/><path d="M17 9l5 6M22 9l-5 6"/></svg>
+      <span id="bSoundTxt">Sound on</span></button>
+    <div class="sep"></div>
+    <button class="btn dark" id="bSave" title="Save in this browser or export a JSON file">Save game</button>
+    <button class="btn dark" id="bLoad" title="Load a browser save, the autosave, or import a JSON file">Load game</button>
+    <button class="btn dark" id="bNew" title="Back to the setup screen">New game</button>
+    <div class="sep"></div>
+    <button class="btn dark" id="bHide" title="Hides your hand (hot-seat privacy)">Hide hand</button>
+  </header>
+
+  <!-- setup screen (M4 setup flow) -->
+  <section class="setup" id="setup">
+    <div class="setupcard">
+      <h1>IMPERATOR</h1>
+      <p class="small">2 or 3 players at one screen, any mix of Human and AI. Start Gold 5. Win with 8 Prestige.</p>
+      <div class="setcols">
+        <div class="setleft">
+          <div class="setrow pcount"><b id="pCountTxt">Players: 2</b><span class="seg" id="pCount" role="group" aria-label="Number of players"><button class="segb" data-n="2">2 players</button><button class="segb" data-n="3">3 players</button></span></div>
+          <table class="seats" id="seats"></table>
+          <div class="genrow" id="genRow"><div class="small genhead" id="genHead"></div><div class="gthumbs" id="genThumbs"></div><div class="small genhint" id="genHint">Hover a card for a summary; ⓘ for the full card and every perk.</div></div>
+          <div class="setrow"><button class="btn sm" id="addSeat">+ add a 3rd player</button><button class="btn sm" id="delSeat">− remove the 3rd player</button></div>
+          <div class="setrow"><label>Start provinces <select id="startMode"><option value="random" selected>Random (2+ provinces apart)</option><option value="selected">Selected (pick on the map)</option></select></label>
+            <label>Seed <input id="seed" size="12" title="Same seed + same choices = same game"></label></div>
+        </div>
+        <div class="startpick" id="startPick" hidden>
+          <div class="sp-head" id="spHead"></div>
+          <div class="sp-roll small" id="spRollRes" hidden></div>
+          <div class="sp-map"><img id="spImg" alt="Map: click a start province" draggable="false"><div id="spTokens"></div></div>
+          <div class="sp-why small" id="spWhy">Greyed provinces cannot be this seat's start (hover or click one to see why).</div>
+        </div>
+      </div>
+      <div class="errors" id="setupErrors"></div>
+      <div class="setrow"><button class="btn gold big" id="startGame">Start game ▶</button><button class="btn" id="resumeAuto" hidden>Resume autosave</button><button class="btn" id="setupLoad">Load / import…</button></div>
+    </div>
+  </section>
+
+  <section class="phasebar" id="phasebar">
+    <div class="row1">
+      <div class="who" id="phWho"></div>
+      <div id="phChips" style="display:flex;align-items:center;gap:6px"></div>
+      <div class="actions" id="phActions"></div>
+    </div>
+    <div class="prompt" id="phPrompt"></div>
+  </section>
+
+  <main class="main" id="main">
+    <aside class="left" id="players"></aside>
+
+    <section class="center">
+      <div class="mapbox">
+        <div class="mapwrap" id="mapwrap">
+          <img id="mapImg" alt="Map of the Roman world" draggable="false">
+          <svg id="links" viewBox="0 0 819 461" preserveAspectRatio="none"></svg>
+          <svg id="arrows" viewBox="0 0 819 461" preserveAspectRatio="none"></svg>
+          <div id="tokens"></div>
+          <div class="maptools">
+            <label class="pill"><input type="checkbox" id="chkLinks"> show links</label>
+            <label class="pill"><input type="checkbox" id="chkNames" checked> min garrison on map</label>
+          </div>
+          <div class="romainfo" id="romainfo"></div>
+          <div class="pill legend"><span>&#9679;</span> troops <span style="color:var(--native)">&#9632;</span> natives <b>R</b> road <b style="color:#a0522d">W</b> wall <b>C/S/P/G</b> general <span style="border:1px dashed #333;border-radius:50%;padding:0 4px">&#9679;</span> ally</div>
+          <div class="info" id="info"></div>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <div class="tabbar">
+          <button class="tab on" data-tab="table">Provinces</button>
+          <button class="tab" data-tab="battle">Battle <span class="dot" id="bDot" style="display:none"></span></button>
+          <button class="tab" data-tab="build" id="tabBuild" style="display:none">Builder</button>
+          <span class="sp"></span>
+          <span class="tlegend" id="tlegend"></span>
+          <button type="button" class="btn sm tabtoggle" id="tabsToggle" aria-pressed="false" title="Hide the Provinces / Battle section: the map gets the room">▾ Hide</button>
+        </div>
+        <div class="pane on" id="pane-table"><table class="ptab" id="ptab"></table></div>
+        <div class="pane" id="pane-build"></div>
+        <div class="pane" id="pane-battle">
+          <div class="battle">
+            <div class="b-head">
+              <span class="t" id="bTitle">No battle yet</span>
+              <span class="chips" id="bChips"></span>
+              <span class="spacer"></span>
+              <div class="b-ctl" id="bCtl"></div>
+            </div>
+            <div class="b-body">
+              <div class="b-side att">
+                <h4><span id="aName" style="font-weight:800">Attacker</span><span class="small">troops</span></h4>
+                <div class="b-count" id="aCount">-</div>
+                <div class="small" id="aNote">&nbsp;</div><div class="bgen" id="aGen"></div><div class="cbadges" id="aCards"></div><ul class="bperks" id="aPerks"></ul>
+                <div class="b-tokens" id="aTok"></div>
+              </div>
+              <div class="b-rounds">
+                <table class="rt" id="rt"><thead><tr><th>Rd</th><th>Attacker (d6)</th><th>Pairs</th><th>Defender (d6)</th><th>Lost A / D</th><th>Troops A / D</th></tr></thead><tbody></tbody></table>
+                <div class="b-sum" id="bSum"></div>
+              </div>
+              <div class="b-side def">
+                <h4><span id="dName" style="color:var(--native);font-weight:800">Defender</span><span class="small">troops</span></h4>
+                <div class="b-count" id="dCount">-</div>
+                <div class="small" id="dNote">&nbsp;</div><div class="bgen" id="dGen"></div><div class="cbadges" id="dCards"></div><ul class="bperks" id="dPerks"></ul>
+                <div class="b-tokens" id="dTok"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="right">
+      <div class="panel diceref">
+        <h3>Which die? <span class="sp"></span><span class="small" style="text-transform:none;letter-spacing:0">dice sit in the active player's panel</span></h3>
+        <div class="pbody">
+          <div class="row2"><img class="mini" data-img="dice.d10" alt="d10"><span><b>Game Roll</b> and <b>Revolt Roll</b>: one d10 each, rolled in the panel of the player whose turn it is.</span></div>
+          <div class="row2"><img class="mini" data-img="dice.d6" alt="d6"><span><b>Combat</b>: d6, one per troop rolling (attacker 3, defender 2; ties to the defender). Battles open in their own window; the Battle tab keeps the last one.</span></div>
+        </div>
+      </div>
+
+      <div class="panel deckpanel">
+        <h3>Decks <span class="sp"></span><span class="small" style="text-transform:none;letter-spacing:0">click a glowing deck to draw</span></h3>
+        <div class="pbody">
+          <div class="deck" id="deck-game" data-deck="game"><img data-img="deck.game" alt="Game deck"><span>Game · <b id="cnt-game">-</b></span></div>
+          <div class="deck" id="deck-resource" data-deck="resource"><img data-img="deck.resource" alt="Resource deck"><span>Resource · <b id="cnt-resource">-</b></span></div>
+          <div class="deck" id="deck-displeased" data-deck="displeased"><img data-img="deck.displeased" alt="Rome is Displeased deck"><span>Displeased · <b id="cnt-displeased">-</b></span></div>
+        </div>
+      </div>
+
+      <div class="panel handpanel" id="handpanel">
+        <h3><span id="handTitle">Hand</span><span class="sp"></span><button class="btn sm" id="bHide2">Hide hand</button></h3>
+        <div class="pbody" id="handBody"></div>
+        <div class="hidecover" id="hideCover"><div style="font-size:1.6em">&#128737;</div><b>Hand hidden</b><span class="small" style="color:#d6c9a3" id="hideWho">Only its owner may look</span><button class="btn sm gold" id="bReveal">Reveal hand</button></div>
+      </div>
+
+      <div class="panel logpanel">
+        <h3>Game log <span class="sp"></span><span class="small" style="text-transform:none;letter-spacing:0">newest first</span></h3>
+        <div class="pbody"><ul class="log" id="log"></ul></div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div class="ov" id="ovModal"><div class="modal" id="modalBox"></div></div>
+<div class="ov battlepop" id="ovBattle"><div class="bpwrap"><div class="bpbox" id="bpBox"></div><div class="bpres" id="bpRes"></div></div></div>
+<div class="ov ask" id="ovAsk"><div class="modal ask" id="askBox"></div></div>
+<div class="ov card3d" id="ovDraw"><div class="drawcard" id="drawCard"></div><div class="drawbtns" id="drawBtns"></div></div>
+<div class="ov over" id="ovOver"></div>
+<div class="toast" id="toast"></div>
+<input type="file" id="importFile" accept=".json,application/json" hidden>
+<div id="bootFail" hidden></div>
+<script>
+// Boot watchdog (M8 item 5): if the game module fails (a JS error, or a stale cached file after an update), say so instead of a dead page.
+(function () {
+  var errs = [];
+  window.addEventListener('error', function (e) { errs.push((e.message || 'load error') + (e.filename ? ' (' + e.filename.replace(location.origin + '/', '') + (e.lineno ? ':' + e.lineno : '') + ')' : e.target && e.target.src ? ' (' + e.target.src + ')' : '')); }, true);
+  window.addEventListener('unhandledrejection', function (e) { errs.push(String(e.reason && e.reason.message || e.reason)); });
+  setTimeout(function () {
+    if (document.body.dataset.ready) return;
+    var d = document.getElementById('bootFail'); d.hidden = false;
+    d.innerHTML = '<b>The game did not start.</b> Your browser may be using old files from before the last update: press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> (or <kbd>Ctrl</kbd>+<kbd>F5</kbd>) to reload them.' + (errs.length ? '<br><small>' + errs.slice(0, 3).map(function (x) { return String(x).replace(/</g, '&lt;'); }).join('<br>') + '</small>' : '');
+  }, 6000);
+})();
+</script>
+<noscript>Imperator needs JavaScript.</noscript>
+<script type="module" src="src/ui/game/app.js?v=M10.1-20261025305p"></script>
+<script type="module" src="src/ui/buildLabel.js?v=M10.1-20261025305p"></script>
+</body>
+</html>

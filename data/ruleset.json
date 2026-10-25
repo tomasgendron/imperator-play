@@ -1,0 +1,537 @@
+{
+ "_comment": "Every rule number lives here with its rule label (PLAN 5.3). Playtest changes are edits to this file. 'Q..' = Vidi ruling or suggested default in PLAN.md section 11.",
+ "id": "playtest2",
+ "name": "Playtest 2 rules + Vidi's 2026-10-21 update (rules.md Oct 21 2026)",
+ "values": {
+  "winPrestige": {
+   "value": 8,
+   "rule": "12.e"
+  },
+  "prestige": {
+   "value": {
+    "conquest": 1,
+    "carthage": 2,
+    "roma": 3,
+    "loss": 1
+   },
+   "rule": "12.f, 12.g, 16.n"
+  },
+  "actionsPerTurn": {
+   "value": 2,
+   "rule": "17.e"
+  },
+  "startingTroops": {
+   "value": 5,
+   "rule": "20.n"
+  },
+  "startingGold": {
+   "value": 5,
+   "rule": "20.n (Vidi 2026-10-21; was the Q1 default)"
+  },
+  "turnOrderMethod": {
+   "value": "rollOff",
+   "rule": "Q2 default"
+  },
+  "costs": {
+   "value": {
+    "troop": 2,
+    "gameCardGold": 2,
+    "gameCardTroops": 1,
+    "road": 2,
+    "wall": 3,
+    "catapult": 5
+   },
+   "rule": "17.p, 17.s, 19.j, 19.u"
+  },
+  "maxGameCardBuysPerTurn": {
+   "value": 1,
+   "rule": "17.s"
+  },
+  "dice": {
+   "value": {
+    "gameRoll": 10,
+    "revoltRoll": 10,
+    "rollOff": 10,
+    "native": 6,
+    "loyalty": 6,
+    "battle": 6
+   },
+   "rule": "16.c, 17.c, 17.h, 12.j"
+  },
+  "provinceNumbers": {
+   "value": {
+    "values": [
+     3,
+     4,
+     5,
+     6,
+     7,
+     8
+    ],
+    "timesEach": 2
+   },
+   "rule": "16.b, 16.h"
+  },
+  "gameRollNumbers": {
+   "value": [
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "rule": "16.h"
+  },
+  "romeRollNumbers": {
+   "value": [
+    1,
+    10
+   ],
+   "rule": "16.d"
+  },
+  "decreeNumbers": {
+   "value": [
+    2,
+    9
+   ],
+   "rule": "16.n"
+  },
+  "romeRollTaxGold": {
+   "value": 1,
+   "rule": "16.j"
+  },
+  "displeasedThreshold": {
+   "value": {
+    "prestige": 4,
+    "troops": 20
+   },
+   "rule": "16.m"
+  },
+  "nativeRollTable": {
+   "value": [
+    {
+     "d6": [
+      1,
+      2
+     ],
+     "count": 3
+    },
+    {
+     "d6": [
+      3,
+      4
+     ],
+     "count": 4
+    },
+    {
+     "d6": [
+      5,
+      6
+     ],
+     "count": 5
+    }
+   ],
+   "rule": "17.h, 20.l"
+  },
+  "nativeHealRounds": {
+   "value": 1,
+   "rule": "17.v"
+  },
+  "battle": {
+   "value": {
+    "attackerDiceLand": 3,
+    "attackerDiceSea": 2,
+    "defenderDice": 2,
+    "defenderDiceWithWall": 3,
+    "tiesGoTo": "defender",
+    "scipioExtraDieLand": 4,
+    "scipioExtraDieSea": 3,
+    "pompeyDiceSea": 3
+   },
+   "rule": "17.n, 17.x, 19.k, 15.c, 15.d, Q16"
+  },
+  "borrowFraction": {
+   "value": {
+    "num": 1,
+    "den": 2,
+    "rounding": "down",
+    "minimum": 0
+   },
+   "rule": "19.c, Q53"
+  },
+  "borrowFromAllies": {
+   "value": false,
+   "rule": "19.r"
+  },
+  "borrowedDieFirst": {
+   "value": true,
+   "rule": "19.d, Vidi 2026-10-17, Q23"
+  },
+  "carthageAllowAlly": {
+   "value": false,
+   "rule": "17.j, Q30"
+  },
+  "carthageNative": {
+   "value": [
+    10,
+    3
+   ],
+   "rule": "16.n"
+  },
+  "carthageFlatMin": {
+   "value": 4,
+   "rule": "16.n"
+  },
+  "carthageStartEligible": {
+   "value": false,
+   "rule": "4.b, 20.l, 16.n"
+  },
+  "romaStartTroops": {
+   "value": 10,
+   "rule": "12.g, 12.l"
+  },
+  "romaDice": {
+   "value": 3,
+   "rule": "12.i"
+  },
+  "romaLoyaltyMaxDefect": {
+   "value": 4,
+   "rule": "12.j"
+  },
+  "romaGoldPerTroop": {
+   "value": 2,
+   "rule": "12.k"
+  },
+  "romaFloorOnHold": {
+   "value": 10,
+   "rule": "12.l, 17.z"
+  },
+  "romaAttackNeedsCard": {
+   "value": "battlefield_imperator",
+   "rule": "12.g, 18.w"
+  },
+  "minGarrisonBonus": {
+   "value": 1,
+   "rule": "17.f (native count + 1)"
+  },
+  "minGarrisonFloor": {
+   "value": 1,
+   "rule": "Vidi 2026-10-17, Q57"
+  },
+  "provinceFloor": {
+   "value": 1,
+   "rule": "Vidi 2026-10-17, Q64 (global floor of 1, allied provinces included)"
+  },
+  "startingProvinceMinGarrison": {
+   "value": 1,
+   "rule": "Vidi 2026-10-17, Q57, 17.t"
+  },
+  "startingFlagRestoredOnRecapture": {
+   "value": false,
+   "rule": "Vidi 2026-10-17, Q65"
+  },
+  "startingProvinceReplacement": {
+   "value": false,
+   "rule": "Vidi 2026-10-17, Q65"
+  },
+  "allyRespectsOriginMin": {
+   "value": false,
+   "rule": "Q58 default"
+  },
+  "revoltMayReachZero": {
+   "value": true,
+   "rule": "Vidi 2026-10-17, explicit exception to the global floor (Q69)"
+  },
+  "alliedRewardNeedsNativePlusOne": {
+   "value": true,
+   "rule": "19.r, 19.g, Vidi 2026-10-17"
+  },
+  "startProvinceMinDistance": {
+   "value": 3,
+   "rule": "20.o, 4.b (Vidi 2026-10-21: at least 2 provinces between starts = shortest path >= 3); Q55"
+  },
+  "startProvinceExcluded": {
+   "value": [
+    "roma",
+    "carthage"
+   ],
+   "rule": "Vidi 2026-10-17, Q3"
+  },
+  "startDistanceExceptions": {
+   "value": [
+    {
+     "a": "mauretania",
+     "b": "egypt",
+     "via": "carthage",
+     "appliesWhen": "fallback"
+    }
+   ],
+   "rule": "Vidi 2026-10-17, Q55"
+  },
+  "startProvinceMode": {
+   "value": "random",
+   "rule": "Q3 default"
+  },
+  "rewardMode": {
+   "value": "fixed16k",
+   "rule": "Q5 default (16.k split, setup checkbox to re-randomise)"
+  },
+  "extraRevoltMinConqueredProvinces": {
+   "value": 2,
+   "rule": "17.c, 19.d, 19.h"
+  },
+  "handLimit": {
+   "value": null,
+   "rule": "18.i (no hand size limit)"
+  },
+  "deckSizes": {
+   "value": {
+    "game": 31,
+    "resource": 21,
+    "displeased": 10,
+    "decree": 1
+   },
+   "rule": "18.a, 20.h, 18.s, 16.n"
+  },
+  "cardsPerBattleWin": {
+   "value": 1,
+   "rule": "18.j"
+  },
+  "holdCardTurns": {
+   "value": 1,
+   "rule": "18.h, 18.w, Q9"
+  },
+  "nonBattleCardsPerTurn": {
+   "value": 1,
+   "rule": "18.h"
+  },
+  "allyCrossingGold": {
+   "value": 1,
+   "rule": "19.t"
+  },
+  "maxPlayers": {
+   "value": 3,
+   "rule": "Q4/Q55/Q74: 4 generals exist (15.i) but no 4-province start set satisfies 20.o, so 4 players wait for Vidi (Q74)"
+  },
+  "unusedActionGold": {
+   "value": 1,
+   "rule": "17.o (Vidi 2026-10-21: +1 Gold per unused action, replaces the +2 pass bonus)"
+  },
+  "startProvinceGold": {
+   "value": 1,
+   "rule": "17.d, 20.k, 17.t (Vidi 2026-10-21: +1 Gold per turn while the start province is held and never defeated in battle)"
+  },
+  "earlyGameRerolls": {
+   "value": {
+    "gameRollsPerPlayer": 2,
+    "reroll": [
+     1,
+     2,
+     9,
+     10
+    ]
+   },
+   "rule": "16.d, 17.b (Vidi 2026-10-21: early-game protection)"
+  },
+  "romaMaxTroops": {
+   "value": 20,
+   "rule": "12.k, 12.g, 12.l (Vidi 2026-10-21: Roma never above 20; extra troops are lost)"
+  },
+  "revoltImmuneAtTroops": {
+   "value": 10,
+   "rule": "17.c, 18.m, 19.d (Vidi 2026-10-21: 10+ troops never revolts, still counts toward the threshold)"
+  },
+  "catapult": {
+   "value": {
+    "cost": 5,
+    "wallRollsIgnoredEach": 2,
+    "permanent": true,
+    "attackOnly": true,
+    "notInDecree": true,
+    "isAction": true
+   },
+   "rule": "19.u, 19.p, 19.k, 15.h"
+  },
+  "decree": {
+   "value": {
+    "combinedBattle": true,
+    "rolledBy": "currentPlayer",
+    "prestigePerSender": 1,
+    "neutralCarthageTroops": 5,
+    "healOnlyBelow": 5,
+    "healMax": 5,
+    "healPerDecree": 1,
+    "carthageMaxTroops": 10,
+    "survivorsTo": "roma",
+    "noCards": true,
+    "noPerks": true,
+    "noCatapults": true,
+    "canWithdraw": false
+   },
+   "rule": "16.n, 12.f, 17.y (Vidi 2026-10-21; battle logic is M2)"
+  },
+  "carthageBackTroops": {
+   "value": 5,
+   "rule": "16.n, 12.g (Carthage comes back with 5 when Roma falls and the game goes on)"
+  },
+  "neutralCarthagePassable": {
+   "value": {
+    "move": true,
+    "attackThrough": true,
+    "stop": false,
+    "attack": false,
+    "ally": false,
+    "borrow": false
+   },
+   "rule": "16.i, 16.n, 17.z"
+  },
+  "eliminateWithoutProvinces": {
+   "value": true,
+   "rule": "12.m (Vidi 2026-10-21)"
+  },
+  "assassin": {
+   "value": {
+    "oncePerOccupation": true,
+    "heldRomaTargetable": true,
+    "minTargetTroops": 2
+   },
+   "rule": "18.e, 18.i (M3)"
+  },
+  "attackOriginKeeps": {
+   "value": 1,
+   "rule": "17.g, 17.i, 20.k (Vidi 2026-10-21: the origin keeps only the floor of 1; held Roma keeps 10, 12.l)"
+  },
+  "gameCardTroopSource": {
+   "value": "anyProvinceKeepsFloor",
+   "rule": "17.s (Vidi 2026-10-21: any province that keeps 1; held Roma keeps 10)"
+  },
+  "uniqueHeldCards": {
+   "value": [
+    "garrison_requirement",
+    "battlefield_imperator",
+    "horn_of_titus_pullus"
+   ],
+   "rule": "18.t, 18.w, 18.y, 18.l (max 1 held each; a 2nd draw is shuffled back and redrawn; Horn added 2026-10-22)"
+  },
+  "generalMove": {
+   "value": {
+    "free": true,
+    "oncePerTurn": true,
+    "chainOnly": true
+   },
+   "rule": "15.j, 17.e, 17.z (Vidi 2026-10-22: free, not an action, after the Revolt Roll; oncePerTurn and chainOnly are Boardicca's defaults; chainOnly=false allows any own province)"
+  },
+  "sellCard": {
+   "value": {
+    "gold": 2,
+    "decks": [
+     "game",
+     "resource"
+    ],
+    "fromSaved": true
+   },
+   "rule": "20.p, 17.o (Vidi 2026-10-22: on your own turn, 2 Gold from the bank, not an action; fromSaved = saved Resource cards count as cards in hand, Q103 default)"
+  },
+  "assassinTargets": {
+   "value": {
+    "neutral": true,
+    "neutralNeedsKnownNatives": true,
+    "natives17v": true
+   },
+   "rule": "18.e, 18.i, 12.g, 12.l, 16.n (Vidi 2026-10-22: provinces you don't control, never Roma, never neutral Carthage; unknown natives are not targets and struck natives heal as in 17.v, Q102 defaults)"
+  },
+  "classicStarts": {
+   "value": {
+    "caesar": "iberia",
+    "scipio": "dalmacia",
+    "pompey": "greece",
+    "germanicus": "germanica"
+   },
+   "rule": "15.i (Vidi 2026-10-21)"
+  },
+  "discardPiles": {
+   "value": {
+    "reshuffleWhenEmpty": true
+   },
+   "rule": "18.l (Vidi 2026-10-21: used cards go to their deck's discard pile; it is shuffled into a new draw pile when the draw pile is empty)"
+  },
+  "caesarFleeMinEnemy": {
+   "value": 2,
+   "rule": "15.b (Vidi 2026-10-21: the flee does nothing against a lone troop)"
+  },
+  "borrowJudgedAt": {
+   "value": "declaration",
+   "rule": "19.c, 17.q, Q73 (Vidi 2026-10-21: borrowing judged at declaration; alternative 'afterLeaving')"
+  },
+  "lastStandingWins": {
+   "value": true,
+   "rule": "12.m, Q76 (Vidi 2026-10-21)"
+  },
+  "startIncomeLostOn": {
+   "value": "capture",
+   "rule": "20.k, Q79 (Vidi 2026-10-21: a held defence keeps it)"
+  },
+  "attackThroughNeutralWalls": {
+   "value": "realOrigin",
+   "rule": "16.n, 19.k, Q80 (Vidi 2026-10-21: Walls count against the real origin's side; alternative 'entrySide')"
+  },
+  "germanicusBothPerks": {
+   "value": true,
+   "rule": "15.h, Q81 (Vidi 2026-10-21)"
+  },
+  "hornOnlyUnderGarrisoned": {
+   "value": false,
+   "rule": "18.y, Q85 default (the 'protects an under-garrisoned province' headline is read as flavour)"
+  },
+  "defendingGeneralOnCapture": {
+   "value": "nearestOwned",
+   "rule": "17.c by analogy, Q86 default (a general in a captured province escapes to the owner's nearest other province)"
+  },
+  "survivorsMayReturn": {
+   "value": true,
+   "rule": "17.y, Q59 default (own survivors may be split back to the origin; 1 stays, Roma 0)"
+  },
+  "battleWinCard": {
+   "value": {
+    "attacker": true,
+    "defender": true,
+    "decree": false,
+    "retreat": false
+   },
+   "rule": "18.j, Q28 default"
+  },
+  "bothZeroOutcome": {
+   "value": "defenderKeepsOne",
+   "rule": "17.f, Q20 default"
+  },
+  "scipioPerkScope": {
+   "value": "perBattle",
+   "rule": "15.c, Q18 default (chosen once, +1 or the extra die in every round)"
+  },
+  "laterRoundCardWindows": {
+   "value": false,
+   "rule": "18.i, Q17 default (no new battle cards after round 1; committed Moral boosts queue)"
+  },
+  "caesarFledFromAttacker": {
+   "value": "borrowedFirst",
+   "rule": "15.b, Q88 (Vidi 2026-10-21): when Caesar defends, a borrowed attacker troop flees first, an own one only if no borrowed is left; 'ownFirst' = the old default"
+  },
+  "bribeOwnerPrestigeLoss": {
+   "value": 0,
+   "rule": "18.v, Q89 (open, default): Prestige the old owner loses when Bribe the Ally! takes the province; 1 = treat it as a lost territory (12.f)"
+  },
+  "beeGoldTo": {
+   "value": "taxRoute",
+   "rule": "18.x, Q90 (open, default): 'taxRoute' = the holder of Roma while someone else holds it, else Roma's Gold pile; 'romaPile' = always Roma's Gold pile"
+  },
+  "recallRedirectedThrough": {
+   "value": "nextOwnTurn",
+   "rule": "18.o, Q91 (open, default): a recalled victim has no general perks through 'nextOwnTurn' (their next own turn) or 'currentTurn' (only the turn it was drawn)"
+  },
+  "removedAllowsAllied": {
+   "value": true,
+   "rule": "18.q, Q92 (open, default): Emperor removes you from a Province! may restore an allied province too (false = conquered only)"
+  }
+ }
+}

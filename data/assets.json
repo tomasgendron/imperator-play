@@ -1,0 +1,354 @@
+{
+ "_comment": "Asset id -> path under assets/ (PLAN 14). A missing file shows a generated placeholder with the name (the UI tries `path`, then `fallback`, then the placeholder). Audio: names under audio/, both formats (14.4); a missing file is silently skipped. Style 3 art approved by Vidi 2026-10-21. An entry may carry `pending: \"reason\"` to hold back delivered art until it is approved (the UI then shows the fallback/placeholder).",
+ "root": "assets/",
+ "audioRoot": "audio/",
+ "assets": {
+  "map": {
+   "path": "map/Map3_approved.jpg",
+   "kind": "image"
+  },
+  "ui.title": {
+   "path": "ui/title.jpg",
+   "kind": "image"
+  },
+  "ui.diceBackdrop": {
+   "path": "ui/dice_backdrop.jpg",
+   "kind": "image"
+  },
+  "ui.combatHeader": {
+   "path": "ui/combat_header.jpg",
+   "kind": "image"
+  },
+  "ui.emperorBackdrop": {
+   "path": "ui/emperor_backdrop.jpg",
+   "kind": "image"
+  },
+  "ui.buttonRoll": {
+   "path": "ui/button_roll.png",
+   "kind": "image"
+  },
+  "deck.game": {
+   "path": "decks/game.png",
+   "kind": "image"
+  },
+  "deck.resource": {
+   "path": "decks/resource.png",
+   "kind": "image"
+  },
+  "deck.displeased": {
+   "path": "decks/displeased.png",
+   "kind": "image"
+  },
+  "deck.empty": {
+   "path": "decks/empty.png",
+   "kind": "image"
+  },
+  "dice.d10": {
+   "path": "dice/d10.png",
+   "kind": "image"
+  },
+  "dice.d6": {
+   "path": "dice/d6.png",
+   "kind": "image"
+  },
+  "back.game": {
+   "path": "cards/backs/game_back.png",
+   "kind": "card"
+  },
+  "back.resource": {
+   "path": "cards/backs/resource_back.png",
+   "kind": "card"
+  },
+  "back.displeased": {
+   "path": "cards/backs/displeased_back.png",
+   "kind": "card"
+  },
+  "back.blank": {
+   "path": "cards/backs/blank_back.png",
+   "kind": "card"
+  },
+  "general.caesar": {
+   "path": "generals/caesar.png",
+   "kind": "card"
+  },
+  "token.general.caesar": {
+   "path": "tokens/general_caesar.png",
+   "kind": "token"
+  },
+  "general.scipio": {
+   "path": "generals/scipio.png",
+   "kind": "card"
+  },
+  "token.general.scipio": {
+   "path": "tokens/general_scipio.png",
+   "kind": "token"
+  },
+  "general.pompey": {
+   "path": "generals/pompey.png",
+   "kind": "card"
+  },
+  "token.general.pompey": {
+   "path": "tokens/general_pompey.png",
+   "kind": "token"
+  },
+  "general.germanicus": {
+   "path": "generals/germanicus.png",
+   "kind": "card"
+  },
+  "token.general.germanicus": {
+   "path": "tokens/general_germanicus.png",
+   "kind": "token"
+  },
+  "card.elephants": {
+   "path": "cards/game/elephants.png",
+   "kind": "card"
+  },
+  "card.moral_boost": {
+   "path": "cards/game/moral_boost.png",
+   "kind": "card"
+  },
+  "card.revolt": {
+   "path": "cards/game/revolt.png",
+   "kind": "card"
+  },
+  "card.assassin": {
+   "path": "cards/game/assassin.png",
+   "kind": "card"
+  },
+  "card.kill_revolt_leader": {
+   "path": "cards/game/kill_revolt_leader.png",
+   "kind": "card"
+  },
+  "card.prestige": {
+   "path": "cards/game/prestige.png",
+   "kind": "card"
+  },
+  "card.garrison_requirement": {
+   "path": "cards/game/garrison_requirement.png",
+   "kind": "card"
+  },
+  "card.bribe_the_ally": {
+   "path": "cards/game/bribe_the_ally.png",
+   "kind": "card"
+  },
+  "card.battlefield_imperator": {
+   "path": "cards/game/battlefield_imperator.png",
+   "kind": "card"
+  },
+  "card.busy_little_bee": {
+   "path": "cards/game/busy_little_bee.png",
+   "kind": "card"
+  },
+  "card.horn_of_titus_pullus": {
+   "path": "cards/game/horn_of_titus_pullus.png",
+   "kind": "card"
+  },
+  "card.gold_2": {
+   "path": "cards/resource/gold_2.png",
+   "kind": "card"
+  },
+  "card.troops_2": {
+   "path": "cards/resource/troops_2.png",
+   "kind": "card"
+  },
+  "card.troop_1_gold_1": {
+   "path": "cards/resource/troop_1_gold_1.png",
+   "kind": "card"
+  },
+  "card.troop_1": {
+   "path": "cards/resource/troop_1.png",
+   "kind": "card"
+  },
+  "card.road": {
+   "path": "cards/resource/road.png",
+   "kind": "card"
+  },
+  "card.wall": {
+   "path": "cards/resource/wall.png",
+   "kind": "card"
+  },
+  "card.recalled_to_rome": {
+   "path": "cards/displeased/recalled_to_rome.png",
+   "kind": "card",
+   "fallback": "cards/displeased/front_generic.png"
+  },
+  "card.confiscates_gold": {
+   "path": "cards/displeased/confiscates_gold.png",
+   "kind": "card",
+   "fallback": "cards/displeased/front_generic.png"
+  },
+  "card.removed_from_province": {
+   "path": "cards/displeased/removed_from_province.png",
+   "kind": "card",
+   "fallback": "cards/displeased/front_generic.png"
+  },
+  "card.steals_troops": {
+   "path": "cards/displeased/steals_troops.png",
+   "kind": "card",
+   "fallback": "cards/displeased/front_generic.png"
+  },
+  "card.taxes_you": {
+   "path": "cards/displeased/taxes_you.png",
+   "kind": "card",
+   "fallback": "cards/displeased/front_generic.png"
+  },
+  "card.carthage_must_be_destroyed": {
+   "path": "cards/decree/senate_decree.png",
+   "kind": "card"
+  },
+  "item.catapult": {
+   "path": "cards/items/catapult.png",
+   "kind": "card"
+  }
+ },
+ "audio": {
+  "ally_made": [
+   "mp3",
+   "ogg"
+  ],
+  "attack_confirm": [
+   "mp3",
+   "ogg"
+  ],
+  "battle_attacker_win_round": [
+   "mp3",
+   "ogg"
+  ],
+  "battle_defender_win_round": [
+   "mp3",
+   "ogg"
+  ],
+  "battle_hit_1": [
+   "mp3",
+   "ogg"
+  ],
+  "battle_hit_2": [
+   "mp3",
+   "ogg"
+  ],
+  "battle_hit_3": [
+   "mp3",
+   "ogg"
+  ],
+  "battle_round_start": [
+   "mp3",
+   "ogg"
+  ],
+  "button_click": [
+   "mp3",
+   "ogg"
+  ],
+  "card_draw_1": [
+   "mp3",
+   "ogg"
+  ],
+  "card_draw_2": [
+   "mp3",
+   "ogg"
+  ],
+  "card_flip": [
+   "mp3",
+   "ogg"
+  ],
+  "card_play": [
+   "mp3",
+   "ogg"
+  ],
+  "conquest": [
+   "mp3",
+   "ogg"
+  ],
+  "deck_shuffle": [
+   "mp3",
+   "ogg"
+  ],
+  "defeat": [
+   "mp3",
+   "ogg"
+  ],
+  "dice_land": [
+   "mp3",
+   "ogg"
+  ],
+  "dice_roll_d10_1": [
+   "mp3",
+   "ogg"
+  ],
+  "dice_roll_d10_2": [
+   "mp3",
+   "ogg"
+  ],
+  "dice_roll_d10_3": [
+   "mp3",
+   "ogg"
+  ],
+  "dice_roll_d6_1": [
+   "mp3",
+   "ogg"
+  ],
+  "dice_roll_d6_2": [
+   "mp3",
+   "ogg"
+  ],
+  "dice_roll_d6_3": [
+   "mp3",
+   "ogg"
+  ],
+  "end_turn": [
+   "mp3",
+   "ogg"
+  ],
+  "error_denied": [
+   "mp3",
+   "ogg"
+  ],
+  "gold_gain": [
+   "mp3",
+   "ogg"
+  ],
+  "phase_advance": [
+   "mp3",
+   "ogg"
+  ],
+  "prestige_gain": [
+   "mp3",
+   "ogg"
+  ],
+  "province_select": [
+   "mp3",
+   "ogg"
+  ],
+  "revolt": [
+   "mp3",
+   "ogg"
+  ],
+  "rome_roll": [
+   "mp3",
+   "ogg"
+  ],
+  "senate_decree": [
+   "mp3",
+   "ogg"
+  ],
+  "toast_notice": [
+   "mp3",
+   "ogg"
+  ],
+  "troop_lost_1": [
+   "mp3",
+   "ogg"
+  ],
+  "troop_lost_2": [
+   "mp3",
+   "ogg"
+  ],
+  "troops_move": [
+   "mp3",
+   "ogg"
+  ],
+  "victory": [
+   "mp3",
+   "ogg"
+  ]
+ }
+}

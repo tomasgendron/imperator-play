@@ -1,0 +1,121 @@
+{
+ "_comment": "Rome Is Displeased (rules 18.n to 18.u): 5 types x 2 = 10. Used cards go to the Rome Is Displeased discard pile (18.l, 18.s).",
+ "deck": "displeased",
+ "cards": [
+  {
+   "id": "recalled_to_rome",
+   "deck": "displeased",
+   "copies": 2,
+   "name": "General is Recalled to Rome!",
+   "kind": "auto",
+   "type": "other",
+   "rule": [
+    "18.o"
+   ],
+   "text": "No general perks for the current turn and the next one.",
+   "art": {
+    "front": "cards/displeased/recalled_to_rome.png"
+   },
+   "effect": {
+    "handler": "recallGeneral",
+    "params": {
+     "turns": 2
+    }
+   }
+  },
+  {
+   "id": "confiscates_gold",
+   "deck": "displeased",
+   "copies": 2,
+   "name": "Emperor confiscates half your Gold!",
+   "kind": "auto",
+   "type": "other",
+   "rule": [
+    "18.p"
+   ],
+   "text": "Lose half your Gold (rounded down). With less than 3 Gold you also lose 1 Prestige.",
+   "art": {
+    "front": "cards/displeased/confiscates_gold.png"
+   },
+   "effect": {
+    "handler": "confiscateGold",
+    "params": {
+     "fraction": 0.5,
+     "round": "down",
+     "povertyBelow": 3,
+     "povertyPrestigeLoss": 1
+    }
+   }
+  },
+  {
+   "id": "removed_from_province",
+   "deck": "displeased",
+   "copies": 2,
+   "name": "Emperor removes you from a Province!",
+   "kind": "auto",
+   "type": "other",
+   "rule": [
+    "18.q"
+   ],
+   "text": "Choose a conquered province (never a held Roma) to restore to unconquered and move its troops elsewhere. No Prestige is lost.",
+   "art": {
+    "front": "cards/displeased/removed_from_province.png"
+   },
+   "effect": {
+    "handler": "removeFromProvince",
+    "params": {
+     "neverRoma": true,
+     "prestigeLoss": 0,
+     "carthageRegainsSpirit": true,
+     "mayReachZero": true
+    }
+   }
+  },
+  {
+   "id": "steals_troops",
+   "deck": "displeased",
+   "copies": 2,
+   "name": "Emperor steals your troops!",
+   "kind": "auto",
+   "type": "other",
+   "rule": [
+    "18.r"
+   ],
+   "text": "Move the bonus troops of this turn to Roma. Nothing happens if you hold Roma.",
+   "art": {
+    "front": "cards/displeased/steals_troops.png"
+   },
+   "effect": {
+    "handler": "stealTroopsToRoma",
+    "params": {
+     "onlyBonusTroopsThisTurn": true,
+     "noEffectIfHolder": true
+    }
+   }
+  },
+  {
+   "id": "taxes_you",
+   "deck": "displeased",
+   "copies": 2,
+   "name": "Emperor taxes you!",
+   "kind": "auto",
+   "type": "other",
+   "rule": [
+    "18.u"
+   ],
+   "text": "Lose 1 saved card of your choice (2 of your choice with 5 or more saved cards).",
+   "art": {
+    "front": "cards/displeased/taxes_you.png"
+   },
+   "effect": {
+    "handler": "taxSavedCards",
+    "params": {
+     "lose": 1,
+     "loseMoreAtOrAbove": 5,
+     "loseMore": 2,
+     "chooser": "victim"
+    }
+   }
+  }
+ ]
+}

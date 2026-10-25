@@ -4,7 +4,7 @@
 import { loadGameData } from '../loadData.js';
 import { resolveAsset } from '../assets.js';
 import { setupChoices, checkSetup, current } from '../consoleModel.js';
-import { topFrame, whoActs, minGarrison, isUnderGarrisoned, totalTroops, provincesOf as ownedBy } from '../../engine/index.js';
+import { topFrame, whoActs, minGarrison, isUnderGarrisoned, totalTroops, provincesOf as ownedBy, viewFor, eventsFor } from '../../engine/index.js';
 import * as G from './model.js';
 import { createSound } from './sound.js';
 import { HostRoom, PING_MS } from '../../net/host.js';
@@ -31,7 +31,16 @@ let speed = 1;
 try { speed = Number(localStorage.getItem('imperator.speed')) || 1; } catch { /* */ }
 const spd = ms => Math.max(10, ms * speed);
 
-const st = () => G.stateOf(S);
+// M12 (online step c): an online host's own screen shows the host's seat view too (viewFor: no peeking at the guests' hands or
+// prompts); the engine, the AI, saves and the guests' updates use the full state (full()). Offline hot-seat: unchanged.
+const full = () => G.stateOf(S);
+let seatViewCache = { s: null, me: null, v: null };
+const st = () => {
+  const s = G.stateOf(S);
+  if (NET?.role !== 'host' || !NET.me || !s) return s;
+  if (seatViewCache.s !== s || seatViewCache.me !== NET.me) seatViewCache = { s, me: NET.me, v: viewFor(s, data, NET.me) };
+  return seatViewCache.v;
+};
 const img = (id, o = {}) => { const r = resolveAsset(assets, id, o); return r.path ?? r.fallback ?? r.placeholder; };
 const prov = id => data.provincesById[id]?.name ?? id;
 const pn = id => G.nameOf(st(), id);
@@ -76,7 +85,9 @@ let seats = [{ name: 'Vidi', controller: 'human', general: GEN_DEFAULT, start: '
 const SEAT_COLORS = ['#c0392b', '#2471a3', '#2e8b57'], SEAT_COLOR_NAMES = ['red', 'blue', 'green'];
 let pickSeat = 0;   // which seat picks its start on the map (Selected starts)
 let rollOff = null; // Q110: Selected starts roll off first: {seed, n, order: seat indexes in turn order, rolls} (G.rollOffPreview), null = not rolled
-const seedNow = () => $('#seed').value.trim() || 'game';
+// M12: an online game's seed gets a secret 128-bit salt, so a guest cannot find it by trying seeds against the public dice
+// (the seed field holds a short number; the room code is known to every guest).
+const seedNow = () => ($('#seed').value.trim() || 'game') + (NET?.role === 'host' && NET.salt ? '#' + NET.salt : '');
 /** Q110: the pick order, reverse turn order (the last to move picks first); [] before the roll-off. */
 const pickOrder = () => (rollOff && rollOff.n === seats.length && rollOff.seed === seedNow() ? [...rollOff.order].reverse() : []);
 const decided = x => !!x.start || !!x.skip;
@@ -249,7 +260,7 @@ function startGame() {
   if (!validate()) return;
   const mode = $('#startMode').value;
   try {
-    S = G.newSession(data, { seed: $('#seed').value.trim() || 'game', mode, seats: engineSeats().map(x => ({ ...x, startProvince: mode === 'selected' ? x.startProvince : undefined })) });
+    S = G.newSession(data, { seed: seedNow(), mode, seats: engineSeats().map(x => ({ ...x, startProvince: mode === 'selected' ? x.startProvince : undefined })) });
     if (mode === 'selected' && pickOrder().length) S = G.playRollOff(S);   // Q110: already rolled on the setup screen (same seed, same dice): not asked again
   } catch (e) { $('#setupErrors').textContent = e.message; return; }
   if (NET?.role === 'host') { NET.me = G.stateOf(S).players[seats.findIndex(x => x.controller === 'human')].id; NET.room.start(G.stateOf(S).players.map(p => p.id)); }
@@ -328,7 +339,7 @@ async function openHost() {
     let t; try { t = await makeTransport(); await t.open({ role: 'host', code }); }
     catch (e) { lastErr = e; try { t?.close(); } catch { /* */ } if (e.code === 'ROOM_TAKEN') continue; break; }
     if (playWhere !== 'host') { t.close(); return; }
-    NET = { role: 'host', code, transport: t, me: null, inbox: [] };
+    NET = { role: 'host', code, transport: t, me: null, inbox: [], salt: [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('') };
     NET.room = new HostRoom({ transport: t, build: uiLabel, code, seats: [], data, hooks: {
       onSeat: () => queueMicrotask(() => { if (!NET) return; if (document.body.dataset.screen === 'setup') renderSetup(); else if (S) render(); }),
       onAct: (i, action, reply) => { NET.inbox.push({ action, reply }); if (!busy) hostDrain(); },
@@ -359,7 +370,7 @@ function seatToAI(i) {
   if (!NET.room.seatToAI(i)) return;
   const c = current(S);
   S = { ...S, steps: [...S.steps.slice(0, -1), { ...c, state: { ...c.state, players: c.state.players.map(p => (p.id === pid ? { ...p, controller: 'ai' } : p)) } }] };
-  NET.room.update({ seq: S.steps.length, state: st(), events: [], by: null });
+  NET.room.update({ seq: S.steps.length, state: full(), events: [], by: null });
   toast(`${nm} is now played by the AI`); autosave(); render(); schedule();
 }
 function netBadge(pid) {
@@ -415,7 +426,7 @@ function netLost(msg) {
 }
 function guestEnter() {
   const u = NET.q.shift(); if (!u) return;
-  S = { data, seed: 'room ' + NET.code, steps: [{ state: u.view, events: u.events, action: null, error: null, legal: u.legal }] };
+  S = { data, seed: 'room ' + NET.code, steps: [{ state: u.state, events: [], action: null, error: null, legal: u.legal }] };
   $('#joinGo').disabled = false; SND.play('deck_shuffle'); enterGame();
   if (NET.q.length) guestDrain();
 }
@@ -423,11 +434,11 @@ function guestEnter() {
 async function guestDrain() {
   if (NET?.role !== 'guest' || busy || !S || !NET.q.length || document.body.dataset.screen !== 'game') return;
   const u = NET.q.shift(); const before = st();
-  S = { ...S, steps: [...S.steps.slice(-2), { state: u.view, events: u.events ?? [], action: null, error: null, legal: u.legal }] };
+  S = { ...S, steps: [...S.steps.slice(-2), { state: u.state, events: u.anim ?? [], action: null, error: null, legal: u.legal }] };
   if (u.by === NET.me) { NET.pending = false; ab = null; }
   if (NET.q.length) { render(); return guestDrain(); }
   busy = true; document.body.dataset.busy = '1'; freezeControls(); $('#ovAsk').classList.remove('on');
-  try { await playEvents(u.events ?? [], before); } catch (e) { console.warn('animation', e); }
+  try { await playEvents(u.anim ?? [], before); } catch (e) { console.warn('animation', e); }
   busy = false; document.body.dataset.busy = '';
   render(); schedule(); guestDrain();
 }
@@ -450,7 +461,8 @@ async function apply(action, { fromAi = false, remote = null } = {}) {
   freezeControls();
   if (!fromAi) ab = null;
   $('#ovAsk').classList.remove('on');
-  try { await playEvents(current(S).events, before); } catch (e) { console.warn('animation', e); }
+  const evs = NET?.role === 'host' && NET.me ? eventsFor(current(S).events, NET.me) : current(S).events;   // M12: the host sees its seat's events
+  try { await playEvents(evs, before); } catch (e) { console.warn('animation', e); }
   busy = false; document.body.dataset.busy = '';
   autosave(); render(); schedule();
   return true;
@@ -774,13 +786,13 @@ function render() {
  *  switches to the next player's context at End Turn, and the optional hide-hand toggle covers the hand. */
 function mineNow() {
   if (NET?.role === 'guest') return NET.pending ? [] : current(S).legal ?? [];   // M11: the host sends each guest its legal moves
-  const s = st(); const w = whoActs(s);
+  const s = full(); const w = whoActs(s);   // the full state: legal moves need the own hand and the decks
   if (!G.isHuman(s, w) || w !== viewer) return [];
   return G.humanLegal(s, data, w);
 }
 function renderTop() {
   const s = st();
-  $('#tbInfo').textContent = s.phase === 'setup' ? `Setup · seed ${S.seed}` : `Turn ${s.turn.number} · round ${s.turn.round} · seed ${S.seed}`;
+  $('#tbInfo').textContent = s.phase === 'setup' ? `Setup · seed ${S.seed.split('#')[0]}` : `Turn ${s.turn.number} · round ${s.turn.round} · seed ${S.seed.split('#')[0]}`;
 }
 function renderPhase(legal) {
   const s = st(); const f = topFrame(s); const a = s.phase === 'turn' ? s.turn.activePlayerId : whoActs(s);
@@ -918,7 +930,7 @@ function openGenMove() {
 function openCardMenu(legal) {
   const c = G.categorize(legal).card; const byUid = {};
   for (const d of c) (byUid[d.action.cardUid] ??= []).push(d);
-  const s = st(); const me = s.turn.activePlayerId; const hand = s.players.find(p => p.id === me)?.hand ?? [];
+  const s = st(); const me = s.turn.activePlayerId; const hand = G.handCards(s.players.find(p => p.id === me));
   const rows = Object.entries(byUid).map(([uid, ds]) => { const def = s.cards[uid].def; return `<button class="btn" data-card="${uid}"><img src="${img('card.' + def)}" alt="" style="height:64px;border-radius:4px;vertical-align:middle;margin-right:6px">${esc(data.cardDefsById[def]?.name ?? def)} <span class="small">(${ds.length} target${ds.length === 1 ? '' : 's'})</span></button>`; }).join('')
     + hand.filter(c => !byUid[c.uid] && data.cardDefsById[s.cards[c.uid].def]?.type !== 'battle').filter((c, i, a) => a.findIndex(x => s.cards[x.uid].def === s.cards[c.uid].def) === i).map(c => { const def = s.cards[c.uid].def; const why = G.cardBlockReason(s, data, me, c.uid); if (!why || Object.keys(byUid).some(u => s.cards[u].def === def)) return ''; return `<div class="btn off cardoff" data-off="${c.uid}"><img src="${img('card.' + def)}" alt="" style="height:64px;border-radius:4px;vertical-align:middle;margin-right:6px;filter:grayscale(1)">${esc(data.cardDefsById[def]?.name ?? def)} <span class="small whynot">${esc(why)}</span></div>`; }).join('');
   openModal(`<div class="ask menu" style="display:flex;flex-direction:column;gap:8px;min-width:380px"><h2>Play a card</h2><div class="opts">${rows || '<p class="small">No card in your hand.</p>'}</div><div class="foot"><span class="small">Playing a card is not an action; one such card per turn (18.h).</span><button class="btn" data-close>Cancel</button></div></div>`);
@@ -978,7 +990,7 @@ function renderPlayers() {
         <div class="pstats">
           <div class="prest"><div class="lbl"><span>Prestige</span><span data-prestige>${p.prestige} / ${data.rules.winPrestige}</span></div><div class="pips">${pips}</div></div>
           <div class="pgold" title="Gold"><span class="coin"></span><span>Gold</span><b data-gold>${p.gold}</b></div>
-          <div class="res"><div><span>Troops</span><b>${totalTroops(s, p.id)}</b></div><div><span>Provinces</span><b>${ownedBy(s, p.id).length}</b></div><div><span>Cards</span><b>${p.hand.length}</b></div></div>
+          <div class="res"><div><span>Troops</span><b>${totalTroops(s, p.id)}</b></div><div><span>Provinces</span><b>${ownedBy(s, p.id).length}</b></div><div><span>Cards</span><b>${G.handCount(p)}</b></div></div>
           <div class="sv"><div class="small">Saved resources · in play · items</div><div class="tagrow">${tags || '<span class="small">none</span>'}</div></div>
           <div class="trayhost">${p.id === trayPid ? trayHtml(p.id) : ''}</div>
           ${turnActsHtml(p.id)}
@@ -1021,7 +1033,7 @@ function turnActsHtml(pid) {
   const c = G.categorize(legal); const b = [];
   for (const t of ['ATTACK', 'ALLY', 'MOVE']) if (c.move.some(d => d.type === t)) b.push(`<button class="btn sm ${ab?.type === t ? 'on' : ''}" data-a="${t}"${dis}>${{ ATTACK: 'Attack', ALLY: 'Ally', MOVE: 'Move' }[t]}</button>`);
   b.push(`<button class="btn sm" data-menu="buy"${dis}>Buy…</button>`, `<button class="btn sm" data-menu="build"${dis}>Build…</button>`);
-  const heldCards = (G.playerById(s, pid)?.hand ?? []).some(x => data.cardDefsById[s.cards[x.uid].def]?.type !== 'battle');   // M8 item 3: the menu also says why a card is not playable
+  const heldCards = G.handCards(G.playerById(s, pid)).some(x => data.cardDefsById[s.cards[x.uid].def]?.type !== 'battle');   // M8 item 3: the menu also says why a card is not playable
   if (c.card.length || heldCards) b.push(`<button class="btn sm" data-menu="card"${dis} title="Play a card from your hand">Card…</button>`);
   if (legal.some(x => x.type === 'SELL_CARD')) b.push(`<button class="btn sm" id="panelSell"${dis} title="Free: +${data.rules.sellCard?.gold ?? 2} Gold per card (20.p)">Sell…</button>`);
   if (c.scout.length) b.push(`<button class="btn sm" data-menu="scout"${dis} title="Scout a target: roll its natives (${c.scout.length} targets)">Scout…</button>`);
@@ -1167,10 +1179,10 @@ function renderTable() {
 function renderDecks(legal) {
   const s = st(); const f = topFrame(s);
   for (const k of ['game', 'resource', 'displeased']) {
-    $('#cnt-' + k).textContent = s.decks[k]?.length ?? 0;
+    $('#cnt-' + k).textContent = G.deckCount(s, k);
     const d = f?.kind === 'draw' && f.deck === k ? legal.find(x => x.type === 'DRAW_CARD') : null;
     const el = $('#deck-' + k); el.classList.toggle('due', !!d); el.dataset.key = d ? G.descKey(d) : '';
-    $('img', el).src = img(s.decks[k]?.length ? 'deck.' + k : 'deck.empty');
+    $('img', el).src = img(G.deckCount(s, k) ? 'deck.' + k : 'deck.empty');
   }
 }
 function renderHand(legal) {
@@ -1179,12 +1191,12 @@ function renderHand(legal) {
   const plays = legal.filter(d => (d.type === 'PLAY_CARD' || d.type === 'USE_SAVED_RESOURCE') && d.action.cardUid);   // batch 5 item 6: a saved Road / Wall is playable from its tile
   if (!h.owner) {
     $('#handTitle').textContent = 'Hands (all hidden)';
-    body.innerHTML = s.players.map(p => `<div class="htile back" title="${attr(p.name)}: ${p.hand.length} card(s)"><div class="cf art"><img src="${img('back.game')}" alt=""></div><div class="nm">${esc(p.name)}: ${p.hand.length}</div></div>`).join('') + '<span class="handnote">AI hands are always hidden.</span>';
+    body.innerHTML = s.players.map(p => `<div class="htile back" title="${attr(p.name)}: ${G.handCount(p)} card(s)"><div class="cf art"><img src="${img('back.game')}" alt=""></div><div class="nm">${esc(p.name)}: ${G.handCount(p)}</div></div>`).join('') + '<span class="handnote">AI hands are always hidden.</span>';
   } else {
     const p = G.playerById(s, h.owner);
     $('#handTitle').textContent = `${p.name}'s hand (${h.cards.length})`;
     const tile = (c, extra = '') => `<div class="htile ${plays.some(d => d.action.cardUid === c.uid) ? 'playable' : ''}" data-uid="${c.uid}" title="${attr(c.name + ': ' + c.text)}"><div class="cf art"><img src="${img(c.art)}" alt="${attr(c.name)}"></div><div class="nm">${extra}${esc(c.name)}${c.battle ? `<span class="bclabel">${G.BATTLE_LABEL}</span>` : ''}</div></div>`;
-    const others = s.players.filter(x => x.id !== h.owner && x.hand.length).map(x => `${esc(x.name)} ${x.hand.length}`).join(' · ');
+    const others = s.players.filter(x => x.id !== h.owner && G.handCount(x)).map(x => `${esc(x.name)} ${G.handCount(x)}`).join(' · ');
     body.innerHTML = (h.cards.length ? h.cards.map(c => tile(c)).join('') : '<span class="handnote">No cards in hand.</span>')
       + (h.inPlay.length || h.saved.length ? `<div class="inplay">${h.inPlay.map(c => tile(c, 'in play: ')).join('')}${h.saved.map(c => tile(c, 'saved: ')).join('')}</div>` : '')
       + (others ? `<span class="handnote">Others hold: ${others} (hidden)</span>` : '');
@@ -1279,7 +1291,7 @@ function renderBuilder(legal) {
         ab.perk = null; if (scipio) mid += `<div class="bd-row bd-perk" id="abScipio"><label>Scipio</label><span class="small">rolls an extra die: ${pv.sea ? '3' : '4'} dice v 2 (15.c), by himself</span></div>`;
         // item 5: the general perks that will apply in this battle
         const pk = pv.perks.length ? pv.perks.map(p => `<li class="${p.applies ? 'on' : 'off'}">${p.applies ? '✔' : '✖'} ${esc(p.text)}</li>`).join('') : '<li class="off">none</li>';
-        const held = G.playerById(s, me).hand.filter(x => data.cardDefsById[s.cards[x.uid].def].type === 'battle').length;
+        const held = G.handCards(G.playerById(s, me)).filter(x => data.cardDefsById[s.cards[x.uid].def].type === 'battle').length;
         right = `<div class="bd-perks" id="abPerks"><b>General perks in this battle</b><ul>${pv.perks.some(p => p.applies) ? pk : (pv.perks.length ? pk + '<li class="off"><b>none apply</b></li>' : pk)}</ul>`
           + `<div class="small">${pv.sea ? 'Sea attack: 2 dice (17.n).' : 'Land attack: 3 dice.'}${pv.wall ? ` Defender Wall: 3 defence dice${pv.wallRollsIgnored ? `, ignored for the first ${pv.wallRollsIgnored} roll(s) (${esc(pv.wallSources.join(', '))})` : ''}.` : ''}</div>`
           + `<div class="small">${held ? `You hold ${held} battle card(s): you choose them next.` : 'No battle cards in hand.'}</div></div>`;
@@ -1467,7 +1479,7 @@ function wireStatic() {
 
 // test / debugging hook: read-only views plus the AI's suggestion for the seat that must act (the UI test clicks what it suggests)
 window.__imperator = {
-  state: () => (S ? G.stateOf(S) : null), busy: () => busy || autoRoll, viewer: () => viewer, legal: () => (S ? mineNow() : []),
+  state: () => (S ? G.stateOf(S) : null), view: () => (S ? st() : null), busy: () => busy || autoRoll, viewer: () => viewer, legal: () => (S ? mineNow() : []),
   suggest: () => (S && NET?.role !== 'guest' ? G.aiMove(S) : null), play: a => { apply(a); return null; },   // M11: does not wait for the animations
   net: () => (NET ? { role: NET.role, code: NET.code, me: NET.me, pending: !!NET.pending, seats: NET.role === 'host' ? NET.room.lobby().seats : NET.client.lobby?.seats ?? [], queued: NET.role === 'host' ? NET.inbox.length : NET.q.length } : null), keyOf: a => { const d = S && G.findDesc(mineNow(), a); return d ? G.descKey(d) : null; },
   sounds: () => SND.played.slice(-80), label: () => uiLabel,

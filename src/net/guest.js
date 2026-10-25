@@ -1,4 +1,4 @@
-// M11 (online plan step b): the guest's side. Pure (no DOM). A guest runs no engine: it keeps the last views the host sent as a
+// M11/M12 (online plan steps b, c): the guest's side. Pure (no DOM). A guest runs no engine: it keeps the last views the host sent as a
 // small session-like object ({data, seed, steps}) that the page renders, and sends its moves to the host.
 import { PROTO, parse, msg } from './protocol.js';
 import { HOST } from './transport.js';
@@ -9,7 +9,7 @@ export class GuestClient {
   /** hooks: {onWelcome(c), onLobby(c, lobby), onUpdate(c, update), onReject(c, reject), onBye(c, reason), onHostGone(c)} */
   constructor({ transport, build, name, token = null, data, hooks = {} }) {
     Object.assign(this, { transport, build, name, token, data, hooks });
-    this.seat = null; this.playerId = null; this.lobby = null; this.session = null; this.legal = []; this.seq = null; this.ended = null; this.ai = false;
+    this.seat = null; this.playerId = null; this.lobby = null; this.session = null; this.legal = []; this.seq = null; this.ended = null; this.ai = false; this.log = []; this.logTo = null; this.resyncAsked = false;
     transport.onMessage((p, m) => { if (p === HOST) this.receive(m); });
     transport.onPeerClose(p => { if (p === HOST && !this.ended) { this.ended = 'HOST_GONE'; this.hooks.onHostGone?.(this); } });
   }
@@ -26,9 +26,16 @@ export class GuestClient {
       case 'lobby': this.lobby = m; this.hooks.onLobby?.(this, m); break;
       case 'ping': this.transport.send(HOST, msg('pong', { n: m.n })); break;
       case 'update': {
+        // M12: the view has no log; the log is kept here from the events (the whole log when `full`). A gap: ask for everything.
+        if (!m.full && m.from !== this.logTo) { if (!this.resyncAsked) { this.resyncAsked = true; this.transport.send(HOST, msg('resync', {})); } return; }
+        this.resyncAsked = false;
+        this.log = m.full ? [...(m.events ?? [])] : [...(this.log ?? []), ...(m.events ?? [])];
+        this.logTo = m.to;
         this.seq = m.seq; this.playerId = m.you?.playerId ?? this.playerId; this.legal = m.legal ?? []; this.ai = !!m.you?.ai;
         if (m.seats) this.lobby = { ...(this.lobby ?? {}), seats: m.seats, started: true };
-        const step = { state: m.view, events: m.events ?? [], action: null, error: null, by: m.by };
+        m.state = { ...m.view, log: this.log };   // what the page renders
+        m.anim = m.full ? [] : (m.events ?? []);   // what it animates (never a whole resent log)
+        const step = { state: m.state, events: m.anim, action: null, error: null, by: m.by };
         const steps = this.session ? [...this.session.steps, step].slice(-KEEP) : [step];
         this.session = { data: this.data, seed: 'online', steps, online: true };
         this.hooks.onUpdate?.(this, m); break;

@@ -115,12 +115,16 @@ export function battleCardsChoice(legal, ticked) {
   return legal.find(d => d.type === 'CHOOSE_BATTLE_CARDS' && same(d.action.cards)) ?? null;
 }
 
+/** M12: a hand as an array (a viewFor view gives another player's hand as {hidden, count}: no cards), its size, a deck's size. */
+export const handCards = p => (Array.isArray(p?.hand) ? p.hand : []);
+export const handCount = p => (Array.isArray(p?.hand) ? p.hand.length : (p?.hand?.count ?? 0));
+export const deckCount = (state, k) => { const d = state.decks?.[k]; return Array.isArray(d) ? d.length : (d?.count ?? 0); };
 /** Hand panel content for a viewer (never another player's cards; AI hands are always hidden, Q95). */
 export function handFor(state, data, viewer) {
   const p = playerById(state, viewer);
   if (!p) return { owner: null, cards: [], inPlay: [], saved: [] };
   const v = uid => cardView(data, state.cards[uid].def, uid);
-  return { owner: p.id, cards: p.hand.map(c => v(c.uid)), inPlay: p.inPlay.map(c => v(c.uid)), saved: p.savedResources.map(c => v(c.uid)) };
+  return { owner: p.id, cards: handCards(p).map(c => v(c.uid)), inPlay: p.inPlay.map(c => v(c.uid)), saved: p.savedResources.map(c => v(c.uid)) };
 }
 
 /** Shared-screen log lines (8.3 log hygiene: the public view, so a private draw never prints its card). Newest first. */

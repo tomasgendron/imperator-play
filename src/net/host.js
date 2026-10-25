@@ -3,7 +3,7 @@
 // view of every step together with that guest's legal moves. It never applies an action itself: `onAct` (the page's apply, or a
 // test's consoleModel.play) does, so the engine's own checks (NOT_YOUR_TURN, NOT_YOUR_PROMPT, illegal moves) decide, and any
 // `dice` a guest sends is stripped before that (only the host's state.rng rolls).
-import { PROTO, parse, msg, guestView, redactFor, cleanAction, token as newToken } from './protocol.js';
+import { PROTO, parse, msg, seatView, seatEvents, cleanAction, token as newToken } from './protocol.js';
 import { humanLegal } from '../ui/game/model.js';
 
 export const PING_MS = 5000, AWAY_MS = 15000;
@@ -34,6 +34,7 @@ export class HostRoom {
     if (seat) { seat.lastSeen = this.now(); if (!seat.connected && m.t !== 'bye') { seat.connected = true; this.changed(seat.i); } }
     if (m.t === 'hello') return this.hello(peer, m);
     if (m.t === 'pong') return;
+    if (m.t === 'resync') { if (seat && this.started && this.last) this.sendUpdate(seat, this.last, { full: true }); return; }
     if (m.t === 'bye') { if (seat) { seat.connected = false; seat.peer = null; this.changed(seat.i); } return; }
     if (m.t !== 'act') return;
     if (!seat) return this.reject(peer, 'NOT_SEATED', 'You have no seat in this game.', { seq: m.seq });
@@ -58,7 +59,7 @@ export class HostRoom {
       seat.token = newToken(this.rnd); seat.name = cleanName(m.name, seat.i);
     }
     if (seat.peer && seat.peer !== peer) this.transport.send(seat.peer, msg('bye', { reason: 'REPLACED' }));   // the same player from a new tab
-    Object.assign(seat, { peer, connected: true, lastSeen: this.now() });
+    Object.assign(seat, { peer, connected: true, lastSeen: this.now(), sentTo: null });   // sentTo null: its next update has the whole log
     this.transport.send(peer, msg('welcome', { proto: PROTO, build: this.build, code: this.code, seat: seat.i, token: seat.token, name: seat.name }));
     this.changed(seat.i);
     if (this.started && this.last) this.sendUpdate(seat, this.last);   // a rejoin mid-game gets the whole current view at once
@@ -88,12 +89,17 @@ export class HostRoom {
   start(playerIds) { this.started = true; this.seats.forEach((s, i) => { s.playerId = playerIds[i]; }); this.sendLobby(); }
   /** After every applied step (and once at the start): {seq, state, events, by}. Every connected guest gets its own view. */
   update(step) { this.last = step; for (const s of this.seats) if (s.peer) this.sendUpdate(s, step); }
-  sendUpdate(s, step) {
-    const pid = s.playerId;
+  /** One seat's update: its viewFor view (no log) + the log entries it has not had yet (all of them after a welcome or a resync). */
+  sendUpdate(s, step, { full = false } = {}) {
+    const pid = s.playerId; const log = step.state.log ?? [];
+    const to = log.length ? log[log.length - 1].seq : 0;
+    full = full || s.sentTo == null || s.sentTo > to;
+    const from = full ? 0 : s.sentTo;
     this.transport.send(s.peer, msg('update', {
-      seq: step.seq, by: step.by ?? null, view: guestView(step.state, pid), events: redactFor(step.events ?? [], pid),
+      seq: step.seq, by: step.by ?? null, view: seatView(step.state, this.data, pid), events: seatEvents(log, from, pid), from, to, full,
       legal: s.kind === 'remote' ? humanLegal(step.state, this.data, pid) : [], you: { seat: s.i, playerId: pid, ai: s.kind === 'ai' }, seats: this.lobby().seats,
     }));
+    s.sentTo = to;
   }
   /** The host's "give this seat to the AI" button (a dropped or away player). The page switches the engine controller to 'ai'. */
   seatToAI(i) { const s = this.seats[i]; if (!s || s.kind !== 'remote') return false; s.kind = 'ai'; this.changed(i); if (s.peer && this.last) this.sendUpdate(s, this.last); return true; }

@@ -7,6 +7,10 @@ import { setupChoices, checkSetup, current } from '../consoleModel.js';
 import { topFrame, whoActs, minGarrison, isUnderGarrisoned, totalTroops, provincesOf as ownedBy } from '../../engine/index.js';
 import * as G from './model.js';
 import { createSound } from './sound.js';
+import { HostRoom, PING_MS } from '../../net/host.js';
+import { GuestClient } from '../../net/guest.js';
+import { createPeerTransport, createBroadcastTransport } from '../../net/transport.js';
+import { roomCode, normCode } from '../../net/protocol.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -56,10 +60,12 @@ async function boot() {
   SND = createSound(assets); SND.ui();
   $$('[data-img]').forEach(e => { e.src = img(e.dataset.img); });
   $('#mapImg').src = img('map');
-  try { const b = await (await fetch('BUILD.json', { cache: 'no-store' })).json(); uiLabel = b.uiLabel ?? `v22 · ${b.stamp}`; } catch { uiLabel = 'v22 · (no BUILD.json)'; }
+  try { const b = await (await fetch('BUILD.json', { cache: 'no-store' })).json(); uiLabel = b.uiLabel ?? `v23 · ${b.stamp}`; } catch { uiLabel = 'v23 · (no BUILD.json)'; }
   $('#tbVer').textContent = uiLabel;
   $('#speed').value = String(speed); if (!$('#speed').value) { $('#speed').value = '1'; speed = 1; }
   wireStatic();
+  const jc = new URLSearchParams(location.search).get('join');
+  if (jc) { playWhere = 'join'; $('#joinCode').value = normCode(jc); }
   renderSetup();
   document.body.dataset.ready = '1';
 }
@@ -86,7 +92,7 @@ function startWhy(i, id) {
   const o = pickOrder(); const before = o.length ? o.slice(0, o.indexOf(i)) : seats.map((_, j) => j).filter(j => j !== i);
   // the earlier picks first and seat i last, so a clash is reported against seat i (validateSetup checks the seats in this order)
   const list = [...before, i, ...seats.map((_, j) => j).filter(j => j !== i && !before.includes(j))];
-  const r = checkSetup(data, list.map(j => ({ name: 'x', controller: seats[j].controller, general: 'random', startProvince: j === i ? id : before.includes(j) ? seats[j].start : '' })), 'selected');
+  const r = checkSetup(data, list.map(j => ({ name: 'x', controller: seats[j].controller === 'remote' ? 'human' : seats[j].controller, general: 'random', startProvince: j === i ? id : before.includes(j) ? seats[j].start : '' })), 'selected');
   const me = list.indexOf(i);
   const e = r.errors.find(x => x.seat === me && x.field === 'startProvince') ?? r.errors.find(x => x.seat === null && x.field === 'startProvince');
   return e ? e.message : null;
@@ -95,6 +101,9 @@ function renderSetup() {
   document.body.className = 'screen-setup'; document.body.dataset.screen = 'setup'; applyTabsHidden();
   const ch = setupChoices(data); const mode = $('#startMode').value; const sel = mode === 'selected';
   const toggle = (i, v, label) => `<button type="button" class="segb ctl${seats[i].controller === v ? ' on' : ''}" data-seat="${i}" data-ctl="${v}" aria-pressed="${seats[i].controller === v}">${label}</button>`;
+  const hosting = playWhere === 'host';
+  if (!hosting) seats.forEach(x => { if (x.controller === 'remote') x.controller = 'human'; });
+  renderOnline();
   const genOpts = i => `<option value="random" ${seats[i].general === 'random' ? 'selected' : ''}>Random general</option>` + ch.generals.map(g => {
     const by = seats.findIndex((x, j) => j !== i && x.general === g.id);
     return `<option value="${g.id}" ${seats[i].general === g.id ? 'selected' : ''} ${by >= 0 ? 'disabled' : ''}>${esc(g.name)}${by >= 0 ? ` (taken by ${esc(seats[by].name)})` : ''}</option>`;
@@ -105,17 +114,21 @@ function renderSetup() {
       <select name="start${i}" title="Fallback: choose from a list" ${may ? '' : 'disabled'}><option value="">Random for this seat</option>${ch.starts.map(x => { const why = x.id === seats[i].start ? null : startWhy(i, x.id); return `<option value="${x.id}" ${seats[i].start === x.id ? 'selected' : ''} ${why ? 'disabled' : ''}>${esc(x.name)}${why ? ' (not possible)' : ''}</option>`; }).join('')}</select></td>`; };
   $('#seats').innerHTML = `<tr><th></th><th>Name</th><th>Played by</th><th>General</th>${sel ? '<th>Start province</th>' : ''}</tr>` + seats.map((x, i) => `<tr class="seat" data-seat="${i}">
     <td><span class="sw" style="background:${SEAT_COLORS[i]}" title="${SEAT_COLOR_NAMES[i]}"></span></td>
-    <td><input name="name${i}" value="${attr(x.name)}" size="12" aria-label="Seat ${i + 1} name"></td>
-    <td><span class="seg">${toggle(i, 'human', 'Human')}${toggle(i, 'ai', 'AI')}</span></td>
+    <td>${x.controller === 'remote' ? `<input name="name${i}" value="${attr(remoteName(i))}" size="12" readonly class="remote${remoteName(i) ? ' joined' : ''}" placeholder="waiting for a player…" aria-label="Seat ${i + 1}: online player">` : `<input name="name${i}" value="${attr(x.name)}" size="12" aria-label="Seat ${i + 1} name">`}</td>
+    <td><span class="seg">${hosting ? toggle(i, 'human', 'You') + toggle(i, 'remote', 'Online') : toggle(i, 'human', 'Human')}${toggle(i, 'ai', 'AI')}</span></td>
     <td class="gcell"><select name="gen${i}" aria-label="Seat ${i + 1} general">${genOpts(i)}</select><button type="button" class="btn sm genseat${genSeat === i ? ' on' : ''}" data-genseat="${i}" title="Choose ${attr(x.name)}'s general from the cards below" aria-pressed="${genSeat === i}">🂠 cards</button></td>
     ${sel ? startCell(i) : ''}</tr>`).join('');
-  $$('#seats input, #seats select').forEach(el => el.oninput = el.onchange = () => {
+  $$('#seats input:not([readonly]), #seats select').forEach(el => el.oninput = el.onchange = () => {
     const i = +el.name.replace(/\D/g, ''); const k = el.name.replace(/\d/g, '');
     if (k === 'start') { setStart(i, el.value); return; }
     seats[i][{ name: 'name', gen: 'general' }[k]] = el.value;
     if (k === 'name') { validate(); if (sel) renderStartPick(); } else renderSetup();
   });
-  $$('#seats .ctl').forEach(b => b.onclick = () => { seats[+b.dataset.seat].controller = b.dataset.ctl; renderSetup(); });
+  $$('#seats .ctl').forEach(b => b.onclick = () => {
+    const i = +b.dataset.seat; seats[i].controller = b.dataset.ctl;
+    if (hosting && b.dataset.ctl === 'human') seats.forEach((y, j) => { if (j !== i && y.controller === 'human') y.controller = 'remote'; });   // one seat is You
+    renderSetup();
+  });
   $$('#seats .pickbtn').forEach(b => b.onclick = () => { if (!mayPick(+b.dataset.pick)) return; pickSeat = +b.dataset.pick; renderSetup(); });
   $$('#seats .genseat').forEach(b => b.onclick = () => { genSeat = +b.dataset.genseat; renderSetup(); });
   $$('#seats select[name^=gen]').forEach(el => el.addEventListener('focus', () => { const i = +el.name.slice(3); if (genSeat !== i) { genSeat = i; renderGenRow(); $$('#seats .genseat').forEach(b => { const on = +b.dataset.genseat === i; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }); } }));
@@ -221,17 +234,25 @@ function renderStartPick() {
 }
 function validate() {
   const mode = $('#startMode').value;
-  const r = checkSetup(data, seats.map(x => ({ name: x.name, controller: x.controller, general: x.general, startProvince: mode === 'selected' ? x.start : undefined })), mode);
+  const r = checkSetup(data, engineSeats().map(x => ({ ...x, startProvince: mode === 'selected' ? x.startProvince : undefined })), mode);
   $('#setupErrors').textContent = r.ok ? '' : r.errors.map(e => (e.seat !== null ? `Seat ${e.seat + 1}: ` : '') + e.message).join('\n');
-  $('#startGame').disabled = !r.ok; return r.ok;
+  if (playWhere === 'host') syncRoom();
+  const net = playWhere === 'host' ? hostReadiness() : null;
+  if (net) $('#hostWhy').textContent = net.why ?? '';
+  const ok = r.ok && (!net || net.ok) && playWhere !== 'join';
+  $('#startGame').disabled = !ok; return ok;
 }
+/** The seats as the engine gets them: an Online seat is a 'human' controller named after its guest (M11). */
+const remoteName = i => NET?.role === 'host' ? NET.room.seats[i]?.name ?? '' : '';
+const engineSeats = () => seats.map((x, i) => ({ name: x.controller === 'remote' ? (remoteName(i) || `Guest ${i + 1}`) : x.name.trim(), controller: x.controller === 'remote' ? 'human' : x.controller, general: x.general, startProvince: x.start || undefined }));
 function startGame() {
   if (!validate()) return;
   const mode = $('#startMode').value;
   try {
-    S = G.newSession(data, { seed: $('#seed').value.trim() || 'game', mode, seats: seats.map(x => ({ name: x.name.trim(), controller: x.controller, general: x.general, startProvince: mode === 'selected' && x.start ? x.start : undefined })) });
+    S = G.newSession(data, { seed: $('#seed').value.trim() || 'game', mode, seats: engineSeats().map(x => ({ ...x, startProvince: mode === 'selected' ? x.startProvince : undefined })) });
     if (mode === 'selected' && pickOrder().length) S = G.playRollOff(S);   // Q110: already rolled on the setup screen (same seed, same dice): not asked again
   } catch (e) { $('#setupErrors').textContent = e.message; return; }
+  if (NET?.role === 'host') { NET.me = G.stateOf(S).players[seats.findIndex(x => x.controller === 'human')].id; NET.room.start(G.stateOf(S).players.map(p => p.id)); }
   SND.play('deck_shuffle'); enterGame();
 }
 function enterGame() {
@@ -240,16 +261,192 @@ function enterGame() {
   closeBattlePop(); closeModal();
   viewer = null; for (const k of Object.keys(news)) delete news[k]; ab = null; bv = null; lastRoll = {}; overShown = false; aiPaused = false; selected = null; busy = false;
   $('#ovOver').classList.remove('on'); clearBattle(); setTab('table');
+  document.body.dataset.online = NET ? NET.role : '';
+  if (NET?.role === 'host') netPush();
   autosave(); render(); schedule();
 }
 
+// ------------------------------------------------------------------ M11: online play (host and join by room code; src/net/*)
+// The host's page runs the engine and is the only one that rolls dice; guests send moves and render the views the host sends.
+let NET = null;            // host: {role, code, transport, room, me, inbox}; guest: {role, code, transport, client, me, q, pending}
+let playWhere = 'local';   // setup screen: 'local' (this computer) | 'host' | 'join'
+const netMode = () => new URLSearchParams(location.search).get('net');   // 'local' = BroadcastChannel between tabs (tests, no network)
+let peerLib = null;
+function loadPeer() {
+  if (window.peerjs?.Peer) return Promise.resolve(window.peerjs.Peer);
+  return peerLib ??= new Promise((res, rej) => {
+    let u = 'src/vendor/peerjs.min.js'; try { u = import.meta.resolve('../../vendor/peerjs.min.js'); } catch { /* */ }
+    const sc = document.createElement('script'); sc.src = u;
+    sc.onload = () => (window.peerjs?.Peer ? res(window.peerjs.Peer) : rej(new Error('The online module did not load.')));
+    sc.onerror = () => { peerLib = null; rej(new Error('Could not load the online module (src/vendor/peerjs.min.js).')); };
+    document.head.append(sc);
+  });
+}
+async function makeTransport() { return netMode() === 'local' ? createBroadcastTransport() : createPeerTransport(await loadPeer()); }
+const joinLink = code => `${location.origin}${location.pathname}?join=${code}${netMode() ? '&net=' + netMode() : ''}`;
+const SEAT_TOKEN_KEY = 'imperator.online.seat';
+
+function setPlayWhere(w) {
+  if (w === playWhere) return;
+  SND.play('button_click');
+  if (playWhere === 'host' || playWhere === 'join') netLeave();
+  playWhere = w;
+  if (w === 'host') {
+    if (!seats.some(x => x.controller === 'human')) seats[0].controller = 'human';
+    let you = false; seats.forEach(x => { if (x.controller === 'human') { if (you) x.controller = 'remote'; you = true; } });
+    if (!seats.some(x => x.controller === 'remote')) { const j = seats.findIndex(x => x.controller !== 'human'); seats[j >= 0 ? j : 1].controller = 'remote'; }
+    openHost();
+  }
+  renderSetup();
+}
+function renderOnline() {
+  $$('#playWhere .segb').forEach(b => { const on = b.dataset.where === playWhere; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+  const card = $('.setupcard'); card.classList.toggle('joining', playWhere === 'join'); card.classList.toggle('hosting', playWhere === 'host');
+  $('#hostBox').hidden = playWhere !== 'host'; $('#joinBox').hidden = playWhere !== 'join';
+  $('#startGame').hidden = playWhere === 'join';
+  if (playWhere === 'host') {
+    seats.forEach((x, i) => { if (x.controller === 'remote') x.name = remoteName(i) || `Online ${i + 1}`; });
+    const code = NET?.role === 'host' ? NET.code : null;
+    $('#hostCode').textContent = code ?? '…'; $('#hostLink').value = code ? joinLink(code) : ''; $('#hostCopy').disabled = !code;
+    syncRoom();
+  }
+}
+const syncRoom = () => { if (NET?.role === 'host' && document.body.dataset.screen === 'setup') NET.room.configure(seats.map(x => ({ kind: x.controller === 'remote' ? 'remote' : x.controller === 'ai' ? 'ai' : 'local', name: x.name.trim() || 'Host' }))); };
+/** Can the host start? Every Online seat needs its player (connected), and exactly one seat is the host's own. */
+function hostReadiness() {
+  if (NET?.role !== 'host') return { ok: false, why: $('#hostStatus').dataset.err ? '' : 'Opening the room…' };
+  if (seats.filter(x => x.controller === 'human').length !== 1) return { ok: false, why: 'Mark exactly one seat as You (this computer).' };
+  if (!seats.some(x => x.controller === 'remote')) return { ok: false, why: 'Mark at least one seat as Online, or play on this computer instead.' };
+  const wait = NET.room.seats.filter(x => x.kind === 'remote' && !(x.token && x.connected)).length;
+  return wait ? { ok: false, why: `Waiting for ${wait} player${wait > 1 ? 's' : ''} to join: send them the code ${NET.code} or the link.` } : { ok: true, why: 'Everyone is here: press Start game.' };
+}
+async function openHost() {
+  const st0 = $('#hostStatus'); st0.textContent = 'Opening a room…'; st0.dataset.err = '';
+  let lastErr = null;
+  for (let k = 0; k < 4 && playWhere === 'host' && !NET; k++) {
+    const code = roomCode();
+    let t; try { t = await makeTransport(); await t.open({ role: 'host', code }); }
+    catch (e) { lastErr = e; try { t?.close(); } catch { /* */ } if (e.code === 'ROOM_TAKEN') continue; break; }
+    if (playWhere !== 'host') { t.close(); return; }
+    NET = { role: 'host', code, transport: t, me: null, inbox: [] };
+    NET.room = new HostRoom({ transport: t, build: uiLabel, code, seats: [], data, hooks: {
+      onSeat: () => queueMicrotask(() => { if (!NET) return; if (document.body.dataset.screen === 'setup') renderSetup(); else if (S) render(); }),
+      onAct: (i, action, reply) => { NET.inbox.push({ action, reply }); if (!busy) hostDrain(); },
+    } });
+    NET.ping = setInterval(() => NET?.room?.tick(), PING_MS);
+    st0.textContent = 'Room open. Send the code or the link to the other players; they choose "Join with a code".';
+    renderSetup(); return;
+  }
+  if (!NET && playWhere === 'host') { st0.textContent = lastErr?.message ?? 'Could not open a room.'; st0.dataset.err = '1'; validate(); }
+}
+/** One guest move at a time, when the host's page is not busy animating (they queue meanwhile). */
+async function hostDrain() {
+  if (NET?.role !== 'host' || busy || !S || !NET.inbox.length) return;
+  const { action, reply } = NET.inbox.shift();
+  await apply(action, { remote: reply });
+  if (NET?.inbox.length && !busy) hostDrain();
+}
+/** After each step on the host: every guest gets its view and its legal moves. */
+function netPush() {
+  if (NET?.role !== 'host' || !S) return;
+  const c = current(S); NET.room.update({ seq: S.steps.length, state: c.state, events: c.events ?? [], by: c.action?.playerId ?? null });
+}
+/** The host's "→ AI" button: a dropped or away player's seat is played by the AI from now on. */
+function seatToAI(i) {
+  if (NET?.role !== 'host' || !S) return;
+  const s = st(); const pid = s.players[i]?.id; const nm = s.players[i]?.name;
+  if (!window.confirm(`Give ${nm}'s seat to the AI for the rest of this game?`)) return;
+  if (!NET.room.seatToAI(i)) return;
+  const c = current(S);
+  S = { ...S, steps: [...S.steps.slice(0, -1), { ...c, state: { ...c.state, players: c.state.players.map(p => (p.id === pid ? { ...p, controller: 'ai' } : p)) } }] };
+  NET.room.update({ seq: S.steps.length, state: st(), events: [], by: null });
+  toast(`${nm} is now played by the AI`); autosave(); render(); schedule();
+}
+function netBadge(pid) {
+  if (!NET || !S) return '';
+  const i = st().players.findIndex(p => p.id === pid);
+  if (pid === NET.me) return '<span class="netst you" title="This computer">you</span>';
+  const seat = NET.role === 'host' ? NET.room.seats[i] : NET.client.lobby?.seats?.[i];
+  if (!seat || seat.kind !== 'remote') return seat?.kind === 'local' ? '<span class="netst host" title="The host plays this seat">host</span>' : '';
+  const on = seat.connected;
+  return `<span class="netst ${on ? 'on' : 'away'}" title="${on ? 'Connected' : 'Not connected (or not answering)'}">● ${on ? 'online' : 'away'}</span>`
+    + (NET.role === 'host' && st().phase !== 'finished' ? `<button type="button" class="btn sm toai" data-toai="${i}" title="Give this seat to the AI for the rest of the game">→ AI</button>` : '');
+}
+function netLeave() {
+  if (!NET) return;
+  const n = NET; NET = null; clearInterval(n.ping);
+  try { if (n.role === 'host') n.room.close(); else n.client.leave(); } catch (e) { console.warn('leave', e); }
+  document.body.dataset.online = '';
+}
+
+// guest side
+async function joinGame() {
+  const code = normCode($('#joinCode').value); const name = $('#joinName').value.trim().slice(0, 20);
+  const say = (m, bad = false) => { $('#joinStatus').textContent = m; $('#joinStatus').classList.toggle('bad', bad); };
+  if (code.length < 4) { say('Type the room code the host sent you (6 letters/digits).', true); return; }
+  if (!name) { say('Type your name first.', true); $('#joinName').focus(); return; }
+  try { localStorage.setItem('imperator.online.name', name); } catch { /* */ }
+  netLeave(); say('Connecting…'); $('#joinGo').disabled = true;
+  let saved = null; try { saved = JSON.parse(localStorage.getItem(SEAT_TOKEN_KEY) || 'null'); } catch { /* */ }
+  let t; try { t = await makeTransport(); } catch (e) { say(e.message, true); $('#joinGo').disabled = false; return; }
+  const n = { role: 'guest', code, transport: t, me: null, q: [], pending: false };
+  n.client = new GuestClient({ transport: t, build: uiLabel, name, token: saved?.code === code ? saved.token : null, data, hooks: {
+    onWelcome: (c, m) => { try { localStorage.setItem(SEAT_TOKEN_KEY, JSON.stringify({ code, token: m.token, seat: m.seat, at: Date.now() })); } catch { /* */ } say(`Joined room ${code} as ${m.name} (seat ${m.seat + 1}, ${SEAT_COLOR_NAMES[m.seat]}). Waiting for the host to start…`); },
+    onLobby: (c, m) => { if (NET === n) renderGuestLobby(m); if (S && NET === n) render(); },
+    onUpdate: (c, u) => { if (NET !== n) return; n.me = u.you.playerId; n.q.push(u); if (!S || document.body.dataset.screen !== 'game') { guestEnter(); } else guestDrain(); },
+    onReject: (c, m) => { if (NET !== n) return;
+      if (!S || document.body.dataset.screen !== 'game') { say(m.message, true); return; }
+      n.pending = false; if (m.code !== 'STALE') { SND.play('error_denied'); toast(m.message); } render(); },
+    onBye: (c, r) => { if (NET !== n) return; if (r === 'BUILD_MISMATCH' || r === 'FULL' || r === 'STARTED') { $('#joinGo').disabled = false; NET = null; try { t.close(); } catch { /* */ } return; } netLost(r === 'HOST_LEFT' ? 'The host left the game.' : r === 'SEAT_REMOVED' ? 'The host removed your seat.' : r === 'REPLACED' ? 'You joined this game from another tab; this tab is disconnected.' : 'The host ended the connection.'); },
+    onHostGone: () => { if (NET === n) netLost('Lost the connection to the host.'); },
+  } });
+  NET = n;
+  try { await n.client.join(code); } catch (e) { if (NET === n) NET = null; say(e.message, true); $('#joinGo').disabled = false; return; }
+}
+function renderGuestLobby(m) {
+  const rows = (m.seats ?? []).map(x => `<li><span class="sw" style="background:${SEAT_COLORS[x.i]}"></span> <b>${esc(x.kind === 'remote' ? x.name || 'waiting for a player…' : x.name)}</b> <span class="small">${x.kind === 'local' ? '(host)' : x.kind === 'ai' ? '(AI)' : x.taken ? (x.connected ? '(online)' : '(away)') : ''}${NET?.client?.seat === x.i ? ' ← you' : ''}</span></li>`).join('');
+  $('#guestLobby').innerHTML = rows ? `<b>Players</b><ul>${rows}</ul><p class="small">The host chooses the generals and the start provinces, then starts the game.</p>` : '';
+}
+function netLost(msg) {
+  const n = NET; if (!n) return;
+  if (!S || document.body.dataset.screen !== 'game') { $('#joinStatus').textContent = msg; $('#joinStatus').classList.add('bad'); $('#joinGo').disabled = false; NET = null; try { n.transport.close(); } catch { /* */ } return; }
+  n.lost = msg; document.body.dataset.netLost = '1'; render();
+  openModal(`<div class="ask"><h2>Connection lost</h2><p>${esc(msg)}</p><p class="small">To play on, open the host's link again and join with the same name: your seat is kept for this browser (full reconnection comes in a later version).</p><button class="btn gold" data-close>OK</button></div>`);
+}
+function guestEnter() {
+  const u = NET.q.shift(); if (!u) return;
+  S = { data, seed: 'room ' + NET.code, steps: [{ state: u.view, events: u.events, action: null, error: null, legal: u.legal }] };
+  $('#joinGo').disabled = false; SND.play('deck_shuffle'); enterGame();
+  if (NET.q.length) guestDrain();
+}
+/** Plays the host's updates in order, animating each like a local move (several waiting at once: only the last is animated). */
+async function guestDrain() {
+  if (NET?.role !== 'guest' || busy || !S || !NET.q.length || document.body.dataset.screen !== 'game') return;
+  const u = NET.q.shift(); const before = st();
+  S = { ...S, steps: [...S.steps.slice(-2), { state: u.view, events: u.events ?? [], action: null, error: null, legal: u.legal }] };
+  if (u.by === NET.me) { NET.pending = false; ab = null; }
+  if (NET.q.length) { render(); return guestDrain(); }
+  busy = true; document.body.dataset.busy = '1'; freezeControls(); $('#ovAsk').classList.remove('on');
+  try { await playEvents(u.events ?? [], before); } catch (e) { console.warn('animation', e); }
+  busy = false; document.body.dataset.busy = '';
+  render(); schedule(); guestDrain();
+}
+function guestSend(action) {
+  if (NET.pending || NET.lost) { if (NET.lost) toast(NET.lost); return false; }
+  NET.pending = true; NET.client.act(action);
+  freezeControls(); $('#ovAsk').classList.remove('on'); return true;
+}
+
 // ------------------------------------------------------------------ the loop: apply an action, animate its events, schedule the AI
-async function apply(action, { fromAi = false } = {}) {
+async function apply(action, { fromAi = false, remote = null } = {}) {
   if (busy || !S) return false;
+  if (NET?.role === 'guest') return guestSend(action);
   const before = st();
   const r = G.play(S, action);
-  if (r.error) { SND.play('error_denied'); toast(r.error.message + (r.error.rule ? ` (${r.error.rule})` : '')); return false; }
+  if (remote) remote(r.error);   // M11: a guest's move; the engine's checks decide, its error goes back to that guest only
+  if (r.error) { if (!remote) { SND.play('error_denied'); toast(r.error.message + (r.error.rule ? ` (${r.error.rule})` : '')); } return false; }
   S = r.session; busy = true; document.body.dataset.busy = '1';
+  if (NET?.role === 'host') netPush();
   freezeControls();
   if (!fromAi) ab = null;
   $('#ovAsk').classList.remove('on');
@@ -269,6 +466,8 @@ function schedule() {
   if (!S || document.body.dataset.screen !== 'game') return;
   const s = st();
   if (s.phase === 'finished') { showGameOver(); return; }
+  if (NET?.role === 'guest') { if (!busy) humanAuto(s); return; }   // M11: a guest runs no AI and no automatic rolls: the host does
+  if (NET?.role === 'host' && !busy && NET.inbox.length) { setTimeout(hostDrain, 0); return; }
   if (!busy && humanAuto(s)) return;
   if (aiPaused || busy || !G.aiToMove(S)) return;
   const f = topFrame(s); const auto = f && f.kind === 'roll' && !f.player;
@@ -280,12 +479,12 @@ function schedule() {
 let displeasedSeen = null, autoRoll = false;
 function humanAuto(s) {
   const f = topFrame(s); if (!f) return false;
-  if (f.kind === 'roll' && f.purpose === 'nativeRoll' && G.isHuman(s, f.player)) {
+  if (f.kind === 'roll' && f.purpose === 'nativeRoll' && G.isHuman(s, f.player) && NET?.role !== 'guest') {
     autoRoll = true; document.body.dataset.humanTurn = '';
     aiTimer = setTimeout(() => { aiTimer = null; autoRoll = false; if (!busy && topFrame(st())?.purpose === 'nativeRoll') apply({ type: 'ROLL', playerId: f.player }); else render(); }, spd(200));
     return true;
   }
-  if (f.kind === 'draw' && f.deck === 'displeased' && G.isHuman(s, f.player) && displeasedSeen !== f.id) {
+  if (f.kind === 'draw' && f.deck === 'displeased' && G.isHuman(s, f.player) && (!NET || f.player === viewer) && displeasedSeen !== f.id) {
     displeasedSeen = f.id; busy = true; document.body.dataset.busy = '1';
     displeasedAlert(f).then(() => { busy = false; document.body.dataset.busy = ''; render(); schedule(); });
     return true;
@@ -368,7 +567,7 @@ async function playEvents(events, before = null) {
       }
       case 'troopsAssassinated': {   // v22: a human victim must see and acknowledge it (never for AI victims or natives)
         const prev = events[i - 1];
-        if (!(prev?.type === 'troopsAssassinated' && prev.pub.player === e.pub.player)) for (const p of G.assassinPopups(events, i, s, data)) await assassinAlert(p);
+        if (!(prev?.type === 'troopsAssassinated' && prev.pub.player === e.pub.player)) for (const p of G.assassinPopups(events, i, s, data)) if (!NET || p.victim === viewer) await assassinAlert(p);
         break;
       }
       case 'provinceRevolted': if (!shownRevolts.has(i)) { flashToken(e.pub.province); await deliver(G.revoltPopup(events, i, s, data)); } break;
@@ -399,7 +598,7 @@ async function rollPopup(p) {
 /** Hot-seat (item 7): a revolt that hits a human who is not looking right now is shown again when that human's context comes up. */
 const news = {};
 const NEWS_KINDS = new Set(['revolt', 'battle', 'displeased']);
-function queueNews(p) { if (!p || !NEWS_KINDS.has(p.kind) || !G.isHuman(st(), p.player)) return false; if (p.player !== G.viewerFor(st(), viewer)) { (news[p.player] ??= []).push(p); return true; } return false; }
+function queueNews(p) { if (!p || !NEWS_KINDS.has(p.kind) || !G.isHuman(st(), p.player)) return false; if (p.player !== (NET ? NET.me : G.viewerFor(st(), viewer))) { if (!NET) (news[p.player] ??= []).push(p); return true; } return false; }   // M11: online, each player's own screen shows it
 /** Q100 (Vidi 2026-10-22): a popup that affects a human waits for OK. If that human is looking now they get it at once; in hot-seat,
  *  when someone else is at the screen, that player sees a short self-closing version and the affected human gets it as "While you were away". */
 async function deliver(p) { if (!p) return; if (queueNews(p)) await rollPopup({ ...p, sticky: false }); else await rollPopup(p); }
@@ -559,7 +758,7 @@ function drawArrow(from, to, color) {
 function render() {
   if (!S) return;
   const s = st();
-  const nv = G.viewerFor(s, viewer);
+  const nv = NET ? NET.me : G.viewerFor(s, viewer);   // M11: online, the screen always belongs to this page's own seat
   viewer = nv;
   document.body.dataset.whoActs = whoActs(s) ?? '';
   document.body.dataset.frame = topFrame(s)?.kind ?? (s.phase === 'turn' ? 'free' : s.phase);
@@ -574,6 +773,7 @@ function render() {
 /** The human who decides now and their legal moves (none for AI seats). Hot-seat (Q95, Vidi 2026-10-21): no curtain; the board
  *  switches to the next player's context at End Turn, and the optional hide-hand toggle covers the hand. */
 function mineNow() {
+  if (NET?.role === 'guest') return NET.pending ? [] : current(S).legal ?? [];   // M11: the host sends each guest its legal moves
   const s = st(); const w = whoActs(s);
   if (!G.isHuman(s, w) || w !== viewer) return [];
   return G.humanLegal(s, data, w);
@@ -591,7 +791,7 @@ function renderPhase(legal) {
   const w = whoActs(s); let html = ''; let prompt = esc(G.describePrompt(s, data));
   if (s.phase === 'finished') html = '<button class="btn gold" id="bOver">Results</button>';
   else if (!legal.length) {
-    html = `<span class="small">${G.isHuman(s, w) ? 'Waiting for ' + esc(pn(w)) : esc(pn(w)) + ' (AI) is thinking…'}</span> <button class="btn sm" id="bPause">${aiPaused ? 'Resume AI ▶' : 'Pause AI ⏸'}</button>`;
+    html = `<span class="small">${G.isHuman(s, w) ? 'Waiting for ' + esc(pn(w)) : esc(pn(w)) + ' (AI) is thinking…'}</span> ${NET?.role === 'guest' ? '' : `<button class="btn sm" id="bPause">${aiPaused ? 'Resume AI ▶' : 'Pause AI ⏸'}</button>`}`;
   } else if (!f) {
     // batch 4 item 4: the turn's action buttons sit in the active player's panel; the phase bar only hints
     html = `<span class="small phhint">◂ Your actions: in ${esc(pn(w))}'s panel, on the left</span>`;
@@ -772,7 +972,7 @@ function renderPlayers() {
     const recalled = p.generalRecalledThroughTurn !== null && p.generalRecalledThroughTurn !== undefined && s.turn.number <= p.generalRecalledThroughTurn;
     const tags = tag(p.savedResources) + tag(p.inPlay) + (p.items?.catapult ? `<span class="tag">Catapult ×${p.items.catapult}</span>` : '');
     return `<div class="player ${active ? 'active' : ''} ${p.out ? 'out' : ''}" data-pid="${p.id}" style="--pc:var(--${c})">
-      <div class="ph"><span class="nm">${esc(p.name)}</span><span class="gn">${esc(gen?.name ?? 'no general yet')}</span><span class="ctl ${p.controller === 'ai' ? 'ai' : ''}">${p.controller === 'ai' ? 'AI' : 'Human'}</span><span class="turnbadge">▶ ACTIVE TURN</span></div>
+      <div class="ph"><span class="nm">${esc(p.name)}</span><span class="gn">${esc(gen?.name ?? 'no general yet')}</span><span class="ctl ${p.controller === 'ai' ? 'ai' : ''}">${p.controller === 'ai' ? 'AI' : 'Human'}</span>${netBadge(p.id)}<span class="turnbadge">▶ ACTIVE TURN</span></div>
       <div class="pbody2">
         <div class="gcard" title="${attr(gen ? gen.name + ': ' + gen.text + ' (click for every perk in detail)' : 'General not chosen yet')}"><img src="${img(gen ? 'general.' + gen.id : 'back.blank')}" alt="${attr(gen?.name ?? '')}">${recalled ? '<div class="oldtext">recalled to Rome</div>' : ''}</div>
         <div class="pstats">
@@ -786,6 +986,7 @@ function renderPlayers() {
         </div>
       </div></div>`;
   }).join('');
+  $$('#players [data-toai]').forEach(b => b.onclick = () => seatToAI(+b.dataset.toai));
   $$('.player .gcard').forEach(g => g.onclick = () => {
     const p = G.playerById(s, g.closest('.player').dataset.pid); if (!p.general) return;
     openGeneralView(p.general.id, { player: p });   // M8.1: the same detail view as on the setup screen
@@ -1185,7 +1386,7 @@ function setTabsHidden(h) { tabsHidden = !!h; try { localStorage.setItem('impera
 function setTab(t) { tab = t; document.body.classList.toggle('battletab', t === 'battle' || t === 'build'); document.body.classList.toggle('tabforce', t === 'build'); $$('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); $$('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + t)); }
 
 // ------------------------------------------------------------------ save / load / game over
-function autosave() { if (!S) return; try { localStorage.setItem('imperator.autosave', JSON.stringify(G.makeSave(S, { appVersion: uiLabel, kind: 'autosave' }))); } catch (e) { console.warn('autosave failed', e.message); } }
+function autosave() { if (!S || NET?.role === 'guest') return; try { localStorage.setItem('imperator.autosave', JSON.stringify(G.makeSave(S, { appVersion: uiLabel, kind: 'autosave' }))); } catch (e) { console.warn('autosave failed', e.message); } }
 function download(name, text) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = name; document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); }
 function saveMenu() {
   if (!S) { toast('No game to save yet'); return; }
@@ -1207,6 +1408,7 @@ function loadMenu() {
 function loadFrom(obj) {
   const show = m => { const el = $('#ldErr') ?? (document.body.dataset.screen === 'setup' ? $('#setupErrors') : null); if (el) el.textContent = m; else toast(m); };
   let ns; try { ns = G.readSave(obj, data); } catch (e) { show(e.message); return false; }
+  if (NET) { netLeave(); playWhere = 'local'; }   // M11: a loaded save is played on this computer
   const prev = S; clearTimeout(aiTimer); S = ns; closeModal();
   try { enterGame(); } catch (e) { console.warn('load', e); S = prev; if (prev) { render(); schedule(); } else renderSetup(); show('This save could not be shown by this build: ' + e.message + ' (the file itself is not changed).'); return false; }
   toast('Game loaded'); SND.play('deck_shuffle'); return true;
@@ -1219,20 +1421,25 @@ function showGameOver() {
   const ov = $('#ovOver');
   ov.innerHTML = `<h1>IMPERATOR!</h1><div style="font-size:1.6em"><b style="color:var(--${col(w.id)});background:#f3e7c4;padding:0 10px;border-radius:6px" id="winnerName">${esc(w.name)}</b> wins${w.prestige >= data.rules.winPrestige ? ` with ${w.prestige} Prestige` : ' as the last player standing'} on turn ${s.turn.number}.</div>
     <table id="finalTable"><tr><th>Player</th><th>Seat</th><th>Prestige</th><th>Provinces</th><th>Troops</th><th>Gold</th></tr>${rows}</table>
-    <div class="row"><button class="btn gold big" id="ovNew">New game</button><button class="btn" id="ovLook">Look at the board</button><button class="btn" id="ovExport">Export the save</button></div>`;
+    <div class="row"><button class="btn gold big" id="ovNew">New game</button><button class="btn" id="ovLook">Look at the board</button>${NET?.role === 'guest' ? '' : '<button class="btn" id="ovExport">Export the save</button>'}</div>`;
   ov.classList.add('on'); document.body.dataset.over = s.winner;
   $('#ovNew').onclick = () => { ov.classList.remove('on'); toSetup(); };
   $('#ovLook').onclick = () => ov.classList.remove('on');
-  $('#ovExport').onclick = () => download(G.saveFileName(s), JSON.stringify(G.makeSave(S, { appVersion: uiLabel, kind: 'final' })));
+  if ($('#ovExport')) $('#ovExport').onclick = () => download(G.saveFileName(s), JSON.stringify(G.makeSave(S, { appVersion: uiLabel, kind: 'final' })));
 }
-function toSetup() { clearTimeout(aiTimer); $('#toast').classList.remove('on'); S = null; document.body.dataset.over = ''; ['#ovOver', '#ovAsk', '#ovModal'].forEach(x => $(x).classList.remove('on')); renderSetup(); }
+function toSetup() { if (NET) { netLeave(); playWhere = 'local'; } clearTimeout(aiTimer); $('#toast').classList.remove('on'); S = null; document.body.dataset.over = ''; ['#ovOver', '#ovAsk', '#ovModal'].forEach(x => $(x).classList.remove('on')); renderSetup(); }
 
 // ------------------------------------------------------------------ static wiring
 function wireStatic() {
   $('#bSound').onclick = () => SND.toggle();
   $('#speed').onchange = e => { speed = Number(e.target.value) || 1; try { localStorage.setItem('imperator.speed', String(speed)); } catch { /* */ } };
   $('#bSave').onclick = saveMenu; $('#bLoad').onclick = loadMenu; $('#setupLoad').onclick = loadMenu;
-  $('#bNew').onclick = () => { if (!S || S && st().phase === 'finished' || window.confirm('Leave this game? It stays in the autosave.')) toSetup(); };
+  $('#bNew').onclick = () => { if (!S || S && st().phase === 'finished' || window.confirm(NET?.role === 'guest' ? 'Leave this online game?' : NET ? 'Leave this online game? Your guests are disconnected (it stays in your autosave).' : 'Leave this game? It stays in the autosave.')) toSetup(); };
+  $$('#playWhere .segb').forEach(b => b.onclick = () => setPlayWhere(b.dataset.where));
+  $('#hostCopy').onclick = () => { const t = $('#hostLink').value; navigator.clipboard?.writeText(t).then(() => toast('Link copied'), () => { $('#hostLink').select(); }); };
+  $('#joinGo').onclick = joinGame;
+  $('#joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinGame(); });
+  try { $('#joinName').value = localStorage.getItem('imperator.online.name') || ''; } catch { /* */ }
   const toggleHide = () => { hidden = !hidden; SND.play('card_flip'); if (S) renderHand(mineNow()); };
   $('#bHide').onclick = toggleHide; $('#bHide2').onclick = toggleHide; $('#bReveal').onclick = toggleHide;
   $('#addSeat').onclick = () => setSeatCount(3);
@@ -1261,7 +1468,8 @@ function wireStatic() {
 // test / debugging hook: read-only views plus the AI's suggestion for the seat that must act (the UI test clicks what it suggests)
 window.__imperator = {
   state: () => (S ? G.stateOf(S) : null), busy: () => busy || autoRoll, viewer: () => viewer, legal: () => (S ? mineNow() : []),
-  suggest: () => (S ? G.aiMove(S) : null), keyOf: a => { const d = S && G.findDesc(mineNow(), a); return d ? G.descKey(d) : null; },
+  suggest: () => (S && NET?.role !== 'guest' ? G.aiMove(S) : null), play: a => { apply(a); return null; },   // M11: does not wait for the animations
+  net: () => (NET ? { role: NET.role, code: NET.code, me: NET.me, pending: !!NET.pending, seats: NET.role === 'host' ? NET.room.lobby().seats : NET.client.lobby?.seats ?? [], queued: NET.role === 'host' ? NET.inbox.length : NET.q.length } : null), keyOf: a => { const d = S && G.findDesc(mineNow(), a); return d ? G.descKey(d) : null; },
   sounds: () => SND.played.slice(-80), label: () => uiLabel,
 };
 boot();

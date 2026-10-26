@@ -8,7 +8,7 @@ import { topFrame } from './core.js';
 import * as S from './selectors.js';
 import { attackTargets } from './battle.js';
 import { generalMoveTargets, sellableCards } from './turn.js';
-import { TURN_PLAYS, heldLongEnough, revoltTargets, bribeTargets, assassinTargets, assassinKills, strikeTroops } from './cards.js';
+import { TURN_PLAYS, heldLongEnough, revoltTargets, bribeTargets, bribeOwnTargets, assassinTargets, assassinKills, strikeTroops } from './cards.js';
 
 const nm = (data, id) => data.provincesById[id]?.name ?? id;
 
@@ -46,6 +46,7 @@ export function legalActions(state, data) {
         add({ type: 'CHOOSE_GENERAL', general: 'random' }, 'Choose a random general');
         break;
       }
+      case 'setupSide': for (const side of ['west', 'east']) add({ type: 'CHOOSE_SIDE', side }, `Start in the ${side === 'west' ? 'West (Britain, Gaul, Iberia, Mauretania)' : 'East (Dalmacia, Macedonia, Greece, Parthia, Egypt)'}; the other player gets the other side (4.g)`); break;
       case 'setupStartProvince': for (const id of data.provinceIds) add({ type: 'CHOOSE_START_PROVINCE', province: id }, `Start in ${nm(data, id)}`); break;
       case 'draw': add({ type: 'DRAW_CARD' }, `Draw a ${f.deck === 'displeased' ? 'Rome Is Displeased' : f.deck === 'resource' ? 'Resource' : 'Game'} card`); break;
       case 'placeTroops': {
@@ -140,6 +141,7 @@ export function legalActions(state, data) {
         const owner = id => { const o = state.provinces[id].owner; return state.players.find(p => p.id === o)?.name ?? o; };
         if (def === 'revolt') for (const t of revoltTargets(state, data, who)) add({ type: 'PLAY_CARD', cardUid: e.uid, target: t }, `Play Revolt! on ${owner(t)}'s ${nm(data, t)}`);
         if (def === 'bribe_the_ally') for (const t of bribeTargets(state, data, who)) if (gold >= t.cost) add({ type: 'PLAY_CARD', cardUid: e.uid, target: t.province }, `Play Bribe the Ally! on ${owner(t.province)}'s ${nm(data, t.province)} (${t.cost} Gold)`);
+        if (def === 'bribe_the_ally') for (const t of bribeOwnTargets(state, data, who)) if (gold >= t.cost) add({ type: 'PLAY_CARD', cardUid: e.uid, target: t.province }, `Play Bribe the Ally! on your own allied ${nm(data, t.province)}: it becomes conquered (${t.cost} Gold, 18.v)`);
         if (def === 'assassin') {
           const k = assassinKills(state, data, who); const ts = assassinTargets(state, who, data);
           const whose = t => (state.provinces[t].owner ? `${owner(t)}'s ${nm(data, t)}` : `${nm(data, t)} (natives)`);

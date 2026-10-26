@@ -245,7 +245,7 @@
     "delayTurns": 1,
     "usesTurnCardSlot": true
    },
-   "text": "Pay Gold equal to the native troop count of a province allied against you to flip it to your side. Carthage can never be allied.",
+   "text": "Pay Gold equal to the native troop count of a province allied against you to flip it to your side. Carthage can never be allied. Or: pay 1 Gold to turn one of your own allied provinces into a conquered province (it keeps its troops, no Prestige).",
    "art": {
     "front": "cards/game/bribe_the_ally.png"
    },
@@ -255,7 +255,8 @@
      "cost": "nativeCount",
      "neverCarthage": true,
      "otherPlayerTroopsFlee": true,
-     "fleeLoss": 1
+     "fleeLoss": 1,
+     "ownAllyToConquered": { "gold": 1 }
     }
    }
   },

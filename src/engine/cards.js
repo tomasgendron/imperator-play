@@ -44,6 +44,10 @@ export const bribeTargets = (state, data, pid) => Object.keys(state.provinces).s
   return p.owner && p.owner !== pid && !playerOf(state, p.owner).out && p.status === 'allied' && id !== 'carthage';
 }).map(id => ({ province: id, cost: bribeCost(state, id) }));
 export const bribeCost = (state, id) => state.provinces[id].native.count ?? 0;
+/** Bribe the Ally! second use (18.v, 19.r; Vidi 2026-10-25): your own allied provinces (never Carthage), cost 1 Gold to the bank. */
+export const bribeOwnTargets = (state, data, pid) => Object.keys(state.provinces).sort().filter(id => {
+  const p = state.provinces[id]; return p.owner === pid && p.status === 'allied' && id !== 'carthage';
+}).map(id => ({ province: id, cost: data.rules.bribeOwnAllyGold ?? 1, own: true }));
 
 /** Is the card in hand playable in this turn by the hold-a-turn rule (18.h, Q9)? */
 export const heldLongEnough = (state, data, entry) => entry.drawnOnTurn + (data.cardDefsById[defOf(state, entry.uid)].play?.delayTurns ?? 0) <= state.turn.number;
@@ -80,10 +84,10 @@ export function cardBlock(state, data, pid, uid) {
   if (def === 'revolt' && !revoltTargets(state, data, pid).length) return B('NO_LEGAL_TARGET', 'no rival conquered province under 10 troops', '18.m', 'No rival holds a conquered province with fewer than 10 troops: Revolt! cannot be played and stays in your hand (18.m).');
   if (def === 'assassin' && assassinKills(state, data, pid) < 1) return B('NO_LEGAL_TARGET', 'no province you do not control has 2+ troops (Roma, a neutral Carthage and provinces already struck do not count)', '18.e', 'No province you do not control has 2 or more troops (and has not been struck yet; never Roma or a neutral Carthage): the Assassin cannot be played and stays in your hand (18.e).');
   if (def === 'bribe_the_ally') {
-    const ts = bribeTargets(state, data, pid);
-    if (!ts.length) return B('NO_LEGAL_TARGET', 'no province is allied to a rival (Carthage never counts)', '18.v', 'No province is allied to a rival: Bribe the Ally! cannot be played and stays in your hand (18.v).');
+    const ts = [...bribeTargets(state, data, pid), ...bribeOwnTargets(state, data, pid)];
+    if (!ts.length) return B('NO_LEGAL_TARGET', 'no province is allied to a rival, and you have no allied province of your own (Carthage never counts)', '18.v', 'No province is allied to a rival and you have no allied province to turn into a conquered one: Bribe the Ally! cannot be played and stays in your hand (18.v).');
     const cheap = Math.min(...ts.map(t => t.cost));
-    if (pl.gold < cheap) return B('NEED_GOLD', `the cheapest bribe costs ${cheap} Gold; you have ${pl.gold}`, '18.v');
+    if (pl.gold < cheap) return B('NEED_GOLD', `the cheapest use costs ${cheap} Gold; you have ${pl.gold}`, '18.v');
   }
   return null;
 }
@@ -196,15 +200,28 @@ onSettle(ctx => {
 // ---- Bribe the Ally! (18.v, Q32): pay its native count; 1 of the old owner's troops stays and changes sides, 1 more is lost, the rest flee
 TURN_PLAYS.bribe_the_ally = {
   validate(ctx, pid, a) {
-    const { state, data } = ctx; const ok = bribeTargets(state, data, pid); const pl = mustPlayer(state, pid);
-    check(ok.length, 'NO_LEGAL_TARGET', 'No province is allied to a rival: Bribe the Ally! cannot be played and stays in your hand (18.v).', '18.v');
+    const { state, data } = ctx; const pl = mustPlayer(state, pid);
+    const own = bribeOwnTargets(state, data, pid).find(x => x.province === a.target);
+    if (own) {                                                   // second use: own ally -> conquered (18.v, 19.r)
+      check(pl.gold >= own.cost, 'NEED_GOLD', `Turning ${nm(data, a.target)} into a conquered province costs ${own.cost} Gold; you have ${pl.gold} (18.v).`, '18.v');
+      return { target: a.target, cost: own.cost, own: true };
+    }
+    const ok = bribeTargets(state, data, pid); const mine = bribeOwnTargets(state, data, pid);
+    check(ok.length || mine.length, 'NO_LEGAL_TARGET', 'No province is allied to a rival and you have no allied province of your own: Bribe the Ally! cannot be played and stays in your hand (18.v).', '18.v');
     const t = ok.find(x => x.province === a.target);
-    check(t, 'ILLEGAL_TARGET', `Bribe the Ally! targets a province allied to a rival (never Carthage): ${ok.map(x => nm(data, x.province)).join(', ')} (18.v).`, '18.v');
+    check(t, 'ILLEGAL_TARGET', `Bribe the Ally! targets a province allied to a rival (never Carthage)${ok.length ? `: ${ok.map(x => nm(data, x.province)).join(', ')}` : ''}${mine.length ? `, or one of your own allied provinces to make it conquered: ${mine.map(x => nm(data, x.province)).join(', ')}` : ''} (18.v).`, '18.v');
     check(pl.gold >= t.cost, 'NEED_GOLD', `Bribing ${nm(data, a.target)} costs ${t.cost} Gold (its native count); you have ${pl.gold} (18.v).`, '18.v');
     return { target: a.target, cost: t.cost, owner: state.provinces[a.target].owner };
   },
   apply(ctx, pid, plan) {
-    const { state, data } = ctx; const p = state.provinces[plan.target]; const old = mustPlayer(state, plan.owner);
+    const { state, data } = ctx; const p = state.provinces[plan.target];
+    if (plan.own) {
+      mustPlayer(state, pid).gold -= plan.cost;
+      Object.assign(p, { status: 'conquered' });
+      emit(ctx, 'allyMadeConquered', { actor: pid, rule: '18.v', pub: { player: pid, province: plan.target, gold: plan.cost, troops: p.troops } });
+      return;
+    }
+    const old = mustPlayer(state, plan.owner);
     mustPlayer(state, pid).gold -= plan.cost;
     const had = p.troops; const stay = Math.min(1, had); const lost = had >= 2 ? data.rules.bribeChaosLoss ?? 1 : 0; const flee = had - stay - lost;
     const general = old.general?.at === plan.target;

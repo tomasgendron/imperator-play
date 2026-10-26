@@ -189,7 +189,7 @@ export function frameTitle(state, data) {
   const f = topFrame(state);
   if (!f) return null;
   const T = {
-    roll: 'Roll the dice', draw: 'Draw a card', setupGeneral: 'Choose your general', setupStartProvince: 'Choose your start province',
+    roll: 'Roll the dice', draw: 'Draw a card', setupGeneral: 'Choose your general', setupSide: 'Choose your side (west or east)', setupStartProvince: 'Choose your start province',
     placeTroops: 'Place troops', resourceBuild: 'Build now or save the card', chooseProvince: 'Choose a province', chooseBorrow: 'Borrow natives?',
     chooseBattleCards: 'Battle cards', choosePerk: 'General perk', battleContinue: 'Continue the battle?', placeSurvivors: 'Place the survivors',
     discardCards: "The Emperor's tax", responseWindow: { revoltResponse: 'A province revolts!', displeasedResponse: 'Rome is displeased with you', defenceAnnounced: 'You are attacked!' }[f.window] ?? 'Your answer',
@@ -321,6 +321,8 @@ export function revoltRollPopup(events, i, state, data) {
   const revolted = rest.filter(x => x.type === 'provinceRevolted');
   const blocked = rest.filter(x => x.type === 'revoltBlocked');
   if (!e.pub.provinces.length && !immune.length) lines.push(`None of ${nm(pid)}'s conquered provinces has number ${v}: nothing happens.`);
+  const pick = rest.find(x => x.type === 'revoltPicked');
+  if (pick) lines.push(`${pick.pub.provinces.map(id => provName(data, id)).join(' and ')} all have number ${v}, but at most 1 province revolts per roll: a ${pick.pub.die} roll of ${pick.pub.value} picks ${provName(data, pick.pub.province)} (${pick.rule}).`);
   for (const id of e.pub.provinces) {
     const r = revolted.find(x => x.pub.province === id);
     if (r) lines.push(revoltLine(r, rest, state, data));

@@ -7,7 +7,7 @@
 import { fail, check, emit, roll, pushFrame, popFrame, topFrame, mustPlayer, playerOf, orderFrom, awardPrestige, toDiscard, onSettle } from './core.js';
 import { define, defineRoll } from './actions.js';
 import { registerPerk, registerEffect, registerDecree } from './registry.js';
-import { changeTroops, spendAction, processRevolts, active, mustControl, provinceChoiceHandlers, turnHooks, responseWindows } from './turn.js';
+import { changeTroops, spendAction, processRevolts, pickRevolt, revoltPickedEvent, active, mustControl, provinceChoiceHandlers, turnHooks, responseWindows } from './turn.js';
 import * as S from './selectors.js';
 
 const isInt = n => Number.isInteger(n);
@@ -560,9 +560,11 @@ defineRoll('extraRevoltRoll', (ctx, f) => {
   const v = roll(ctx, data.rules.dice.revoltRoll, 'extraRevoltRoll', pid);
   popFrame(ctx);
   const match = S.revoltCandidates(state, pid).filter(id => state.provinces[id].number === v && id !== f.exclude);   // just conquered: exempt (19.d, 19.h)
-  const hit = match.filter(id => S.canRevolt(state, data, id));                                                    // 10+ troops: exempt (17.c)
-  emit(ctx, 'revoltRoll', { actor: pid, rule: '19.d', pub: { player: pid, value: v, provinces: hit, extra: true, exempt: f.exclude } });
-  for (const id of match.filter(m => !hit.includes(m))) emit(ctx, 'revoltImmune', { actor: pid, rule: '17.c', pub: { player: pid, province: id, troops: state.provinces[id].troops, reason: `${data.rules.revoltImmuneAtTroops} or more troops never revolt` } });
+  const r = pickRevolt(ctx, pid, match.filter(id => S.canRevolt(state, data, id)));                                // 10+ troops: exempt (17.c); at most 1 revolts (19.h)
+  const hit = r.hit;
+  emit(ctx, 'revoltRoll', { actor: pid, rule: '19.d', pub: { player: pid, value: v, provinces: hit, extra: true, exempt: f.exclude, ...(r.pick !== null ? { tied: r.tied } : {}) } });
+  revoltPickedEvent(ctx, pid, r, true);
+  for (const id of match.filter(m => !S.canRevolt(state, data, m))) emit(ctx, 'revoltImmune', { actor: pid, rule: '17.c', pub: { player: pid, province: id, troops: state.provinces[id].troops, reason: `${data.rules.revoltImmuneAtTroops} or more troops never revolt` } });
   processRevolts(ctx, pid, hit, { source: 'extraRevoltRoll' });
 });
 

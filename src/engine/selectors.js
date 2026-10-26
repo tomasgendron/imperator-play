@@ -116,11 +116,13 @@ export function earnsReward(state, data, id) {
   if (p.status === 'allied') return p.troops >= alliedRewardNeed(state, data, id);
   return p.status === 'conquered' && p.troops >= minGarrison(state, data, id).min;
 }
-/** Does the province give its Resources-step bonus troop? (20.b, 20.k, 17.q) Allied provinces never do (19.r). */
+/** Does the province give its Resources-step bonus troop? (20.b, 20.k, 17.q) Allied provinces do when the owner's own troops reach
+ *  the Game Roll reward minimum, natives + 1 with Pompey / Garrison card applied (19.r, 17.d; Vidi 2026-10-25). */
 export function earnsBonusTroop(state, data, id) {
   const p = state.provinces[id];
   if (!p || p.owner === null) return false;
   if (p.status === 'starting' || p.status === 'held') return true;
+  if (p.status === 'allied') return p.troops >= alliedRewardNeed(state, data, id);
   return p.status === 'conquered' && p.troops >= minGarrison(state, data, id).min;
 }
 

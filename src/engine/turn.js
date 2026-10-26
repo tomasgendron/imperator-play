@@ -65,7 +65,7 @@ function beginResources(ctx) {
     if (!S.earnsBonusTroop(state, data, id)) continue;
     changeTroops(ctx, id, 1);
     t.bonusTroopsGained.push({ province: id, n: 1 });
-    emit(ctx, 'bonusTroopsGranted', { actor: pid, rule: '20.b', pub: { player: pid, province: id, n: 1 } });
+    emit(ctx, 'bonusTroopsGranted', { actor: pid, rule: state.provinces[id].status === 'allied' ? '19.r' : '20.b', pub: { player: pid, province: id, n: 1, ...(state.provinces[id].status === 'allied' ? { allied: true } : {}) } });
   }
   const pl = mustPlayer(state, pid);
   if (pl.startIncome && pl.startProvince && state.provinces[pl.startProvince].status === 'starting' && state.provinces[pl.startProvince].owner === pid) {
@@ -375,14 +375,31 @@ export function processRevolts(ctx, pid, queue, { source = 'revoltRoll', asked =
 /** Response windows answered by PLAY_CARD / PASS, by `frame.window` (cards.js and battle.js fill this). */
 export const responseWindows = {};
 
+/**
+ * At most 1 province revolts per Revolt Roll (17.c, 19.h; Vidi 2026-10-25): when 2+ provinces that can revolt share the number, one is
+ * picked at random with equal odds by a die with as many sides as tied provinces (the game RNG, so the host decides online).
+ * Returns { hit: [the one province] or [], tied: [all that could revolt], pick: die value or null }.
+ */
+export function pickRevolt(ctx, pid, cand) {
+  const tied = [...cand].sort();
+  if (tied.length < 2) return { hit: tied, tied, pick: null };
+  const v = roll(ctx, tied.length, 'revoltPick', pid);
+  return { hit: [tied[v - 1]], tied, pick: v };
+}
+export function revoltPickedEvent(ctx, pid, r, extra = false) {
+  if (r.pick === null) return;
+  emit(ctx, 'revoltPicked', { actor: pid, rule: extra ? '19.h' : '17.c', pub: { player: pid, provinces: r.tied, die: 'd' + r.tied.length, value: r.pick, province: r.hit[0], extra } });
+}
 defineRoll('revoltRoll', (ctx, f) => {
   const { state, data } = ctx; const pid = f.player;
   const v = roll(ctx, data.rules.dice.revoltRoll, 'revoltRoll', pid);
   popFrame(ctx);
-  const match = S.revoltCandidates(state, pid).filter(id => state.provinces[id].number === v);   // every matching conquered province revolts (Q7)
-  const hit = match.filter(id => S.canRevolt(state, data, id));
-  emit(ctx, 'revoltRoll', { actor: pid, rule: '17.c', pub: { player: pid, value: v, provinces: hit } });
-  for (const id of match.filter(m => !hit.includes(m))) emit(ctx, 'revoltImmune', { actor: pid, rule: '17.c', pub: { player: pid, province: id, troops: state.provinces[id].troops, reason: `${data.rules.revoltImmuneAtTroops} or more troops never revolt` } });
+  const match = S.revoltCandidates(state, pid).filter(id => state.provinces[id].number === v);
+  const r = pickRevolt(ctx, pid, match.filter(id => S.canRevolt(state, data, id)));   // at most 1 revolts (17.c)
+  const hit = r.hit;
+  emit(ctx, 'revoltRoll', { actor: pid, rule: '17.c', pub: { player: pid, value: v, provinces: hit, ...(r.pick !== null ? { tied: r.tied } : {}) } });
+  revoltPickedEvent(ctx, pid, r);
+  for (const id of match.filter(m => !S.canRevolt(state, data, m))) emit(ctx, 'revoltImmune', { actor: pid, rule: '17.c', pub: { player: pid, province: id, troops: state.provinces[id].troops, reason: `${data.rules.revoltImmuneAtTroops} or more troops never revolt` } });
   processRevolts(ctx, pid, hit);
 });
 

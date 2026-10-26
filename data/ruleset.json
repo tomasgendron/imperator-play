@@ -251,6 +251,14 @@
    "value": 3,
    "rule": "20.o, 4.b (Vidi 2026-10-21: at least 2 provinces between starts = shortest path >= 3); Q55"
   },
+  "twoPlayerSides": {
+   "value": {
+    "players": 2,
+    "west": ["britain", "gaul", "iberia", "mauretania"],
+    "east": ["dalmacia", "macedonia", "greece", "parthia", "egypt"]
+   },
+   "rule": "4.g, 15.i, 20.o (Vidi 2026-10-25): in a 2-player game one player starts in the west, the other in the east; Swiss, Germanica, Roma and Carthage are not starts"
+  },
   "startProvinceExcluded": {
    "value": [
     "roma",
@@ -528,6 +536,10 @@
   "caesarFledFromAttacker": {
    "value": "borrowedFirst",
    "rule": "15.b, Q88 (Vidi 2026-10-21): when Caesar defends, a borrowed attacker troop flees first, an own one only if no borrowed is left; 'ownFirst' = the old default"
+  },
+  "bribeOwnAllyGold": {
+   "value": 1,
+   "rule": "18.v, 19.r (Vidi 2026-10-25): Bribe the Ally! second use: the Gold paid to the bank to turn your own allied province into a conquered one (troops stay, no Prestige)"
   },
   "bribeOwnerPrestigeLoss": {
    "value": 0,

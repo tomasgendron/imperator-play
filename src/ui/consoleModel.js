@@ -22,7 +22,7 @@ export const setupChoices = data => ({
   generals: data.generals.map(g => ({ id: g.id, name: g.name })),
   starts: data.provinceIds.filter(id => data.provincesById[id].startingEligible).map(id => ({ id, name: data.provincesById[id].name })),
 });
-export const checkSetup = (data, seats, mode) => validateSetup(data, { players: seats.map(x => ({ name: x.name, controller: x.controller, general: x.general, startProvince: x.startProvince || undefined })), startProvinceMode: mode });
+export const checkSetup = (data, seats, mode) => validateSetup(data, { players: seats.map(x => ({ name: x.name, controller: x.controller, general: x.general, startProvince: x.startProvince || undefined, startSide: x.startSide || undefined })), startProvinceMode: mode });
 /** Is it an AI seat's turn to answer (or an automatic deal with nobody to ask)? */
 export function aiToMove(s) {
   const state = stateOf(s);
@@ -66,6 +66,7 @@ export function describePrompt(state, data) {
     if (f?.kind === 'roll') return `Setup: ${pn(state, f.player ?? state.players[0].id)} rolls ${f.die} (${f.purpose}).`;
     if (f?.kind === 'setupGeneral') return `Setup: ${pn(state, f.player)} chooses a general.`;
     if (f?.kind === 'setupStartProvince') return `Setup: ${pn(state, f.player)} picks a start province.`;
+    if (f?.kind === 'setupSide') return `Setup: ${pn(state, f.player)} chooses a side, west or east (4.g).`;
     return 'Setup.';
   }
   const t = state.turn; const who = pn(state, whoActs(state));
@@ -87,7 +88,9 @@ const T = {
   rollOffTie: (e, st) => `Tie in the roll-off between ${e.pub.players.map(id => pn(st, id)).join(' and ')}: they roll again (round ${e.pub.round}).`,
   turnOrderSet: (e, st) => `Turn order: ${e.pub.order.map(id => pn(st, id)).join(', ')}.`,
   generalChosen: (e, st, d) => `${pn(st, e.pub.player)} takes ${d.generalsById[e.pub.general]?.name ?? e.pub.general}.`,
-  startProvincesDealt: (e, st, d) => `Start provinces dealt: ${e.pub.assignments.map(a => pn(st, a.player) + ' ' + prov(d, a.province)).join(', ')} (distance ${e.pub.usedDistance}).`,
+  startProvincesDealt: (e, st, d) => `Start provinces dealt: ${e.pub.sides ? 'sides ' + e.pub.sides.map(x => pn(st, x.player) + ' ' + x.side).join(', ') + '; ' : ''}${e.pub.assignments.map(a => pn(st, a.player) + ' ' + prov(d, a.province)).join(', ')} (distance ${e.pub.usedDistance}).`,
+  startSideChosen: (e, st) => `${pn(st, e.pub.player)} chooses the ${e.pub.side}: ${e.pub.sides.map(x => pn(st, x.player) + ' ' + x.side).join(', ')} (4.g).`,
+  startSidesSet: (e, st) => `Start sides: ${e.pub.sides.map(x => pn(st, x.player) + ' ' + x.side).join(', ')} (4.g).`,
   startProvinceChosen: (e, st, d) => `${pn(st, e.pub.player)} starts in ${prov(d, e.pub.province)} with ${e.pub.troops} troops.`,
   startNativesRolled: (e, st, d) => `${prov(d, e.pub.province)} natives: d6 ${e.pub.d6}, ${e.pub.count}.`,
   senateDecree: (e) => `Senate Decree ${e.pub.number}: every player sends a legion against Carthage.`,
@@ -105,7 +108,7 @@ const T = {
   diceRolled: (e, st) => `${pn(st, e.actor)} rolled ${e.pub.value} on ${e.pub.die} (${e.pub.purpose}).`,
   turnStarted: (e, st) => `--- Turn ${e.pub.number}, round ${e.pub.round}: ${pn(st, e.pub.player)} ---`,
   stepStarted: (e, st) => `${pn(st, e.pub.player)}: ${e.pub.step} step.`,
-  bonusTroopsGranted: (e, st, d) => `${pn(st, e.pub.player)} gets +1 troop in ${prov(d, e.pub.province)} (20.b).`,
+  bonusTroopsGranted: (e, st, d) => e.pub.allied ? `${pn(st, e.pub.player)} gets +1 troop in allied ${prov(d, e.pub.province)} (19.r, 20.b).` : `${pn(st, e.pub.player)} gets +1 troop in ${prov(d, e.pub.province)} (20.b).`,
   nativesHealed: (e, st, d) => `The natives of ${prov(d, e.pub.province)} are back to ${e.pub.present}.`,
   cardDrawn: (e, st) => `${pn(st, e.pub.player)} draws a ${e.pub.deck} card${e.priv ? ' (' + e.priv.def + ')' : e.pub.def ? ' (' + e.pub.def + ')' : ''}.`,
   resourceApplied: (e, st) => `${pn(st, e.pub.player)}'s Resource card ${e.pub.def}: ${G(e.pub.gold ?? 0)}, ${e.pub.troops ?? 0} troop(s) to place.`,
@@ -120,6 +123,7 @@ const T = {
   romeRoll: (e, st) => `Rome Roll for ${pn(st, e.pub.roller)} (${e.pub.number}).`,
   romeTaxPaid: (e, st) => e.pub.nothing ? `${pn(st, e.pub.player)} pays nothing (${e.pub.reason}).` : e.pub.troop ? `${pn(st, e.pub.player)} pays a troop to Roma from ${e.pub.from}.` : `${pn(st, e.pub.player)} pays ${G(e.pub.gold)} to ${e.pub.to === 'roma' ? 'the Roma pile' : pn(st, e.pub.to)}.`,
   romaGoldConverted: (e) => `Roma pile: 2 Gold became a troop (Roma ${e.pub.romaTroops}, pile ${e.pub.goldPile}).`,
+  revoltPicked: (e, st, d) => `${e.pub.provinces.map(p => prov(d, p)).join(' and ')} share the number: only 1 revolts, so ${pn(st, e.pub.player)} rolls ${e.pub.die} = ${e.pub.value} to pick ${prov(d, e.pub.province)} (${e.rule}).`,
   revoltRoll: (e, st, d) => `Revolt Roll ${e.pub.value}: ${e.pub.provinces.length ? e.pub.provinces.map(p => prov(d, p)).join(', ') + ' revolt' : 'nothing revolts'}.`,
   provinceRevolted: (e, st, d) => `${prov(d, e.pub.province)} revolts: minimum ${e.pub.minimum}, ${e.pub.killed} killed, ${e.pub.survivors} survive.`,
   survivorsMoved: (e, st, d) => `${e.pub.n} survivor(s) go to ${prov(d, e.pub.to)}${e.pub.general ? ' with the general' : ''}.`,
@@ -140,7 +144,7 @@ const T = {
   cardReshuffled: (e, st) => `${pn(st, e.pub.player)} may hold only one ${e.pub.def}: it is shuffled back and ${pn(st, e.pub.player)} draws again.`,
   discardShuffledUnder: (e, st) => `Only cards ${pn(st, e.pub.player)} may not hold are left in the draw pile: the discard pile is shuffled, ${pn(st, e.pub.player)} draws a card from it and the other ${e.pub.underneath} go under the draw pile (Q78).`,
   catapultBought: (e, st) => `${pn(st, e.pub.player)} buys a Catapult (now ${e.pub.catapults}).`,
-  classicStartsChecked: (e, st, d) => e.pub.ok ? `Classic starts: ${e.pub.assignments.map(a => pn(st, a.player) + ' in ' + prov(d, a.province)).join(', ')}.` : `Classic starts too close (${e.pub.tooClose.map(p => p.map(x => prov(d, x)).join('-')).join(', ')}): start provinces are dealt at random (15.i, 20.o).`,
+  classicStartsChecked: (e, st, d) => e.pub.ok ? `Classic starts: ${e.pub.assignments.map(a => pn(st, a.player) + ' in ' + prov(d, a.province)).join(', ')}.` : e.pub.sidesBroken ? `Classic starts ${e.pub.assignments.map(a => prov(d, a.province)).join(' and ')} are not one west and one east: in a 2-player game the starts are dealt at random by side (15.i, 4.g).` : `Classic starts too close (${e.pub.tooClose.map(p => p.map(x => prov(d, x)).join('-')).join(', ')}): start provinces are dealt at random (15.i, 20.o).`,
   attackDeclared: (e, st, d) => `${pn(st, e.pub.player)} ATTACKS ${prov(d, e.pub.target)}${e.pub.defender ? ' (' + pn(st, e.pub.defender) + ')' : ''} from ${prov(d, e.pub.from)} with ${e.pub.troops} troop(s)${e.pub.general ? ' and the general' : ''}${e.pub.sea ? ' by sea' : ''}${e.pub.via ? ' through ' + prov(d, e.pub.via) : ''}.`,
   borrowDecided: (e, st, d) => `${pn(st, e.pub.player)} borrows ${e.pub.count} of up to ${e.pub.max} native(s) of ${prov(d, e.pub.from)}.`,
   battleCardsCommitted: (e, st) => `${pn(st, e.pub.player)} (${e.pub.role}) commits ${e.pub.n} battle card(s).`,
@@ -186,6 +190,7 @@ const T = {
   troopsAssassinated: (e, st, d) => `${pn(st, e.pub.player)}'s assassins kill ${e.pub.n} of ${e.pub.owner ? pn(st, e.pub.owner) + "'s troops" : 'the natives'} in ${prov(d, e.pub.province)} (${e.pub.left} left).`,
   cardSold: (e, st, d) => `${pn(st, e.pub.player)} sells ${d.cardDefsById[e.pub.card]?.name ?? e.pub.card} for ${e.pub.gold} Gold (from the bank, not an action).`,
   generalMoved: (e, st, d) => `${pn(st, e.pub.player)}'s general moves from ${prov(d, e.pub.from)} to ${prov(d, e.pub.to)} (free, once per turn).`,
+  allyMadeConquered: (e, st, d) => `${pn(st, e.pub.player)} pays ${G(e.pub.gold)} to the bank: allied ${prov(d, e.pub.province)} becomes a conquered province (keeps its ${e.pub.troops} troops, no Prestige, 18.v).`,
   allyBribed: (e, st, d) => `${pn(st, e.pub.player)} bribes ${prov(d, e.pub.province)} away from ${pn(st, e.pub.from)} for ${G(e.pub.gold)}: ${e.pub.switched} troop switches sides, ${e.pub.lost} lost, ${e.pub.fled} flee.`,
   displeasedRedirected: (e, st) => `${pn(st, e.pub.player)} plays Busy Little Bee! (${G(e.pub.gold)} to ${e.pub.goldTo === 'roma' ? 'Roma' : pn(st, e.pub.goldTo)}): ${pn(st, e.pub.to)} suffers ${e.pub.def} instead.`,
   displeasedNoEffect: (e, st) => `${e.pub.def}: no effect on ${pn(st, e.pub.player)} (${e.pub.reason}).`,

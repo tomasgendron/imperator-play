@@ -169,6 +169,10 @@ export function chooseAction(state, data, opts = {}) {
       const d = legal.find(x => x.action.general === 'random');
       return (d ?? legal[0]).action;
     }
+    case 'setupSide': {   // 4.g: the side whose best start scores highest (the same score as the start pick below)
+      const score = id => S.neighbours(data, id).reduce((t, n) => t + (data.provincesById[n].startingEligible ? 1.2 : 0.5) + (data.provincesById[n].land.includes(id) ? 0.3 : 0), 0);
+      return pickBest(legal.map(d => ({ a: d.action, v: Math.max(...data.rules.twoPlayerSides[d.action.side].map(score)) })));
+    }
     case 'setupStartProvince': {
       const score = id => S.neighbours(data, id).reduce((t, n) => t + (data.provincesById[n].startingEligible ? 1.2 : 0.5) + (data.provincesById[n].land.includes(id) ? 0.3 : 0), 0);
       return pickBest(legal.map(d => ({ a: d.action, v: score(d.action.province) })));

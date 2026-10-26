@@ -27,7 +27,7 @@ export function eventsFor(events, viewerId) {
  *  page can say "Waiting for X" and keep the battle panel up. */
 const FRAME_KEEP = ['id', 'kind', 'player', 'resolvableBy', 'battleId'];
 const FRAME_PUBLIC = {
-  roll: null, draw: null, setupGeneral: null, setupStartProvince: null, placeTroops: null, chooseProvince: null, chooseBorrow: null,
+  roll: null, draw: null, setupGeneral: null, setupSide: null, setupStartProvince: null, placeTroops: null, chooseProvince: null, chooseBorrow: null,
   choosePerk: null, battleContinue: null, placeSurvivors: null, decree: null, rome: null, number: null, natives: null,   // null = all fields public
   chooseBattleCards: ['role', 'attackerPlayed'],   // not `held` (the defs and counts of the hand's battle cards)
   discardCards: ['purpose', 'count'],               // not `options` (the hand's uids)

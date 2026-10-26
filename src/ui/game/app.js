@@ -119,7 +119,9 @@ const decided = x => !!x.start || !!x.skip;
 const mayPick = i => { const o = pickOrder(); const k = o.indexOf(i); return k >= 0 && o.slice(0, k).every(j => decided(seats[j])); };
 const nextPicker = () => pickOrder().find(j => !decided(seats[j])) ?? null;
 /** Q110: the roll-off is for this seed and seat count only; changing either rolls again (and clears the picks made in the old order). */
-function resetRollOff() { if (!rollOff) return; rollOff = null; seats.forEach(x => { x.start = ''; x.skip = false; }); }
+function resetRollOff() { if (!rollOff) return; rollOff = null; seats.forEach(x => { x.start = ''; x.skip = false; x.side = ''; }); }
+/** v28 batch 7 item 5: a 2-player game starts one player in the West and one in the East (4.g); the first picker chooses the side. */
+const sidesOn = () => seats.length === 2 && !!data.rules.twoPlayerSides;
 let genSeat = 0;    // which seat a click on a general card gives the general to (M8.1)
 const setSeatCount = n => { if (n !== seats.length) resetRollOff(); while (seats.length < n) seats.push({ name: 'Livia (AI)', controller: 'ai', general: GEN_DEFAULT, start: '' }); while (seats.length > n) seats.pop(); pickSeat = Math.min(pickSeat, n - 1); genSeat = Math.min(genSeat, n - 1); renderSetup(); };
 /** Why `id` cannot be seat i's start, with the picks of the seats before it in the pick order (Q110; the engine's validateSetup decides): null when it can. */
@@ -127,7 +129,7 @@ function startWhy(i, id) {
   const o = pickOrder(); const before = o.length ? o.slice(0, o.indexOf(i)) : seats.map((_, j) => j).filter(j => j !== i);
   // the earlier picks first and seat i last, so a clash is reported against seat i (validateSetup checks the seats in this order)
   const list = [...before, i, ...seats.map((_, j) => j).filter(j => j !== i && !before.includes(j))];
-  const r = checkSetup(data, list.map(j => ({ name: 'x', controller: seats[j].controller === 'remote' ? 'human' : seats[j].controller, general: 'random', startProvince: j === i ? id : before.includes(j) ? seats[j].start : '' })), 'selected');
+  const r = checkSetup(data, list.map(j => ({ name: 'x', controller: seats[j].controller === 'remote' ? 'human' : seats[j].controller, general: 'random', startProvince: j === i ? id : before.includes(j) ? seats[j].start : '', startSide: sidesOn() ? seats[j].side || undefined : undefined })), 'selected');
   const me = list.indexOf(i);
   const e = r.errors.find(x => x.seat === me && x.field === 'startProvince') ?? r.errors.find(x => x.seat === null && x.field === 'startProvince');
   return e ? e.message : null;
@@ -247,7 +249,7 @@ function renderStartPick() {
     $('#spHead').innerHTML = `<b>Step 1:</b> roll for turn order. The last to move picks first. <button type="button" class="btn sm gold" id="spRoll">🎲 Roll for turn order</button>`;
     $('#spTokens').innerHTML = data.provinceIds.map(id => { const t = data.provincesById[id].token; const why = 'Roll for turn order first: the seats pick in reverse turn order (Q110).';
       return `<button type="button" class="sptok bad wait" data-id="${id}" data-why="${attr(why)}" title="${attr(why)}" style="left:${t.x / sp.w * 100}%;top:${t.y / sp.h * 100}%">${esc(prov(id))}</button>`; }).join('');
-    $('#spRoll').onclick = () => { rollOff = G.rollOffPreview(data, { seed: seedNow(), n: seats.length }); seats.forEach(x => { x.start = ''; x.skip = false; }); pickSeat = nextPicker() ?? 0; SND.play('dice_land'); renderSetup(); };
+    $('#spRoll').onclick = () => { rollOff = G.rollOffPreview(data, { seed: seedNow(), n: seats.length }); seats.forEach(x => { x.start = ''; x.skip = false; x.side = ''; }); pickSeat = nextPicker() ?? 0; SND.play('dice_land'); renderSetup(); };
     $$('#spTokens .sptok').forEach(b => b.onclick = () => { $('#spWhy').textContent = b.dataset.why; $('#spWhy').classList.add('bad'); SND.play('error_denied'); });
     return;
   }
@@ -255,6 +257,18 @@ function renderStartPick() {
   const i = pickSeat; const x = seats[i]; const k = po.indexOf(i);
   $('#spHead').innerHTML = `<span class="sw" style="background:${SEAT_COLORS[i]}"></span> <b>${esc(x.name || 'Seat ' + (i + 1))}</b> (${SEAT_COLOR_NAMES[i]}, pick ${k + 1} of ${po.length}), click your start province · <button type="button" class="btn sm" id="spRandom">🎲 Random for this seat</button>`;
   const owner = id => seats.findIndex(y => y.start === id);
+  if (sidesOn() && !seats[po[0]].side) {   // v28 batch 7 item 5: the first picker (reverse turn order) chooses West or East first
+    const f = po[0], tw = data.rules.twoPlayerSides;
+    $('#spHead').innerHTML = `<span class="sw" style="background:${SEAT_COLORS[f]}"></span> <b>${esc(seats[f].name || 'Seat ' + (f + 1))}</b> picks first: choose your side (4.g) · <button type="button" class="btn sm gold" id="spWest" data-side="west">West</button> <button type="button" class="btn sm gold" id="spEast" data-side="east">East</button> <span class="small">The other player gets the other side.</span>`;
+    $('#spTokens').innerHTML = data.provinceIds.map(id => { const t = data.provincesById[id].token; const sd = tw.west.includes(id) ? 'west' : tw.east.includes(id) ? 'east' : null;
+      const why = sd ? `Choose West or East first; ${prov(id)} is in the ${sd === 'west' ? 'West' : 'East'}.` : `${prov(id)} is in neither side: no one starts there in a 2-player game (4.g).`;
+      return `<button type="button" class="sptok bad wait${sd ? ' side-' + sd : ' noside'}" data-id="${id}" data-why="${attr(why)}" title="${attr(why)}" style="left:${t.x / sp.w * 100}%;top:${t.y / sp.h * 100}%">${esc(prov(id))}</button>`; }).join('');
+    $$('#spHead [data-side]').forEach(b => b.onclick = () => { seats[f].side = b.dataset.side; seats[po[1]].side = b.dataset.side === 'west' ? 'east' : 'west'; SND.play('province_select'); renderSetup(); });
+    $$('#spTokens .sptok').forEach(b => b.onclick = () => { $('#spWhy').textContent = b.dataset.why; $('#spWhy').classList.add('bad'); SND.play('error_denied'); });
+    return;
+  }
+  if (sidesOn()) $('#spHead').insertAdjacentHTML('beforeend', ` <span class="small" id="spSide">${esc(x.name || 'Seat ' + (i + 1))} starts in the <b>${x.side === 'west' ? 'West' : 'East'}</b>. <button type="button" class="btn sm" id="spSideReset">Change sides</button></span>`);
+  const sr = $('#spSideReset'); if (sr) sr.onclick = () => { seats.forEach(y => { y.side = ''; y.start = ''; y.skip = false; }); pickSeat = po[0]; renderSetup(); };
   $('#spTokens').innerHTML = data.provinceIds.map(id => {
     const t = data.provincesById[id].token; const o = owner(id); const why = !data.provincesById[id].startingEligible ? startWhy(i, id) : o >= 0 && o !== i ? `${prov(id)} is already ${seats[o].name}'s start.` : o === i ? null : startWhy(i, id);
     const cls = o >= 0 ? ' taken' : why ? ' bad' : ' ok';
@@ -282,7 +296,7 @@ function validate() {
 }
 /** The seats as the engine gets them: an Online seat is a 'human' controller named after its guest (M11). */
 const remoteName = i => NET?.role === 'host' ? NET.room.seats[i]?.name ?? '' : '';
-const engineSeats = () => seats.map((x, i) => ({ name: x.controller === 'remote' ? (remoteName(i) || `Guest ${i + 1}`) : x.name.trim(), controller: x.controller === 'remote' ? 'human' : x.controller, general: x.general, startProvince: x.start || undefined }));
+const engineSeats = () => seats.map((x, i) => ({ name: x.controller === 'remote' ? (remoteName(i) || `Guest ${i + 1}`) : x.name.trim(), controller: x.controller === 'remote' ? 'human' : x.controller, general: x.general, startProvince: x.start || undefined, startSide: sidesOn() && $('#startMode').value === 'selected' ? x.side || undefined : undefined }));
 function startGame() {
   if (!validate()) return;
   const mode = $('#startMode').value;
@@ -743,7 +757,7 @@ async function playEvents(events, before = null) {
         lastRoll[e.actor ?? 'none'] = { die: e.pub.die, value: e.pub.value, purpose: e.pub.purpose };
         if (BATTLE_DICE.has(e.pub.purpose)) break; // combat dice animate in the Battle tab
         renderPlayers(); const box = $(`.player[data-pid="${e.actor}"] .tray .diebox`);
-        if (box) { box.classList.add('rolling'); const n = $('.n', box); const t0 = Date.now(); while (Date.now() - t0 < spd(520)) { n.textContent = 1 + Math.floor(Math.random() * (e.pub.die === 'd10' ? 10 : 6)); await sleep(60); } box.classList.remove('rolling'); n.textContent = e.pub.value; SND.play('dice_land'); await sleep(spd(250)); }
+        if (box) { box.classList.add('rolling'); const n = $('.n', box); const t0 = Date.now(); while (Date.now() - t0 < spd(520)) { n.textContent = 1 + Math.floor(Math.random() * (parseInt(e.pub.die.slice(1), 10) || 6)); await sleep(60); } box.classList.remove('rolling'); n.textContent = e.pub.value; SND.play('dice_land'); await sleep(spd(250)); }
         break;
       }
       case 'attackDeclared': startBattleView(e, s, before); drawArrow(e.pub.from, e.pub.target, '#ffdf7a'); break;
@@ -1002,11 +1016,32 @@ function render() {
   document.body.dataset.viewer = viewer ?? '';
   const legal = mineNow();
   document.body.dataset.humanTurn = legal.length ? '1' : '';
-  renderTop(); renderPhase(legal); renderPlayers(); renderMap(legal); renderTable(); renderDecks(legal); renderHand(legal); renderLog(); renderBuilder(legal); renderBattleCtl(legal); renderAsk(legal);
+  renderTop(); renderPhase(legal); renderPlayers(); renderMap(legal); renderTable(); renderDecks(legal); renderHand(legal); renderLog(); renderBuilder(legal); renderBattleCtl(legal); renderAsk(legal); renderDrawCall(legal);
   document.body.classList.toggle('p3mode', s.players.length >= 3);
   if (!busy && !bpDone && !s.battle && $('#ovBattle').classList.contains('on')) closeBattlePop();
   if (viewer && news[viewer]?.length && !busy) setTimeout(showNews, 0);
   deadEndFlag();
+}
+/**
+ * v28 batch 7 item 1: with 2+ human players (hot-seat or online), a Game Card owed from the Game Roll gets a BIG public popup of WHO
+ * must draw it, on every screen (guests too: a draw frame is public). The drawer gets a Draw button in it; it never blocks anyone
+ * (not a modal), it can be hidden for this draw, and it goes away as soon as the card is drawn.
+ */
+let drawCallHidden = null;
+function renderDrawCall(legal) {
+  const el = $('#drawCall'); if (!el) return;
+  const s = st(); const f = topFrame(s);
+  const humans = s.players.filter(p => G.isHuman(s, p.id)).length;
+  const on = !!f && f.kind === 'draw' && f.deck === 'game' && f.reason === 'reward' && humans >= 2 && !busy && drawCallHidden !== f.id && !hostHidden();
+  if (!on) { el.classList.remove('on'); el.innerHTML = ''; delete el.dataset.frame; document.body.dataset.drawCall = ''; return; }
+  if (el.dataset.frame === f.id) return;
+  const mine = legal.find(d => d.type === 'DRAW_CARD');
+  el.dataset.frame = f.id; el.dataset.who = f.player;
+  el.innerHTML = `<div class="dc-box" style="--wc:var(--${col(f.player)})"><div class="dc-who"><b>${esc(pn(f.player))}</b></div><div class="dc-row"><img src="${img('back.game')}" alt=""><div class="dc-txt"><h2>${esc(pn(f.player))} draws a Game Card</h2><p>Game Roll reward (16.k, 16.l): ${esc(pn(f.player))}'s province came up, so ${esc(pn(f.player))} must draw a Game Card now.</p>`
+    + `<div class="dc-btns">${mine ? `<button class="btn gold" id="dcDraw">🂠 Draw the Game Card</button>` : `<span class="small">Waiting for ${esc(pn(f.player))}…</span>`}<button class="btn sm" id="dcHide">Hide</button></div></div></div></div>`;
+  el.classList.add('on'); document.body.dataset.drawCall = f.player;
+  $('#dcHide').onclick = () => { drawCallHidden = f.id; renderDrawCall(mineNow()); };
+  const b = $('#dcDraw'); if (b) b.onclick = () => { const d = mineNow().find(x => x.type === 'DRAW_CARD'); if (d) { el.classList.remove('on'); human(d); } };
 }
 /** v26.1: a prompt nobody can answer is never a silent dead end: the host (or the local page) says so at once and offers the save
  *  file to send (the engine's own fuzz tests find none; this is the safety net). */
@@ -1183,7 +1218,9 @@ let cardPick = null;
 function openCardTargets(uid) {
   const s = st(); const def = s.cards[uid].def; const list = mineNow().filter(d => d.type === 'PLAY_CARD' && d.action.cardUid === uid);
   cardPick = null;
-  const intro = def === 'revolt' ? 'Choose the enemy province to inspire a revolt in. Valid targets: a rival\'s conquered province with fewer than 10 troops; never a starting province, an allied province or Roma (17.c, 17.r, 18.m).' : 'Choose the target.';
+  if (def === 'assassin' && list.some(d => d.action.kills)) { openAssassinFlow(uid, list); return; }
+  const intro = def === 'revolt' ? 'Choose the enemy province to inspire a revolt in. Valid targets: a rival\'s conquered province with fewer than 10 troops; never a starting province, an allied province or Roma (17.c, 17.r, 18.m).'
+    : def === 'bribe_the_ally' ? 'Bribe a province allied to a rival (pay its native count in Gold; it becomes your ally), or pay 1 Gold to turn one of YOUR OWN allied provinces into a conquered province (it keeps its troops, no Prestige) (18.v, 19.r).' : 'Choose the target.';
   openModal(`<div class="ask menu" id="cardTargets" style="display:flex;flex-direction:column;gap:8px;min-width:420px"><h2>${esc(data.cardDefsById[def]?.name ?? def)}</h2><p class="small">${esc(intro)}</p><div class="opts bs-list">${list.map(d => { const r = targetRow(d); return `<button class="btn tgt" data-pick="${attr(G.descKey(d))}" data-prov="${attr(r.id ?? '')}">${r.html}</button>`; }).join('')}</div><div class="foot"><button class="btn" data-close>Cancel</button><span class="spacer"></span><button class="btn gold" id="cardGo" disabled>Choose a target first</button></div></div>`);
   $$('#modalBox [data-pick]').forEach(b => b.onclick = () => {
     cardPick = b.dataset.pick; SND.play('province_select');
@@ -1191,6 +1228,58 @@ function openCardTargets(uid) {
     const go = $('#cardGo'); go.disabled = false; go.dataset.key = cardPick; go.textContent = `Play ${data.cardDefsById[def]?.name ?? def} on ${b.dataset.prov ? prov(b.dataset.prov) : 'this target'} ▶`;
   });
   $('#cardGo').onclick = () => { const d = list.find(x => G.descKey(x) === cardPick); if (!d) return; closeModal(); human(d); };
+}
+/**
+ * v28 batch 7 item 4: the Assassin as a short step flow instead of one long list of every legal combination:
+ * 1. pick a province -> 2. how many troops to kill there (only the legal amounts) -> 3. with 1, the second province -> confirm.
+ * Only legal provinces are shown (the engine's list: never Roma, never a neutral Carthage, not struck yet, 2+ troops). Back and
+ * Cancel on every step; nothing is played (and the card is not spent) until the last button. The list scrolls inside the popup.
+ */
+function openAssassinFlow(uid, list) {
+  const s = st(); const nm = data.cardDefsById.assassin?.name ?? 'Assassin!';
+  const acts = list.filter(d => d.action.kills);
+  const k = Math.max(...acts.map(d => d.action.kills.reduce((t, x) => t + x.n, 0)));
+  const provs = [...new Set(acts.flatMap(d => d.action.kills.map(x => x.province)))];
+  const find = kills => acts.find(d => d.action.kills.length === kills.length && kills.every(x => d.action.kills.some(y => y.province === x.province && y.n === x.n)));
+  const whose = id => { const p = s.provinces[id]; return p.owner ? `${pn(p.owner)}${p.status === 'allied' ? ' (allied)' : ''}` : 'natives'; };
+  const troops = id => { const p = s.provinces[id]; return p.owner ? p.troops : (p.native.present ?? 0); };
+  const row = (id, attrs, extra = '') => `<button class="btn tgt as-prov" ${attrs}><b>${esc(prov(id))}</b> <span class="small">${esc(whose(id))} · ${troops(id)} troops${extra}</span></button>`;
+  let st8 = { step: 'first', a: null, n: null, b: null };
+  const render = () => {
+    const { step, a, n, b } = st8;
+    const head = `<h2>${esc(nm)}</h2>`;
+    let body = '', back = true, go = '';
+    if (step === 'first') {
+      body = `<p class="small">Step 1 of ${k === 2 ? 3 : 2}: choose a province to strike. ${k === 2 ? 'The Assassin must kill 2 troops: 2 in one province, or 1 each in two provinces' : 'The Assassin kills 1 troop (only 1 can be killed now)'}; at least 1 troop always stays (18.e). Only legal targets are shown: never Roma or a neutral Carthage, nor a province already struck.</p>
+        <div class="as-list">${provs.map(id => row(id, `data-as-first="${attr(id)}"`)).join('')}</div>`;
+    } else if (step === 'count') {
+      const opts = [find([{ province: a, n: 2 }]) ? 2 : null, acts.some(d => d.action.kills.length === 2 && d.action.kills.some(x => x.province === a)) ? 1 : null].filter(Boolean);
+      body = `<p class="small">Step 2 of 3: how many troops to kill in <b>${esc(prov(a))}</b> (${troops(a)} troops)?</p>
+        <div class="as-list as-count">${opts.map(m => `<button class="btn tgt" data-as-n="${m}"><b>${m === 2 ? 'Kill 2 here' : 'Kill 1 here'}</b> <span class="small">${m === 2 ? 'both kills in this province' : 'then choose a second province for the other kill'}</span></button>`).join('')}</div>`;
+    } else if (step === 'second') {
+      const partners = provs.filter(id => id !== a && find([{ province: a, n: 1 }, { province: id, n: 1 }]));
+      body = `<p class="small">Step 3 of 3: 1 troop dies in <b>${esc(prov(a))}</b>. Choose the province for the second kill.</p>
+        <div class="as-list">${partners.map(id => row(id, `data-as-second="${attr(id)}"`)).join('')}</div>`;
+    } else {
+      const kills = n === 2 || k === 1 ? [{ province: a, n: k === 1 ? 1 : 2 }] : [{ province: a, n: 1 }, { province: b, n: 1 }];
+      body = `<p class="as-sum">Kill <b>${kills.map(x => `${x.n} in ${esc(prov(x.province))}`).join('</b> and <b>')}</b>.</p><p class="small">The card is spent when you press Play.</p>`;
+      go = `<button class="btn gold" id="asGo">Play ${esc(nm)} ▶</button>`;
+      st8.kills = kills;
+    }
+    openModal(`<div class="ask menu" id="assassinFlow" data-step="${step}">${head}${body}<div class="foot"><button class="btn" id="asBack"${back ? '' : ' disabled'}>◀ Back</button><button class="btn" id="asCancel" data-close>Cancel</button><span class="spacer"></span>${go}</div></div>`);
+    $$('#modalBox [data-as-first]').forEach(x => x.onclick = () => { SND.play('province_select'); st8 = { step: k === 2 ? 'count' : 'confirm', a: x.dataset.asFirst, n: k === 2 ? null : 1, b: null }; render(); });
+    $$('#modalBox [data-as-n]').forEach(x => x.onclick = () => { SND.play('province_select'); st8 = { ...st8, n: +x.dataset.asN, step: +x.dataset.asN === 2 ? 'confirm' : 'second' }; render(); });
+    $$('#modalBox [data-as-second]').forEach(x => x.onclick = () => { SND.play('province_select'); st8 = { ...st8, b: x.dataset.asSecond, step: 'confirm' }; render(); });
+    $('#asBack').onclick = () => {
+      if (st8.step === 'first') { closeModal(); return; }
+      if (st8.step === 'count') st8 = { step: 'first', a: null, n: null, b: null };
+      else if (st8.step === 'second') st8 = { ...st8, step: 'count', n: null };
+      else st8 = k === 1 ? { step: 'first', a: null, n: null, b: null } : st8.n === 2 ? { ...st8, step: 'count', n: null } : { ...st8, step: 'second', b: null };
+      render();
+    };
+    const g = $('#asGo'); if (g) g.onclick = () => { const d = find(st8.kills); if (!d) return; closeModal(); human(d); };
+  };
+  render();
 }
 function optionsHtml(list) {
   return list.map(d => {
@@ -1261,7 +1350,7 @@ function panelActsHtml(pid) {
   if (f?.kind === 'draw') for (const d of legal.filter(x => x.type === 'DRAW_CARD')) b.push(`<button class="btn sm gold drawbtn" data-key="${attr(G.descKey(d))}"${busy ? ' disabled' : ''}>🂠 ${esc(d.label)}</button>`);
   return b.length ? `<div class="pacts">${b.join('')}</div>` : '';
 }
-const ROLL_NAMES = { gameRoll: 'GAME ROLL', revoltRoll: 'REVOLT ROLL', extraRevoltRoll: 'EXTRA REVOLT ROLL', rollOff: 'ROLL-OFF', startNative: 'START NATIVES', nativeRoll: 'NATIVES', loyalty: 'LOYALTY', startProvinces: 'DEAL STARTS' };
+const ROLL_NAMES = { gameRoll: 'GAME ROLL', revoltRoll: 'REVOLT ROLL', extraRevoltRoll: 'EXTRA REVOLT ROLL', rollOff: 'ROLL-OFF', startNative: 'START NATIVES', nativeRoll: 'NATIVES', loyalty: 'LOYALTY', startProvinces: 'DEAL STARTS', revoltPick: 'REVOLT PICK', startSides: 'DEAL SIDES' };
 /** Batch 4 item 4: the active player's turn actions (Attack, Ally, Move, Buy, Build, Play card, Sell, Scout, More, Move general, End Turn),
  *  in the panel below the Saved resources and the die, beside the general's card; or the button that reopens a pending question. */
 function turnActsHtml(pid) {

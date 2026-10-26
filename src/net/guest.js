@@ -16,6 +16,8 @@ export const RETRY_MS = [500, 1000, 2000, 3000, 5000, 8000, ...Array(28).fill(10
 /** Bye reasons that end the session for good (no reconnecting). HOST_LEFT does not: the host may resume the game. */
 /** A reconnect attempt whose link opened but that got no welcome in this time (a page that is not our host) fails and retries. */
 export const HELLO_MS = 8000;
+/** v26.1: a resync asked for and not answered in this time may be asked for again (a lost request must not stop it for good). */
+export const RESYNC_RETRY_MS = 4000;
 export const FINAL_BYES = ['BUILD_MISMATCH', 'FULL', 'STARTED', 'SEAT_REMOVED', 'REPLACED', 'GAME_OVER'];
 
 export class GuestClient {
@@ -25,7 +27,7 @@ export class GuestClient {
    *  session (onHostGone), as in M11. */
   constructor({ transport, makeTransport = null, build, name, token = null, data, hooks = {}, retryMs = RETRY_MS, now = () => Date.now(), timers = globalThis }) {
     Object.assign(this, { makeTransport, build, name, token, data, hooks, retryMs, now, timers });
-    this.seat = null; this.playerId = null; this.lobby = null; this.session = null; this.legal = []; this.seq = null; this.ended = null; this.ai = false; this.log = []; this.logTo = null; this.resyncAsked = false;
+    this.seat = null; this.playerId = null; this.lobby = null; this.session = null; this.legal = []; this.seq = null; this.ended = null; this.ai = false; this.log = []; this.logTo = null; this.resyncAsked = false; this.resyncAt = 0; this.resyncs = []; this.applied = null;
     this.status = 'connecting'; this.hostAway = false; this.lastHeard = now(); this.attempt = 0; this.timer = null; this.reconnects = 0;
     this.bind(transport);
   }
@@ -108,10 +110,22 @@ export class GuestClient {
         this.hooks.onWelcome?.(this, m); break;
       }
       case 'lobby': this.lobby = m; this.hooks.onLobby?.(this, m); break;
-      case 'ping': this.transport.send(HOST, msg('pong', { n: m.n })); break;
+      case 'ping': {
+        this.transport.send(HOST, msg('pong', { n: m.n }));
+        // v26.1 heartbeat: the host's last update is not the one this guest has (dropped, discarded on a gap, never applied): resync.
+        // The link keeps order, so every update the host sent before this ping has already arrived.
+        if (Number.isInteger(m.seq) && this.session) {
+          const v = this.session.steps.at(-1)?.state?.turn ?? {};
+          const off = m.seq !== this.seq ? 'SEQ' : (m.turn != null && m.turn !== v.number) || (m.step != null && m.step !== v.step) ? 'STEP' : null;
+          if (off) this.resync('BEAT_' + off);
+        }
+        this.hooks.onBeat?.(this, m);
+        break;
+      }
       case 'update': {
         // M12: the view has no log; the log is kept here from the events (the whole log when `full`). A gap: ask for everything.
-        if (!m.full && m.from !== this.logTo) { if (!this.resyncAsked) { this.resyncAsked = true; this.transport.send(HOST, msg('resync', {})); } return; }
+        if (!m.full && m.from !== this.logTo) { this.resync('GAP'); return; }
+        if (m.resync || (m.full && this.resyncAsked)) m.resynced = true;
         this.resyncAsked = false;
         this.log = m.full ? [...(m.events ?? [])] : [...(this.log ?? []), ...(m.events ?? [])];
         this.logTo = m.to;
@@ -124,7 +138,7 @@ export class GuestClient {
         this.session = { data: this.data, seed: 'online', steps, online: true };
         this.hooks.onUpdate?.(this, m); break;
       }
-      case 'reject': this.hooks.onReject?.(this, m); break;
+      case 'reject': if (m.code === 'STALE') this.resync('STALE'); this.hooks.onReject?.(this, m); break;
       case 'bye': {
         const r = m.reason ?? 'BYE';
         if ((this.status === 'reconnecting' || this.status === 'lost') && (r === 'FULL' || r === 'STARTED')) { this.notOurs(this.transport, 'NOT_OUR_ROOM'); break; }
@@ -133,6 +147,16 @@ export class GuestClient {
       }
       default: break;
     }
+  }
+  /** v26.1: asks the host for the whole current view (a seq gap, a heartbeat that does not match, a page that could not apply an
+   *  update, a STALE answer). Once per RESYNC_RETRY_MS at most, and again if the first request got no answer. */
+  resync(why = 'PAGE') {
+    if (this.ended || this.status !== 'connected') return false;
+    if (this.resyncAsked && this.now() - this.resyncAt < RESYNC_RETRY_MS) return false;
+    this.resyncAsked = true; this.resyncAt = this.now(); this.resyncs.push(why);
+    this.transport.send(HOST, msg('resync', { why }));
+    this.hooks.onResync?.(this, why);
+    return true;
   }
   /** Sends a move for this guest's own seat (the host checks it, rolls any dice and answers with an update or a reject). */
   act(action) { const { dice, ...a } = action ?? {}; this.transport.send(HOST, msg('act', { seq: this.seq, action: a })); }   // eslint-disable-line no-unused-vars

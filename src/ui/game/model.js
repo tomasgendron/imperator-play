@@ -56,6 +56,16 @@ export function humanLegal(state, data, pid) {
   if (f && f.kind === 'roll' && !f.player) return [];   // an automatic deal/roll with nobody to ask: the page runs it itself
   return legalActions(state, data).filter(d => d.playerId === pid || d.action.playerId === pid);
 }
+/** v26.1 (the stuck Revolt Roll): null while the game can go on; otherwise why it cannot: a pending prompt with no legal move for
+ *  anyone (whoever must act has none). The page flags it at once (with a save to send) instead of leaving a silent dead end. */
+export function deadEnd(state, data) {
+  if (!state || state.phase === 'finished' || state.phase === 'setup' && !state.pending?.length) return null;
+  const f = topFrame(state); const w = whoActs(state);
+  if (!f && state.phase !== 'turn') return null;
+  if (legalActions(state, data).length) return null;
+  const what = f ? `${f.kind}${f.purpose ? ' (' + f.purpose + ')' : f.window ? ' (' + f.window + ')' : ''}` : 'the free part of the turn';
+  return { frame: f?.kind ?? 'free', who: w ?? null, text: `Nobody can act on ${what}${w ? ` (it waits for ${nameOf(state, w)})` : ''}.` };
+}
 /** Applies a range value to a descriptor's action. */
 export const withValue = (d, v) => (d.range ? { ...d.action, [d.range.field]: Math.max(d.range.min, Math.min(d.range.max, Number(v))) } : d.action);
 

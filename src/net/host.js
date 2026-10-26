@@ -37,7 +37,7 @@ export class HostRoom {
     if (seat) { seat.lastSeen = this.now(); if (!seat.connected && m.t !== 'bye') { seat.connected = true; this.changed(seat.i); } }
     if (m.t === 'hello') return this.hello(peer, m);
     if (m.t === 'pong') return;
-    if (m.t === 'resync') { if (seat && this.started && this.last) this.sendUpdate(seat, this.last, { full: true }); return; }
+    if (m.t === 'resync') { if (seat && this.started && this.last) { this.resyncs = (this.resyncs ?? 0) + 1; this.hooks.onResync?.(seat.i, m.why ?? null); this.sendUpdate(seat, this.last, { full: true, resync: true }); } return; }
     if (m.t === 'bye') { if (seat) { seat.connected = false; seat.peer = null; this.changed(seat.i); } return; }
     if (m.t !== 'act') return;
     if (!seat) return this.reject(peer, 'NOT_SEATED', 'You have no seat in this game.', { seq: m.seq });
@@ -47,7 +47,10 @@ export class HostRoom {
     if (!action) return this.reject(peer, 'BAD_ACTION', 'That move could not be read.', { seq: m.seq });
     if (action.playerId !== seat.playerId) return this.reject(peer, 'WRONG_SEAT', 'You can only move for your own seat.', { seq: m.seq });
     if (this.last && Number.isInteger(m.seq) && m.seq !== this.last.seq) return this.reject(peer, 'STALE', 'The game moved on before your move arrived; choose again.', { seq: m.seq });
-    this.hooks.onAct?.(seat.i, action, error => { if (error) this.reject(peer, error.code ?? 'ILLEGAL', error.message ?? String(error), { seq: m.seq }); });
+    // v26.1: a busy host page queues the move; `fresh()` checks the seq again when it is applied, so a move re-sent after a long
+    // wait (the guest's pending timeout) can never be applied twice: the second copy is STALE by then
+    const fresh = () => !(this.last && Number.isInteger(m.seq) && m.seq !== this.last.seq);
+    this.hooks.onAct?.(seat.i, action, error => { if (error) this.reject(peer, error.code ?? 'ILLEGAL', error.message ?? String(error), { seq: m.seq }); }, fresh);
   }
   hello(peer, m) {
     if (m.proto !== PROTO || m.build !== this.build) {
@@ -93,14 +96,14 @@ export class HostRoom {
   /** After every applied step (and once at the start): {seq, state, events, by}. Every connected guest gets its own view. */
   update(step) { this.last = step; for (const s of this.seats) if (s.peer) this.sendUpdate(s, step); }
   /** One seat's update: its viewFor view (no log) + the log entries it has not had yet (all of them after a welcome or a resync). */
-  sendUpdate(s, step, { full = false } = {}) {
+  sendUpdate(s, step, { full = false, resync = false } = {}) {
     const pid = s.playerId; const log = step.state.log ?? [];
     const to = log.length ? log[log.length - 1].seq : 0;
     full = full || s.sentTo == null || s.sentTo > to;
     const from = full ? 0 : s.sentTo;
     this.transport.send(s.peer, msg('update', {
       seq: step.seq, by: step.by ?? null, view: seatView(step.state, this.data, pid), events: seatEvents(log, from, pid), from, to, full,
-      legal: s.kind === 'remote' ? humanLegal(step.state, this.data, pid) : [], you: { seat: s.i, playerId: pid, ai: s.kind === 'ai' }, seats: this.lobby().seats,
+      legal: s.kind === 'remote' ? humanLegal(step.state, this.data, pid) : [], you: { seat: s.i, playerId: pid, ai: s.kind === 'ai' }, seats: this.lobby().seats, ...(resync ? { resync: true } : {}),
     }));
     s.sentTo = to;
   }
@@ -128,8 +131,15 @@ export class HostRoom {
     for (const s of this.seats) {
       if (!s.peer) continue;
       if (t - s.lastSeen > AWAY_MS && s.connected) { s.connected = false; this.changed(s.i); }
-      this.transport.send(s.peer, msg('ping', { n: this.pingN }));
+      this.transport.send(s.peer, msg('ping', { n: this.pingN, ...this.beat() }));
     }
+  }
+  /** v26.1: the heartbeat carried by every ping: the host's last step seq and the turn/step it is on. A guest whose last applied
+   *  update is not this one (a dropped, discarded or never-applied update: its view went stale) asks for a full resync. */
+  beat() {
+    if (!this.started || !this.last) return {};
+    const t = this.last.state?.turn ?? {};
+    return { seq: this.last.seq, turn: t.number ?? null, step: t.step ?? null };
   }
   close(reason = 'HOST_LEFT') { for (const s of this.seats) if (s.peer) this.transport.send(s.peer, msg('bye', { reason })); this.transport.close(); }
 }

@@ -14,7 +14,12 @@ import { roomCode, normCode } from '../../net/protocol.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+// v26.1 (Vidi 2026-10-25, the stuck Revolt Roll): a host page in a background tab has its timers throttled by the browser (1 s, then
+// once a minute), so its animations, popups and AI delays held a guest's move for minutes ("No roll is due for you right now" on the
+// guest). Hidden, the host skips the waits: `sleep` returns at once and `later` runs through a MessageChannel (not throttled).
+const hostHidden = () => NET?.role === 'host' && document.hidden;
+const later = (fn, ms) => { if (!hostHidden()) return setTimeout(fn, ms); const c = new MessageChannel(); c.port1.onmessage = () => { c.port1.close(); fn(); }; c.port2.postMessage(0); return null; };
+const sleep = ms => new Promise(r => (hostHidden() ? r() : setTimeout(r, ms)));
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const attr = s => esc(s).replace(/'/g, '&#39;');
 
@@ -56,7 +61,8 @@ function openModal(html, { autoMs = 0, cls = '' } = {}) {
   return new Promise(res => {
     modalDone = res;
     $$('[data-close]', box).forEach(b => b.onclick = closeModal);
-    if (autoMs) setTimeout(() => { if (modalDone === res) closeModal(); }, autoMs);
+    if (hostHidden()) later(() => { if (modalDone === res) closeModal(); }, 0);   // v26.1: nobody looks at a hidden host page
+    else if (autoMs) setTimeout(() => { if (modalDone === res) closeModal(); }, autoMs);
   });
 }
 // batch 6 item 2 (Vidi 2026-10-25): the three decks on the start / host / join screens; a click lists every card type in the deck
@@ -373,7 +379,7 @@ function hostNet(t, code, salt) {
   NET = { role: 'host', code, transport: t, me: null, inbox: [], salt };
   NET.room = new HostRoom({ transport: t, build: uiLabel, code, seats: [], data, hooks: {
     onSeat: () => queueMicrotask(() => { if (!NET) return; if (document.body.dataset.screen === 'setup') renderSetup(); else if (S) { render(); autosave(); } }),
-    onAct: (i, action, reply) => { NET.inbox.push({ action, reply }); if (!busy) hostDrain(); },
+    onAct: (i, action, reply, fresh) => { NET.inbox.push({ i, action, reply, fresh }); if (!busy) hostDrain(); else nudgeHost(i); },
   } });
   NET.ping = setInterval(() => { if (!NET?.quiet) NET?.room?.tick(); }, PING_MS);   // quiet: tests only (a host that stops answering)
   return NET;
@@ -406,9 +412,17 @@ async function resumeOnline(obj) {
 /** One guest move at a time, when the host's page is not busy animating (they queue meanwhile). */
 async function hostDrain() {
   if (NET?.role !== 'host' || busy || !S || !NET.inbox.length) return;
-  const { action, reply } = NET.inbox.shift();
-  await apply(action, { remote: reply });
+  const { action, reply, fresh } = NET.inbox.shift();
+  if (fresh && !fresh()) reply({ code: 'STALE', message: 'The game moved on before your move arrived; choose again.' });   // v26.1: a re-sent copy
+  else await apply(action, { remote: reply });
   if (NET?.inbox.length && !busy) hostDrain();
+}
+/** v26.1: a guest's move arrived while this host page is busy (an animation, or a popup waiting for OK): a hidden page closes its
+ *  popup at once (nobody is looking, and the guest must not wait for it); a visible one tells the host to click OK. */
+function nudgeHost(i) {
+  if (!NET || NET.role !== 'host' || !S) return;
+  if (document.hidden) { if (modalDone) closeModal(); if (bpDone) closeBattlePop(); return; }
+  if (document.body.dataset.popup || modalDone || bpDone) toast(`${st().players[i]?.name ?? 'A guest'} has moved and is waiting: click OK to go on`);
 }
 /** After each step on the host: every guest gets its view and its legal moves. */
 function netPush() {
@@ -470,16 +484,16 @@ async function joinGame() {
   let saved = null; try { saved = JSON.parse(localStorage.getItem(SEAT_TOKEN_KEY) || 'null'); } catch { /* */ }
   const mine = saved && (saved.code === code || (joinWas && saved.code === joinWas));   // M14: ?was=OLD: the same game under a new code
   let t; try { t = await makeTransport(); } catch (e) { say(e.message, true); $('#joinGo').disabled = false; return; }
-  const n = { role: 'guest', code, transport: t, me: null, q: [], pending: false };
+  const n = { role: 'guest', code, transport: t, me: null, q: [], pending: false, shown: null, healOff: 0 };
   const inGame = () => S && document.body.dataset.screen === 'game';
   n.client = new GuestClient({ transport: t, makeTransport, build: uiLabel, name, token: mine ? saved.token : null, data, hooks: {
-    onWelcome: (c, m) => { n.code = c.code; n.pending = false; try { localStorage.setItem(SEAT_TOKEN_KEY, JSON.stringify({ code: c.code, token: m.token, seat: m.seat, at: Date.now() })); } catch { /* */ }
+    onWelcome: (c, m) => { n.code = c.code; if (NET === n) pendDone(); else n.pending = false; try { localStorage.setItem(SEAT_TOKEN_KEY, JSON.stringify({ code: c.code, token: m.token, seat: m.seat, at: Date.now() })); } catch { /* */ }
       if (!inGame()) say(`Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}, ${SEAT_COLOR_NAMES[m.seat]}). Waiting for the host to start…`); },
     onLobby: (c, m) => { if (NET === n) renderGuestLobby(m); if (S && NET === n) render(); },
     onUpdate: (c, u) => { if (NET !== n) return; n.me = u.you.playerId; n.q.push(u); if (!inGame()) { guestEnter(); } else guestDrain(); },
     onReject: (c, m) => { if (NET !== n) return;
       if (!inGame()) { say(m.message, true); return; }
-      n.pending = false; if (m.code !== 'STALE') { SND.play('error_denied'); toast(m.message); } render(); },
+      pendDone(); if (m.code !== 'STALE') { SND.play('error_denied'); toast(m.message); } render(); },
     onBye: (c, r) => { if (NET !== n) return;
       if (r === 'HOST_LEFT' && !c.ended) return;   // M14: not final: the host may resume the game; the client reconnects (onStatus)
       if (r === 'BUILD_MISMATCH' || r === 'FULL' || r === 'STARTED') { $('#joinGo').disabled = false; netLeave(); return; }
@@ -488,14 +502,14 @@ async function joinGame() {
     onHostGone: () => { if (NET === n) netLost('Lost the connection to the host.'); },
     onStatus: (c, status, info) => { if (NET !== n) return;
       n.status = status; n.info = info; (n.statuses ??= []).push(status + (info.why ? ':' + info.why : ''));
-      if (status === 'reconnecting' || status === 'lost') n.pending = false;
+      if (status === 'reconnecting' || status === 'lost') pendDone();
       if (status === 'connected' && info.rejoined) { if (inGame()) toast('Reconnected: you are back in your seat'); else say(`Reconnected to room ${c.code}.`); }
       if (!inGame() && status === 'reconnecting') say(`Lost the host (${whyText(info.why)}). Reconnecting… (try ${info.attempt} of ${info.of})`, true);
       if (!inGame() && status === 'lost') { say('Could not reach the host. Press Join to try again.', true); $('#joinGo').disabled = false; netLeave(); return; }
       renderNetBanner(); if (inGame()) render(); },
   } });
   NET = n;
-  n.ping = setInterval(() => n.client.tick(), 2000);
+  n.ping = setInterval(() => { n.client.tick(); try { guestHeal(); } catch (e) { console.warn('heal', e); } }, 2000);
   try { await n.client.join(code); } catch (e) { if (NET === n) netLeave(); say(e.message, true); $('#joinGo').disabled = false; return; }
 }
 const whyText = w => ({ LINK_LOST: 'the link dropped', HOST_LEFT: 'the host left the game', NO_ROOM: 'the room is not open', NETWORK: 'network error', TIMEOUT: 'no answer', RETRY: 'retrying' })[w] ?? String(w ?? 'no link').toLowerCase().replace(/_/g, ' ');
@@ -513,13 +527,14 @@ function renderNetBanner() {
     $('#nbCopy').onclick = () => navigator.clipboard?.writeText(joinLink(NET.code)).then(() => toast('Link copied'), () => toast(joinLink(NET.code)));
     return;
   }
-  const c = NET.client; const status = NET.lost ? 'ended' : c.status === 'connected' && c.hostAway ? 'hostAway' : c.status === 'connected' && c.ai ? 'ai' : c.status;
+  const c = NET.client; const status = NET.lost ? 'ended' : c.status === 'connected' && c.hostAway ? 'hostAway' : c.status === 'connected' && c.ai ? 'ai' : c.status === 'connected' && NET.pending && NET.slow ? 'waiting' : c.status;
   document.body.dataset.netStatus = status;
   const i = NET.info ?? {};
   let html = '';
   if (status === 'reconnecting') html = `<span class="spin">⟳</span> <b>Reconnecting…</b> Lost the host (${esc(whyText(i.why))}). Try ${i.attempt} of ${i.of}, next in ${Math.max(1, Math.round((i.inMs ?? 0) / 1000))} s. Your seat is kept. <button type="button" class="btn sm" id="nbNow">Try now</button> <span class="small">new code?</span> <input id="nbCode" size="7" maxlength="16" placeholder="${attr(c.code)}" spellcheck="false" aria-label="A new room code from the host"> <button type="button" class="btn sm" id="nbLeave">Leave</button>`;
   else if (status === 'lost') html = `<b>Could not reach the host.</b> Your seat is kept: if the host resumed under a new code, type it: <input id="nbCode" size="8" maxlength="16" placeholder="${attr(c.code)}" spellcheck="false"> <button type="button" class="btn sm gold" id="nbNow">Try again</button> <button type="button" class="btn sm" id="nbLeave">Leave</button>`;
   else if (status === 'hostAway') html = `<b>The host is not answering</b> (away, or their tab is in the background) for ${Math.round(HOST_AWAY_MS / 1000)}+ s. Waiting… your seat is kept.`;
+  else if (status === 'waiting') html = `<span class="spin">⟳</span> <b>Your move was sent</b>: waiting for the host to answer. Their page may be showing a popup (they must click OK) or be in the background. You can make your move again in ${Math.round(PEND_RETRY_MS / 1000)} s if nothing happens.`;
   else if (status === 'ai') html = `The host gave your seat to the <b>AI</b> for now. Stay on this page: the host can give it back to you.`;
   const typed = $('#nbCode')?.value ?? '', focused = document.activeElement?.id === 'nbCode';   // a re-render keeps a half-typed code
   el.hidden = !html; el.className = 'netbanner ' + status; el.innerHTML = html;
@@ -540,27 +555,86 @@ function netLost(msg) {
 }
 function guestEnter() {
   const u = NET.q.shift(); if (!u) return;
-  S = { data, seed: 'room ' + NET.code, steps: [{ state: u.state, events: [], action: null, error: null, legal: u.legal }] };
+  S = { data, seed: 'room ' + NET.code, steps: [{ state: u.state, events: [], action: null, error: null, legal: u.legal, seq: u.seq }] }; NET.shown = u.seq;
   $('#joinGo').disabled = false; SND.play('deck_shuffle'); enterGame();
   if (NET.q.length) guestDrain();
 }
 /** Plays the host's updates in order, animating each like a local move (several waiting at once: only the last is animated). */
 async function guestDrain() {
   if (NET?.role !== 'guest' || busy || !S || !NET.q.length || document.body.dataset.screen !== 'game') return;
-  const u = NET.q.shift(); const before = st();
-  S = { ...S, steps: [...S.steps.slice(-2), { state: u.state, events: u.anim ?? [], action: null, error: null, legal: u.legal }] };
-  if (u.by === NET.me) { NET.pending = false; ab = null; }
-  if (NET.q.length) { render(); return guestDrain(); }
-  busy = true; document.body.dataset.busy = '1'; freezeControls(); $('#ovAsk').classList.remove('on');
-  try { await playEvents(u.anim ?? [], before); } catch (e) { console.warn('animation', e); }
+  const n = NET;
+  // v26.1: all waiting updates at once (only the last is animated); a throw anywhere (the view, the render) asks the host for the
+  // whole view again instead of leaving this screen on an old step with the queue stuck.
+  let u, before;
+  try {
+    while (n.q.length) {
+      u = n.q.shift(); before = st();
+      if (n.throwOnce) { n.throwOnce = false; throw new Error('test: the page could not apply this update'); }
+      S = { ...S, steps: [...S.steps.slice(-2), { state: u.state, events: u.anim ?? [], action: null, error: null, legal: u.legal, seq: u.seq }] };
+      n.shown = u.seq;
+      if (u.by === n.me) { pendDone(); ab = null; }
+      if (u.resynced) resyncNote(u);
+    }
+  } catch (e) { return guestBroke(e); }
+  busy = true; document.body.dataset.busy = '1';
+  try { freezeControls(); $('#ovAsk').classList.remove('on'); await playEvents(u.anim ?? [], before); } catch (e) { console.warn('animation', e); }
   busy = false; document.body.dataset.busy = '';
-  render(); schedule(); guestDrain();
+  try { render(); schedule(); } catch (e) { return guestBroke(e); }
+  guestDrain();
+}
+/** v26.1: the page could not show an update: ask for a full resync (once per few seconds) and say so. */
+function guestBroke(e) {
+  console.error('guest update', e);
+  busy = false; document.body.dataset.busy = '';
+  if (NET?.role !== 'guest') return;
+  NET.broke = (NET.broke ?? 0) + 1; document.body.dataset.guestBroke = String(NET.broke);
+  NET.client.resync('APPLY');
+}
+/** v26.1: the small visible note after a resync (the screen had fallen behind the host and now shows the game as it is). */
+function resyncNote(u) {
+  NET.resynced = (NET.resynced ?? 0) + 1; document.body.dataset.resynced = String(NET.resynced);
+  toast('Resynced with the host: your screen now shows the game as it is');
+}
+/** v26.1, every 2 s on a guest: a queue nothing drains (a popup that ended without draining) is drained; a screen whose shown step is
+ *  not the client's last one (an update it never applied) asks for a resync. Two ticks in a row, so a drain in progress is not hit. */
+function guestHeal() {
+  const n = NET; if (n?.role !== 'guest' || !S || document.body.dataset.screen !== 'game' || n.client.status !== 'connected') return;
+  if (busy) { n.healOff = 0; return; }
+  if (n.q.length) { guestDrain(); return; }
+  if (n.client.seq != null && n.shown !== n.client.seq) { if (++n.healOff >= 2) { n.healOff = 0; n.client.resync('VIEW'); } } else n.healOff = 0;
 }
 function guestSend(action) {
   if (NET.pending || NET.lost) { if (NET.lost) toast(NET.lost); return false; }
   if (NET.client.status !== 'connected') { toast('Reconnecting to the host: wait a moment'); return false; }   // M14
-  NET.pending = true; NET.client.act(action);
+  NET.pending = true; NET.client.act(action); pendWatch();
   freezeControls(); $('#ovAsk').classList.remove('on'); return true;
+}
+/** v26.1 (the stuck Revolt Roll): a move this guest sent and the host has not answered yet. After PEND_SLOW_MS the banner says so
+ *  (the host's page may be showing a popup or be in the background); after PEND_RETRY_MS the guest may send it again (the host
+ *  checks the seq when it applies a move, so a copy of a move that did arrive is refused as STALE, never applied twice). */
+const PEND_SLOW_MS = 6000, PEND_RETRY_MS = 25000;
+function pendWatch() {
+  const n = NET; clearTimeout(n.pendSlow); clearTimeout(n.pendRetry); n.slow = false;
+  n.pendSlow = setTimeout(() => { if (NET === n && n.pending) { n.slow = true; renderNetBanner(); } }, PEND_SLOW_MS);
+  n.pendRetry = setTimeout(() => { if (NET === n && n.pending) { n.pending = false; n.slow = false; toast('The host has not answered your move yet: you can make it again'); render(); } }, PEND_RETRY_MS);
+}
+function pendDone() {
+  if (NET?.role !== 'guest') return;
+  const was = NET.slow; NET.pending = false; NET.slow = false; clearTimeout(NET.pendSlow); clearTimeout(NET.pendRetry);
+  if (was) renderNetBanner();
+}
+/** v26.1: why a click on your roll or draw did nothing (it used to say "No roll is due for you right now" in every case). */
+function notDueText(kind) {
+  if (NET?.role === 'guest') {
+    if (NET.pending) return `Your move was sent: waiting for the host to answer${NET.slow ? ' (their page may be showing a popup, or be in the background)' : '…'}`;
+    if (NET.client.ai) return 'The host gave your seat to the AI: the AI plays it for now';
+    if (NET.client.status !== 'connected') return 'Reconnecting to the host: wait a moment';
+  }
+  const s = st(); const w = whoActs(s); const f = topFrame(s);
+  // v26.1: the screen says it is this guest's move but there is none for it: the screen is behind the host. Ask for the whole view.
+  if (NET?.role === 'guest' && f && w === NET.me && NET.client.resync('CLICK')) return 'Checking with the host: your screen was behind. One moment…';
+  if (f && w && w !== viewer) return `No ${kind} is due for you right now: it is ${pn(w)}'s ${f.kind === 'roll' || f.kind === 'draw' ? f.kind : 'move'}`;
+  return `No ${kind} is due for you right now`;
 }
 
 // ------------------------------------------------------------------ the loop: apply an action, animate its events, schedule the AI
@@ -577,7 +651,7 @@ async function apply(action, { fromAi = false, remote = null } = {}) {
   if (!fromAi) ab = null;
   $('#ovAsk').classList.remove('on');
   const evs = NET?.role === 'host' && NET.me ? eventsFor(current(S).events, NET.me) : current(S).events;   // M12: the host sees its seat's events
-  try { await playEvents(evs, before); } catch (e) { console.warn('animation', e); }
+  if (!hostHidden()) { try { await playEvents(evs, before); } catch (e) { console.warn('animation', e); } }   // v26.1: a hidden host does not animate
   busy = false; document.body.dataset.busy = '';
   autosave(); render(); schedule();
   return true;
@@ -594,12 +668,12 @@ function schedule() {
   const s = st();
   if (s.phase === 'finished') { showGameOver(); return; }
   if (NET?.role === 'guest') { if (!busy) humanAuto(s); return; }   // M11: a guest runs no AI and no automatic rolls: the host does
-  if (NET?.role === 'host' && !busy && NET.inbox.length) { setTimeout(hostDrain, 0); return; }
+  if (NET?.role === 'host' && !busy && NET.inbox.length) { later(hostDrain, 0); return; }
   if (!busy && humanAuto(s)) return;
   if (aiPaused || busy || !G.aiToMove(S)) return;
   const f = topFrame(s); const auto = f && f.kind === 'roll' && !f.player;
   $$('.player').forEach(el => el.classList.toggle('thinking', el.dataset.pid === whoActs(s)));
-  aiTimer = setTimeout(async () => { aiTimer = null; if (busy || !G.aiToMove(S) || aiPaused) return; await apply(G.aiMove(S), { fromAi: true }); }, spd(auto ? 300 : 650));
+  aiTimer = later(async () => { aiTimer = null; if (busy || !G.aiToMove(S) || aiPaused) return; await apply(G.aiMove(S), { fromAi: true }); }, spd(auto ? 300 : 650));
 }
 /** Batch 5 items 1 and 8: what happens by itself for a human. Scouting rolls the natives at once (no Roll click, 17.h); a Rome Is
  *  Displeased draw that falls on a human is announced first by a big banner that waits for OK (16.m). */
@@ -608,12 +682,12 @@ function humanAuto(s) {
   const f = topFrame(s); if (!f) return false;
   if (f.kind === 'roll' && f.purpose === 'nativeRoll' && G.isHuman(s, f.player) && NET?.role !== 'guest') {
     autoRoll = true; document.body.dataset.humanTurn = '';
-    aiTimer = setTimeout(() => { aiTimer = null; autoRoll = false; if (!busy && topFrame(st())?.purpose === 'nativeRoll') apply({ type: 'ROLL', playerId: f.player }); else render(); }, spd(200));
+    aiTimer = later(() => { aiTimer = null; autoRoll = false; if (!busy && topFrame(st())?.purpose === 'nativeRoll') apply({ type: 'ROLL', playerId: f.player }); else render(); }, spd(200));
     return true;
   }
   if (f.kind === 'draw' && f.deck === 'displeased' && G.isHuman(s, f.player) && (!NET || f.player === viewer) && displeasedSeen !== f.id) {
     displeasedSeen = f.id; busy = true; document.body.dataset.busy = '1';
-    displeasedAlert(f).then(() => { busy = false; document.body.dataset.busy = ''; render(); schedule(); });
+    displeasedAlert(f).then(() => { busy = false; document.body.dataset.busy = ''; render(); schedule(); guestDrain(); });   // v26.1: an update that came during the alert
     return true;
   }
   return false;
@@ -714,6 +788,7 @@ async function eventModal(artId, title, body) {
 /** Game Roll / Revolt Roll / revolt popups (M6 items 1 and 7). Sticky ones (a human lost a province) wait for OK; the rest close themselves. */
 async function rollPopup(p) {
   if (!p) return;
+  if (NET && p.sticky && p.players?.length && !p.players.includes(viewer)) p = { ...p, sticky: false };   // v26.1: online, only your own waits for OK
   const num = p.value !== undefined ? `<div class="rollnum">${esc(p.value)}</div>` : '';
   const hit = p.matched ? `<div class="rollprov" id="rollProv"><span class="small">Province${p.matched.length === 1 ? '' : 's'} with number ${esc(p.value)}:</span>${p.matched.length ? p.matched.map(m => `<span class="rp ${m.owner ? col(m.owner) : 'nat'}" data-prov="${m.id}"><b>${esc(m.name)}</b> <i>${esc(m.holder)}</i></span>`).join('') : '<span class="rp none">none</span>'}</div>` : '';
   for (const m of p.matched ?? []) flashToken(m.id);
@@ -733,7 +808,7 @@ async function showNews() {
   const list = viewer && news[viewer]; if (!list?.length || busy) return;
   delete news[viewer]; busy = true; document.body.dataset.busy = '1';
   for (const p of list) await rollPopup({ ...p, title: `While you were away: ${p.title}`, sticky: true });
-  busy = false; document.body.dataset.busy = ''; render(); schedule();
+  busy = false; document.body.dataset.busy = ''; render(); schedule(); guestDrain();
 }
 const CARD_VIEW_MS = 8000;   // batch 5 item 7: real seconds, not scaled by the animation speed (it is reading time)
 async function flipCard(deck, def, caption, mine = true) {
@@ -798,7 +873,8 @@ async function battleResult(sum, sticky) {
   if (sticky) document.body.dataset.popup = 'battle';
   const p = new Promise(r => { bpDone = r; });
   $('#bpOk').onclick = () => { SND.play('button_click'); closeBattlePop(); };
-  if (!sticky) setTimeout(() => { if (bpDone) closeBattlePop(); }, spd(3500));
+  if (hostHidden()) later(() => { if (bpDone) closeBattlePop(); }, 0);
+  else if (!sticky) setTimeout(() => { if (bpDone) closeBattlePop(); }, spd(3500));
   await p;
   if (document.body.dataset.popup === 'battle') document.body.dataset.popup = '';
 }
@@ -896,6 +972,19 @@ function render() {
   document.body.classList.toggle('p3mode', s.players.length >= 3);
   if (!busy && !bpDone && !s.battle && $('#ovBattle').classList.contains('on')) closeBattlePop();
   if (viewer && news[viewer]?.length && !busy) setTimeout(showNews, 0);
+  deadEndFlag();
+}
+/** v26.1: a prompt nobody can answer is never a silent dead end: the host (or the local page) says so at once and offers the save
+ *  file to send (the engine's own fuzz tests find none; this is the safety net). */
+let deadSeen = null;
+function deadEndFlag() {
+  if (!S || NET?.role === 'guest' || busy) return;
+  const d = G.deadEnd(full(), data); document.body.dataset.deadEnd = d ? d.frame : '';
+  if (!d) { deadSeen = null; return; }
+  const key = (topFrame(full())?.id ?? 'free') + '|' + S.steps.length; if (deadSeen === key) return; deadSeen = key;
+  console.error('dead end', d.text);
+  setTimeout(() => openModal(`<div class="ask" id="deadEnd" style="max-width:520px"><h2>The game cannot go on</h2><p>${esc(d.text)} This is a bug in the game, not something you did.</p><p class="small">Export a save file and send it to us: the save loads at this exact position once it is fixed.</p><button class="btn gold" id="deSave">Export a save file</button> <button class="btn" data-close>Close</button></div>`), 0);
+  setTimeout(() => { const b = $('#deSave'); if (b) b.onclick = () => { download(G.saveFileName(st()), JSON.stringify(makeSaveNow('file'))); toast('Save file exported'); }; }, 10);
 }
 /** The human who decides now and their legal moves (none for AI seats). Hot-seat (Q95, Vidi 2026-10-21): no curtain; the board
  *  switches to the next player's context at End Turn, and the optional hide-hand toggle covers the hand. */
@@ -1120,7 +1209,7 @@ function renderPlayers() {
     const p = G.playerById(s, g.closest('.player').dataset.pid); if (!p.general) return;
     openGeneralView(p.general.id, { player: p });   // M8.1: the same detail view as on the setup screen
   });
-  $$('.tray .rollbtn, .tray .diebox').forEach(b => b.onclick = () => { const d = mineNow().find(x => x.type === 'ROLL'); if (d) human(d); else { SND.play('error_denied'); toast('No roll is due for you right now'); } });
+  $$('.tray .rollbtn, .tray .diebox').forEach(b => b.onclick = () => { const d = mineNow().find(x => x.type === 'ROLL'); if (d) human(d); else { SND.play('error_denied'); toast(notDueText('roll')); } });
   $$('#players .pacts [data-key]').forEach(b => b.onclick = () => { const d = mineNow().find(x => G.descKey(x) === b.dataset.key); if (d) human(d); else SND.play('error_denied'); });
   const legal = mineNow();
   $$('#pActs [data-key]').forEach(b => b.onclick = () => { const d = legal.find(x => G.descKey(x) === b.dataset.key); if (d) human(d); else SND.play('error_denied'); });
@@ -1598,10 +1687,11 @@ function wireStatic() {
   $$('.tab').forEach(b => b.onclick = () => { if (tabsHidden) setTabsHidden(false); setTab(b.dataset.tab); });
   $('#tabsToggle').onclick = () => { SND.play('button_click'); setTabsHidden(!tabsHidden); };
   applyTabsHidden();
-  $$('.deck[data-deck]').forEach(d => d.onclick = () => { const k = d.dataset.key; const x = k && mineNow().find(y => G.descKey(y) === k); if (x) human(x); else { SND.play('error_denied'); toast('No draw from this deck is due for you right now'); } });
+  $$('.deck[data-deck]').forEach(d => d.onclick = () => { const k = d.dataset.key; const x = k && mineNow().find(y => G.descKey(y) === k); if (x) human(x); else { SND.play('error_denied'); toast(notDueText('draw from this deck')); } });
   $('#mapwrap').addEventListener('click', e => { if (!e.target.closest('.info') && !e.target.closest('.tok') && !e.target.closest('.maptools')) { selected = null; hideInfo(); if (S) renderMap(mineNow()); } });
   $('#chkLinks').onchange = e => $('#links').classList.toggle('on', e.target.checked);
   $('#chkNames').onchange = () => S && renderMap(mineNow());
+  document.addEventListener('visibilitychange', () => { if (hostHidden() && NET.inbox.length) { if (modalDone) closeModal(); if (bpDone) closeBattlePop(); } });   // v26.1
   document.addEventListener('keydown', e => {
     if (e.target.closest && e.target.closest('input,select,textarea')) return;
     if (e.key === 'm' || e.key === 'M') SND.toggle();
@@ -1613,9 +1703,13 @@ function wireStatic() {
 window.__imperator = {
   state: () => (S ? G.stateOf(S) : null), view: () => (S ? st() : null), busy: () => busy || autoRoll, viewer: () => viewer, legal: () => (S ? mineNow() : []),
   suggest: () => (S && NET?.role !== 'guest' ? G.aiMove(S) : null), play: a => { apply(a); return null; },   // M11: does not wait for the animations
-  net: () => (NET ? { role: NET.role, code: NET.code, me: NET.me, pending: !!NET.pending, seats: NET.role === 'host' ? NET.room.lobby().seats : NET.client.lobby?.seats ?? [], queued: NET.role === 'host' ? NET.inbox.length : NET.q.length, status: NET.role === 'guest' ? NET.client.status : 'host', hostAway: NET.role === 'guest' ? NET.client.hostAway : false, ai: NET.role === 'guest' ? NET.client.ai : false, reconnects: NET.role === 'guest' ? NET.client.reconnects : 0, statuses: NET.statuses ?? [], token: NET.role === 'guest' ? NET.client.token : null } : null),
+  net: () => (NET ? { role: NET.role, code: NET.code, me: NET.me, pending: !!NET.pending, seats: NET.role === 'host' ? NET.room.lobby().seats : NET.client.lobby?.seats ?? [], queued: NET.role === 'host' ? NET.inbox.length : NET.q.length, status: NET.role === 'guest' ? NET.client.status : 'host', hostAway: NET.role === 'guest' ? NET.client.hostAway : false, ai: NET.role === 'guest' ? NET.client.ai : false, reconnects: NET.role === 'guest' ? NET.client.reconnects : 0, statuses: NET.statuses ?? [], token: NET.role === 'guest' ? NET.client.token : null,
+    seq: NET.role === 'guest' ? NET.client.seq : S?.steps.length ?? null, shown: NET.shown ?? null, resyncs: NET.role === 'guest' ? NET.client.resyncs : NET.room.resyncs ?? 0, resynced: NET.resynced ?? 0 } : null),
   // M14 test hooks: a guest's link drops (as if the network went away); a host that stops pinging
-  netDrop: () => { const c = NET?.role === 'guest' && NET.client; if (c) { try { c.transport.close(); } catch { /* */ } c.linkLost('LINK_LOST'); } }, netQuiet: on => { if (NET?.role === 'host') NET.quiet = !!on; }, keyOf: a => { const d = S && G.findDesc(mineNow(), a); return d ? G.descKey(d) : null; },
+  netDrop: () => { const c = NET?.role === 'guest' && NET.client; if (c) { try { c.transport.close(); } catch { /* */ } c.linkLost('LINK_LOST'); } }, netQuiet: on => { if (NET?.role === 'host') NET.quiet = !!on; },
+  // v26.1 test hooks: the host loses its next k updates (a message that never arrives); a guest page fails to apply its next update
+  netLose: k => { if (NET?.role !== 'host') return; const t = NET.room.transport; t._send ??= t.send; let left = k; t.send = (p, m) => { if (m?.t === 'update' && left > 0) { left--; return; } t._send(p, m); }; },
+  netBreak: () => { if (NET?.role === 'guest') NET.throwOnce = true; }, keyOf: a => { const d = S && G.findDesc(mineNow(), a); return d ? G.descKey(d) : null; },
   sounds: () => SND.played.slice(-80), label: () => uiLabel,
 };
 boot();

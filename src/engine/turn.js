@@ -172,6 +172,8 @@ function takeSavedCard(ctx, pid, uid) {
   toDiscard(ctx.state, uid);
 }
 const pieceOf = (ctx, uid) => ctx.data.cardDefsById[ctx.state.cards[uid].def].effect.params.piece;
+/** v27: a Resource card (Road / Wall) is used to build; the public event the "card played" popup shows (20.f). */
+const usedEvent = (ctx, pid, uid, a) => emit(ctx, 'resourceCardUsed', { actor: pid, rule: '20.f', pub: { player: pid, def: ctx.state.cards[uid].def, uid, piece: pieceOf(ctx, uid), province: a.province, facing: a.facing ?? null } });
 
 define('RESOURCE_BUILD', {
   frame: ['resourceBuild'],
@@ -179,6 +181,7 @@ define('RESOURCE_BUILD', {
     const f = topFrame(ctx.state);
     check(['build', 'save'].includes(a.mode), 'BAD_MODE', 'mode must be "build" or "save".');
     if (a.mode === 'build') {
+      usedEvent(ctx, f.player, f.card, a);
       buildPiece(ctx, f.player, f.piece, a.province, a.facing, { free: true });
       takeSavedCard(ctx, f.player, f.card);
     } else emit(ctx, 'resourceSaved', { actor: f.player, rule: '20.f', pub: { player: f.player, piece: f.piece } });
@@ -191,6 +194,7 @@ define('USE_SAVED_RESOURCE', {
     const pid = ctx.state.turn.activePlayerId;
     const pl = mustPlayer(ctx.state, pid);
     check(pl.savedResources.some(c => c.uid === a.cardUid), 'NO_SUCH_CARD', 'That saved Resource card is not yours.');
+    usedEvent(ctx, pid, a.cardUid, a);
     buildPiece(ctx, pid, pieceOf(ctx, a.cardUid), a.province, a.facing, { free: true });   // free, not an action (20.f, 19.p)
     takeSavedCard(ctx, pid, a.cardUid);
   },

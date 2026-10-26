@@ -110,6 +110,7 @@ const T = {
   cardDrawn: (e, st) => `${pn(st, e.pub.player)} draws a ${e.pub.deck} card${e.priv ? ' (' + e.priv.def + ')' : e.pub.def ? ' (' + e.pub.def + ')' : ''}.`,
   resourceApplied: (e, st) => `${pn(st, e.pub.player)}'s Resource card ${e.pub.def}: ${G(e.pub.gold ?? 0)}, ${e.pub.troops ?? 0} troop(s) to place.`,
   troopsPlaced: (e, st, d) => `${pn(st, e.pub.player)} places ${e.pub.n} troop(s) in ${prov(d, e.pub.province)}.`,
+  resourceCardUsed: (e, st, d) => `${pn(st, e.pub.player)} uses a Resource card (${e.pub.piece}) in ${prov(d, e.pub.province)}.`,
   roadBuilt: (e, st, d) => `${pn(st, e.pub.player)} builds a Road in ${prov(d, e.pub.province)}${e.pub.free ? ' (free)' : ''}.`,
   wallBuilt: (e, st, d) => `${pn(st, e.pub.player)} builds a Wall in ${prov(d, e.pub.province)} facing ${prov(d, e.pub.facing)}${e.pub.free ? ' (free)' : ''}.`,
   resourceSaved: (e, st) => `${pn(st, e.pub.player)} saves the ${e.pub.piece} card.`,

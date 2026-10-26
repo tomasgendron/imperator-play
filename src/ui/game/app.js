@@ -687,20 +687,31 @@ function humanAuto(s) {
   }
   if (f.kind === 'draw' && f.deck === 'displeased' && G.isHuman(s, f.player) && (!NET || f.player === viewer) && displeasedSeen !== f.id) {
     displeasedSeen = f.id; busy = true; document.body.dataset.busy = '1';
-    displeasedAlert(f).then(() => { busy = false; document.body.dataset.busy = ''; render(); schedule(); guestDrain(); });   // v26.1: an update that came during the alert
+    displeasedAlert(f).then(draw => {
+      busy = false; document.body.dataset.busy = ''; render(); schedule(); guestDrain();
+      const d = draw && !busy && displeasedDraw(f); if (d && topFrame(st())?.id === f.id) human(d);   // v27: "Draw the card now"
+    });   // v26.1: an update that came during the alert
     return true;
   }
   return false;
 }
+/** Resolves true when the player chose "Draw it now" (v27): only offered when this screen may make that draw (its own seat online). */
 async function displeasedAlert(f) {
   const s = st(); const p = G.playerById(s, f.player);
   const why = G.displeasedReason(s, data, f.player);
+  const can = displeasedDraw(f);
   document.body.dataset.popup = 'displeasedAlert'; SND.play('error_denied');
-  await openModal(`<div class="dispbanner" id="dispAlert"><div class="db-top">⚠ ROME IS DISPLEASED ⚠</div><div class="db-art"><img src="${img('back.displeased')}" alt=""></div>`
-    + `<div class="db-txt"><h2><span style="color:var(--${col(f.player)})">${esc(p?.name ?? f.player)}</span>, you must draw a Rome Is Displeased card!</h2><p>${esc(why)}</p><p class="small">Draw it from the Rome Is Displeased deck (the red DRAW button in your panel). Its effect is shown once it is drawn.</p>`
-    + `<button class="btn gold big" data-close id="dispOk">OK, I understand</button></div></div>`, { cls: 'displeased-alert' });
+  let draw = false;
+  const shown = openModal(`<div class="dispbanner" id="dispAlert"><div class="db-top">⚠ ROME IS DISPLEASED ⚠</div><div class="db-art"><img src="${img('back.displeased')}" alt=""></div>`
+    + `<div class="db-txt"><h2><span style="color:var(--${col(f.player)})">${esc(p?.name ?? f.player)}</span>, you must draw a Rome Is Displeased card!</h2><p>${esc(why)}</p><p class="small">${can ? 'Draw it right here, or' : 'Draw it'} from the Rome Is Displeased deck (the red DRAW button in your panel). Its effect is shown once it is drawn.</p>`
+    + `<div class="row db-btns">${can ? '<button class="btn red big" id="dispDraw">Draw the card now</button>' : ''}<button class="btn gold big" data-close id="dispOk">OK, I understand</button></div></div></div>`, { cls: 'displeased-alert' });
+  const b = $('#dispDraw'); if (b) b.onclick = () => { draw = true; closeModal(); };
+  await shown;
   document.body.dataset.popup = '';
+  return draw;
 }
+/** The DRAW from Rome Is Displeased this screen may make for frame `f` (null: not this screen's draw). */
+function displeasedDraw(f) { return mineNow().find(d => d.type === 'DRAW_CARD' && d.action.playerId === f.player && (!NET || f.player === NET.me)) ?? null; }
 async function assassinAlert(p) {
   for (const x of p.strikes) flashToken(x.province);
   document.body.dataset.popup = 'assassinAlert'; SND.play('error_denied');
@@ -745,7 +756,8 @@ async function playEvents(events, before = null) {
         renderBattleHead(true); openBattlePop(); await sleep(spd(500)); break;
       case 'enemyFled': if (bv) addPerk(e.pub.side === 'defender' ? 'a' : 'd', `Caesar: one enemy troop flees before the battle (15.b)`); break;
       case 'generalPerkTriggered': if (bv) addPerk(e.actor === bv.defId && bv.defId ? 'd' : 'a', `${data.generalsById[e.pub.general]?.name ?? e.pub.general}: ${e.pub.reason ?? e.pub.effect} (${e.rule})`); break;
-      case 'cardPlayed': if (bv && data.cardDefsById[e.pub.def]?.type === 'battle') addBattleCard(e); toast(`${pn(e.pub.player)} plays ${data.cardDefsById[e.pub.def]?.name ?? e.pub.def}`); break;
+      case 'cardPlayed': if (bv && data.cardDefsById[e.pub.def]?.type === 'battle') addBattleCard(e); showCardPlay(G.cardPlayPopup(events, i, s, data)); break;
+      case 'resourceApplied': case 'resourceCardUsed': showCardPlay(G.cardPlayPopup(events, i, s, data)); break;
       case 'battleRoundRolled': await animRoundRolled(e); break;
       case 'battleDiceAdjusted': adjustRound(e); for (const x of e.pub.adjustments ?? []) addPerk(x.side === 'defender' ? 'd' : 'a', G.adjustmentLabel(x, data), x.source, true); break;
       case 'battleRoundResolved': await animRoundResolved(e); break;
@@ -759,10 +771,10 @@ async function playEvents(events, before = null) {
         break;
       }
       // romeRoll / senateDecree: told by the Game Roll popup (gameRollResolved, item 1)
-      case 'displeasedDrawn': await flipCard('displeased', e.pub.def, `${pn(e.pub.player)} draws Rome Is Displeased`, G.isHuman(s, e.pub.player)); break;
+      case 'displeasedDrawn': await flipCard('displeased', e.pub.def, 'draws from Rome Is Displeased', G.isHuman(s, e.pub.player), e.pub.player); break;
       case 'cardDrawn': {
         const def = e.pub.def ?? (e.priv && e.pub.player === viewer ? e.priv.def : null);
-        if (def && (G.isHuman(s, e.pub.player) || e.pub.deck !== 'game')) await flipCard(e.pub.deck, def, `${pn(e.pub.player)} draws a ${e.pub.deck === 'game' ? 'Game' : 'Resource'} card`, G.isHuman(s, e.pub.player));
+        if (def && (G.isHuman(s, e.pub.player) || e.pub.deck !== 'game')) await flipCard(e.pub.deck, def, `draws a ${e.pub.deck === 'game' ? 'Game' : 'Resource'} card`, G.isHuman(s, e.pub.player), e.pub.player);
         else toast(`${pn(e.pub.player)} draws a ${e.pub.deck === 'game' ? 'Game Card (hidden)' : e.pub.deck + ' card'}`);
         break;
       }
@@ -792,7 +804,7 @@ async function rollPopup(p) {
   const num = p.value !== undefined ? `<div class="rollnum">${esc(p.value)}</div>` : '';
   const hit = p.matched ? `<div class="rollprov" id="rollProv"><span class="small">Province${p.matched.length === 1 ? '' : 's'} with number ${esc(p.value)}:</span>${p.matched.length ? p.matched.map(m => `<span class="rp ${m.owner ? col(m.owner) : 'nat'}" data-prov="${m.id}"><b>${esc(m.name)}</b> <i>${esc(m.holder)}</i></span>`).join('') : '<span class="rp none">none</span>'}</div>` : '';
   for (const m of p.matched ?? []) flashToken(m.id);
-  const html = `<div class="cardbig"><img src="${img(p.art)}" alt="">${num}</div><div class="txt"><h2>${esc(p.title)}</h2>${hit}<ul class="rolllines">${(p.matched ? p.lines.filter(l => !l.startsWith(`Number ${p.value}: `)) : p.lines).map(l => `<li>${esc(l)}</li>`).join('')}</ul>${p.sticky ? '<p class="small"><b>Click OK to continue.</b></p>' : ''}<button class="btn gold" data-close id="popOk">OK</button></div>`;
+  const html = `${p.kind === 'displeased' && p.player ? whoBar(p.player, 'drew Rome Is Displeased') : ''}<div class="cardbig"><img src="${img(p.art)}" alt="">${num}</div><div class="txt"><h2>${esc(p.title)}</h2>${hit}<ul class="rolllines">${(p.matched ? p.lines.filter(l => !l.startsWith(`Number ${p.value}: `)) : p.lines).map(l => `<li>${esc(l)}</li>`).join('')}</ul>${p.sticky ? '<p class="small"><b>Click OK to continue.</b></p>' : ''}<button class="btn gold" data-close id="popOk">OK</button></div>`;
   document.body.dataset.popup = p.kind;
   await openModal(html, { autoMs: p.sticky ? 0 : spd(4500), cls: 'event roll-pop ' + p.kind + (p.revolt || p.kind === 'revolt' ? ' revolt-pop' : '') });
   document.body.dataset.popup = '';
@@ -810,13 +822,35 @@ async function showNews() {
   for (const p of list) await rollPopup({ ...p, title: `While you were away: ${p.title}`, sticky: true });
   busy = false; document.body.dataset.busy = ''; render(); schedule(); guestDrain();
 }
+/**
+ * v27 (M15): the "card played" popup — which card, WHO played it (at the top) and its outcome. It never waits on anyone
+ * (it is not a modal): it sits above the battle view and below the modals (assassins, Rome Is Displeased, prompts), closes
+ * by itself after CARD_VIEW_MS, on Close, or on a click elsewhere; at most 3 are stacked. A hidden host page shows none.
+ */
+let cpSeq = 0;
+function showCardPlay(p) {
+  if (!p || hostHidden()) return;
+  const box = $('#cardPlays'); if (!box) return;
+  const el = document.createElement('div'); el.className = 'cardplay'; el.id = 'cp' + (++cpSeq); el.dataset.def = p.def; el.dataset.who = p.player; el.dataset.deck = p.deck;
+  el.innerHTML = `${whoBar(p.player, `${p.verb} ${p.name}`)}<div class="cp-body"><img src="${img('card.' + p.def)}" alt="${attr(p.name)}"><div class="cp-txt"><h3>${esc(p.name)}</h3>`
+    + `<ul class="cp-out">${p.outcome.map(l => `<li>${esc(l)}</li>`).join('')}</ul><div class="cp-foot"><button class="btn small" data-cpclose>Close</button><span class="small">Closes by itself in ${CARD_VIEW_MS / 1000} s.</span></div></div></div>`;
+  box.prepend(el); while (box.children.length > 3) box.lastElementChild.remove();
+  const close = () => el.remove();
+  el.querySelector('[data-cpclose]').onclick = close;
+  setTimeout(close, CARD_VIEW_MS);
+}
+// a click on the page elsewhere closes it (not a click in a modal or another popup: acknowledging those leaves it to be read)
+document.addEventListener('pointerdown', ev => { if (!ev.target.closest?.('#cardPlays, .ov.on')) $$('#cardPlays .cardplay').forEach(x => x.remove()); }, true);
 const CARD_VIEW_MS = 8000;   // batch 5 item 7: real seconds, not scaled by the animation speed (it is reading time)
-async function flipCard(deck, def, caption, mine = true) {
+/** v27 (Vidi 2026-10-25 9:12 PM): whose card it is, big and in the player's colour, at the TOP of a card popup (not below it). */
+const whoBar = (pid, sub, id = '') => (pid ? `<div class="whobar"${id ? ` id="${id}"` : ''} data-who="${attr(pid)}" style="--wc:var(--${col(pid)})"><b class="wb-name">${esc(pn(pid))}'s card</b>${sub ? `<span class="wb-sub">${esc(pn(pid))} ${esc(sub)}</span>` : ''}</div>` : '');
+async function flipCard(deck, def, caption, mine = true, who = null) {
   const c = G.cardView(data, def);
-  const ov = $('#ovDraw'), dc = $('#drawCard'), ch = Math.min(window.innerHeight * 0.66, 620), cw = ch / 2;
-  dc.style.setProperty('--cw', cw + 'px'); dc.classList.remove('flipped');
+  $('#drawWho').outerHTML = who ? whoBar(who, caption, 'drawWho') : '<div id="drawWho" hidden></div>';
+  const ov = $('#ovDraw'), dc = $('#drawCard'), ch = Math.min(window.innerHeight * 0.62, 600), cw = ch / 2;
+  dc.style.setProperty('--cw', cw + 'px'); ov.style.setProperty('--ch', ch + 'px'); dc.classList.remove('flipped');
   dc.innerHTML = `<div class="fc-inner"><div class="fc-back"><img src="${img('back.' + deck)}" alt=""></div><div class="fc-front"><div class="cf art"><img src="${img(c.art)}" alt="${attr(c.name)}"></div></div></div>`;
-  $('#drawBtns').innerHTML = `<div>${esc(caption)}: <b>${esc(c.name)}</b>${c.battle ? ' <span class="bclabel" style="display:inline;color:#ffd9a8">' + G.BATTLE_LABEL + '</span>' : ''}</div><div class="row"><button class="btn gold" id="dOk">Close</button></div><div class="small dtimer">${mine ? 'Closes by itself in 8 s, or click anywhere.' : 'Click anywhere to close.'}</div>`;
+  $('#drawBtns').innerHTML = `<div>${who ? '' : esc(caption) + ': '}<b>${esc(c.name)}</b>${c.battle ? ' <span class="bclabel" style="display:inline;color:#ffd9a8">' + G.BATTLE_LABEL + '</span>' : ''}</div><div class="row"><button class="btn gold" id="dOk">Close</button></div><div class="small dtimer">${mine ? 'Closes by itself in 8 s, or click anywhere.' : 'Click anywhere to close.'}</div>`;
   ov.classList.add('on'); document.body.dataset.drawView = '1';
   // batch 5 item 7 (Vidi 2026-10-24): a card being looked at stays up 8 seconds, or until Close or a click anywhere else
   let done; const p = new Promise(r => { done = r; }); $('#dOk').onclick = () => done(); ov.onclick = () => done();
@@ -1289,10 +1323,14 @@ function renderMap(legal) {
     if (id === 'roma' && !p.owner) { cls += 'roma'; txt = p.troops; }
     else if (!p.owner) { cls += 'native'; txt = p.native.present ?? '?'; }
     else { cls += col(p.owner) + (p.status === 'allied' ? ' allied' : ''); txt = p.troops; if (isUnderGarrisoned(s, data, id)) cls += ' low'; }
+    // v27 (Vidi 9:12 PM): a held province shows troops/natives, the natives lighter ("5/3"); no natives (0 or not known): troops only
+    const nat = p.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
+    const tip = `${def.name}: ${!p.owner && id !== 'roma' ? `${p.native.present ?? '?'} natives` : `${p.troops} troop${p.troops === 1 ? '' : 's'}${nat ? `, ${nat} native${nat === 1 ? '' : 's'}` : ''}`}`;
+    if (nat) { cls += ' wn'; txt = `${p.troops}<span class="nat">/${nat}</span>`; }
     if (selected === id) cls += ' sel';
     if (builder) cls += ab.from === id ? ' ab-origin' : ab.to === id ? ' ab-tgt' : picks.has(id) ? ' ab-ok' : ' ab-dim';
     else if (picks.has(id)) cls += ' pick';
-    h += `<div class="${cls}" data-id="${id}" style="left:${x}%;top:${y}%" title="${attr(def.name)}">${txt}</div>`;
+    h += `<div class="${cls}" data-id="${id}" style="left:${x}%;top:${y}%" title="${attr(tip)}" data-troops="${p.owner || id === 'roma' ? p.troops : ''}" data-natives="${nat || ''}">${txt}</div>`;
     if (p.road) mk('road', 'R', x + 2.4, y + 3.9, 'Road');
     for (const w of p.walls ?? []) { const [x2, y2] = tokenFor(w); mk('wall', 'W', x + (x2 - x) * 0.42, y + (y2 - y) * 0.42, 'Wall facing ' + prov(w)); }
     if (showMin) { const m = G.shownMin(s, data, id); if (m?.min) mk('lbl', 'min ' + m.min, x, y + 5.7, 'Minimum garrison'); }
@@ -1424,7 +1462,7 @@ function openCardView(uid) {
     : pv.mode === 'build' ? `<button class="btn gold" id="playThis" data-mode="build" data-piece="${pv.piece}">Use this ${esc(c.name)} card now (free): choose where…</button>`
     : `<p class="small whynot" id="cardWhy">${esc((owner && G.cardBlockReason(s, data, owner, uid)) ?? (c.battle ? "Can't play now: commit it in a battle (18.i)." : pv.reason ?? "Can't play now."))}</p>`;
   let left = CARD_VIEW_MS / 1000;
-  const p = openModal(`<div class="cardbig"><img src="${img(c.art)}" alt=""></div><div class="txt" id="cardView" data-uid="${uid}"><h2>${esc(c.name)}</h2>${c.battle ? `<span class="bclabel">${G.BATTLE_LABEL}</span>` : ''}<p>${esc(c.text)}</p>${play}${sell ? `<button class="btn" id="sellThis" data-key="${attr(G.descKey(sell))}">Sell it for ${data.rules.sellCard?.gold ?? 2} Gold (free)</button>` : ''}<button class="btn" data-close id="cvClose">Close</button><p class="small cvtimer" id="cvTimer">Closes by itself in ${left} s, or click anywhere outside the card.</p></div>`, { autoMs: CARD_VIEW_MS, cls: 'cardview' });
+  const p = openModal(`${whoBar(owner ?? viewer, 'holds this card in hand')}<div class="cardbig"><img src="${img(c.art)}" alt=""></div><div class="txt" id="cardView" data-uid="${uid}"><h2>${esc(c.name)}</h2>${c.battle ? `<span class="bclabel">${G.BATTLE_LABEL}</span>` : ''}<p>${esc(c.text)}</p>${play}${sell ? `<button class="btn" id="sellThis" data-key="${attr(G.descKey(sell))}">Sell it for ${data.rules.sellCard?.gold ?? 2} Gold (free)</button>` : ''}<button class="btn" data-close id="cvClose">Close</button><p class="small cvtimer" id="cvTimer">Closes by itself in ${left} s, or click anywhere outside the card.</p></div>`, { autoMs: CARD_VIEW_MS, cls: 'cardview' });
   const tick = setInterval(() => { left -= 1; const t = $('#cvTimer'); if (!t || left < 0) { clearInterval(tick); return; } t.textContent = `Closes by itself in ${left} s, or click anywhere outside the card.`; }, 1000);
   p.then(() => clearInterval(tick));
   const pt = $('#playThis');

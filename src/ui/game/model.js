@@ -163,7 +163,7 @@ export function soundsFor(e, state = null) {
   switch (e.type) {
     case 'diceRolled': return [e.pub.die === 'd10' ? 'dice_roll_d10' : 'dice_roll_d6'];
     case 'cardDrawn': return ['card_draw'];
-    case 'cardPlayed': return ['card_play'];
+    case 'cardPlayed': case 'resourceCardUsed': return ['card_play'];
     case 'troopsMoved': case 'troopsPlaced': case 'survivorsMoved': return ['troops_move'];
     case 'attackDeclared': return ['attack_confirm'];
     case 'battleRoundRolled': return ['battle_round_start'];
@@ -605,3 +605,37 @@ export function generalView(data, id) {
 /** Batch 4 item 5: the one caption for a general (player panel, setup thumbnails, the in-game picker, the detail view's heading):
  *  its current perk name or summary, from data/generals.json through generalView. */
 export const generalCaption = (data, id) => generalView(data, id)?.title ?? '';
+
+// ------------------------------------------------------------------ v27 (M15): the "card played" popup (Vidi 2026-10-25)
+/** Event types that end a played card's outcome (the next thing happening is no longer this card's effect). */
+const PLAY_STOP = new Set(['cardPlayed', 'resourceApplied', 'resourceCardUsed', 'stepStarted', 'battleStarted', 'attackDeclared', 'allyDeclared', 'turnStarted', 'turnEnded',
+  'cardDrawn', 'displeasedDrawn', 'diceRolled', 'battleCardsSkipped', 'gameRollStarted', 'revoltRollStarted', 'battleRoundStarted', 'roundStarted']);
+const PLAY_QUIET = new Set(['actionSpent', 'garrisonStatusChanged', 'stepChanged', 'phaseChanged', 'framePushed', 'framePopped']);
+/** True for an event that shows the card-played popup: any game card played (hand, auto-play, battle, Horn, Roma, Busy Bee) or a Resource card used. */
+export const isCardPlay = e => e?.type === 'cardPlayed' || e?.type === 'resourceApplied' || e?.type === 'resourceCardUsed';
+/**
+ * The card-played popup for events[i] (v27): which card, WHO played it, and its public outcome — the lines that the
+ * following events report until the next card, step or battle. Only public fields are read, so the redacted event list
+ * a guest gets yields the same popup (a played card is public, 18.h). Null when events[i] is not a card play.
+ */
+export function cardPlayPopup(events, i, state, data) {
+  const e = events[i]; if (!isCardPlay(e)) return null;
+  const p = e.pub; const defId = p.def; const def = data.cardDefsById[defId] ?? null;
+  const nm = id => nameOf(state, id); const who = p.player;
+  const outcome = [];
+  if (e.type === 'resourceApplied') {
+    if (p.gold) outcome.push(`+${p.gold} Gold for ${nm(who)}.`);
+    if (p.troops) outcome.push(`${p.troops} troop${p.troops === 1 ? '' : 's'} to place in ${nm(who)}'s provinces.`);
+  }
+  if (e.type === 'cardPlayed' && p.role) outcome.push(`Played by the ${p.role}${p.round ? ` in round ${p.round}` : ''}${p.source === 'horn' ? '' : ' of the battle'}.`);
+  if (e.type === 'cardPlayed' && p.source === 'attackRoma') outcome.push(`${nm(who)} may attack Roma.`);
+  if (e.type === 'cardPlayed' && p.inPlay) outcome.push('Stays in play in front of the player.', ...(def?.text ? [def.text] : []));
+  for (let k = i + 1; k < events.length && outcome.length < 7; k++) {
+    const x = events[k]; if (PLAY_STOP.has(x.type)) break; if (PLAY_QUIET.has(x.type)) continue;
+    const t = formatEvent(x, state, data).text; if (t && !/^[a-zA-Z]+ \{/.test(t)) outcome.push(t.replace(/\b[a-z]+(?:_[a-z]+)+\b/g, id => data.cardDefsById[id]?.name ?? id));
+  }
+  if (!outcome.length && def?.text) outcome.push(def.text);
+  const deck = def?.deck ?? (e.type === 'cardPlayed' ? 'game' : 'resource');
+  return { kind: 'cardPlayed', player: who, playerName: nm(who), human: isHuman(state, who), def: defId, uid: p.uid ?? null, deck,
+    name: def?.name ?? defId, type: def?.type ?? null, verb: deck === 'resource' ? 'used' : 'played', outcome, battle: def?.type === 'battle' };
+}

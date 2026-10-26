@@ -726,3 +726,31 @@ body[data-online="guest"] #bSave,body[data-online="guest"] #bLoad,body[data-join
 .decklist .dl-card .cf{width:96px;flex:none}
 .decklist .dl-txt{line-height:1.25}
 .decklist .dl-n{display:inline-block;background:var(--deep);color:#f4e6bf;border-radius:9px;padding:0 7px;font-weight:700;font-size:.9em}
+
+/* v27 (Vidi 2026-10-25 9:12 PM): whose card, at the top of a card popup */
+.whobar{display:flex;flex-direction:column;align-items:center;gap:2px;background:var(--wc,#444);color:#fff;border-radius:10px;padding:8px 22px;box-shadow:0 3px 12px rgba(0,0,0,.45);border:2px solid #fff;text-shadow:0 1px 2px rgba(0,0,0,.6);text-align:center}
+.whobar .wb-name{font-size:clamp(20px,2.6vw,32px);font-weight:900;letter-spacing:.06em;text-transform:uppercase;line-height:1.1}
+.whobar .wb-sub{font-size:clamp(12px,1.2vw,16px);opacity:.92}
+#ovDraw .whobar{position:fixed;left:50%;top:max(8px,calc(50vh - var(--ch,600px) / 2 - 24px - 84px));transform:translateX(-50%);z-index:103;max-width:92vw}
+.modal:has(> .whobar){flex-wrap:wrap;justify-content:center}
+.modal > .whobar{flex-basis:100%;order:-1}
+.modal.cardview:has(> .whobar) .cardbig{height:min(calc(80vh - 90px),680px)}
+.modal.roll-pop:has(> .whobar) .cardbig{height:min(calc(46vh - 40px),340px)}
+/* v27: troops/natives on a held province; the natives lighter and a little smaller; the token widens into a pill */
+.tok.wn{width:auto;min-width:clamp(30px,4.6cqw,56px);padding:0 clamp(3px,.5cqw,6px);border-radius:999px;letter-spacing:-.02em;white-space:nowrap}
+.tok .nat{color:rgba(255,255,255,.62);font-weight:700;font-size:.78em;margin-left:1px}
+.legend .lg-nat{opacity:.55}
+.dispbanner .db-btns{display:flex;gap:10px;flex-wrap:wrap}
+/* v27 (M15): the card-played popup (not a modal: above the battle view, below the modals) */
+.cardplays{position:fixed;top:clamp(56px,9vh,84px);right:clamp(6px,1.5vw,18px);z-index:95;display:flex;flex-direction:column;gap:8px;width:min(430px,94vw);pointer-events:none}
+.cardplay{pointer-events:auto;background:#2b2320;color:#f3e7c4;border:2px solid var(--gold);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.55);padding:8px 10px 10px;animation:cpIn .25s ease-out}
+.cardplay .whobar{margin:0 0 8px}
+.cardplay .cp-body{display:flex;gap:10px;align-items:flex-start}
+.cardplay .cp-body img{width:clamp(70px,22%,104px);border-radius:6px;flex:none}
+.cardplay h3{margin:0 0 4px;font-size:1.05rem;color:var(--gold)}
+.cardplay .cp-out{margin:0;padding-left:1.1em;font-size:.88rem;line-height:1.3;max-height:9.5em;overflow:auto}
+.cardplay .cp-foot{display:flex;gap:8px;align-items:center;margin-top:6px;opacity:.85}
+@keyframes cpIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.cardplay .whobar{padding:5px 14px}
+.cardplay .whobar .wb-name{font-size:clamp(16px,1.7vw,22px)}
+.cardplay .whobar .wb-sub{font-size:clamp(11px,1vw,14px)}

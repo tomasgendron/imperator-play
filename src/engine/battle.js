@@ -256,8 +256,14 @@ define('PASS', {
 });
 define('BATTLE_CONTINUE', { frame: [CONT], run(ctx) { popFrame(ctx); const b = ctx.state.battle; b.round += 1; b.stage = 'roundCards'; } });
 define('BATTLE_RETREAT', {
-  frame: [CONT],
-  run(ctx) { popFrame(ctx); emit(ctx, 'retreated', { rule: '17.k', pub: { battleId: ctx.state.battle.id, player: ctx.state.battle.att.player, to: ctx.state.battle.att.from, own: ctx.state.battle.att.own } }); finish(ctx, 'retreat'); },
+  frame: [CONT, 'roll'],
+  run(ctx) {
+    const f = topFrame(ctx.state); const b = ctx.state.battle;
+    // Q142 (Vidi 2026-10-25): the attacker may also retreat once the cards are committed, before round 1 is rolled
+    if (f.kind === 'roll') check(f.purpose === 'battleRound' && b?.mode === 'attack' && b.round === 1 && !b.rounds.length && ctx.data.rules.earlyRetreatCardsBack?.retreatBeforeRound1 !== false,
+      'WRONG_FRAME', 'You can retreat before round 1 is rolled or after a round (17.k).', '17.k');
+    popFrame(ctx); emit(ctx, 'retreated', { rule: '17.k', pub: { battleId: ctx.state.battle.id, player: ctx.state.battle.att.player, to: ctx.state.battle.att.from, own: ctx.state.battle.att.own, beforeRound1: f.kind === 'roll' } }); finish(ctx, 'retreat');
+  },
 });
 define('PLACE_SURVIVORS', {
   frame: [SURV],
@@ -278,8 +284,9 @@ for (const t of ['APPLY_PLUS_ONE', 'BATTLE_CARDS_DONE']) define(t, { run: () => 
 function playCard(ctx, b, side, uid, source) {
   const { state } = ctx; const pid = side === 'att' ? b.att.player : b.def.player; const pl = mustPlayer(state, pid);
   const i = pl.hand.findIndex(c => c.uid === uid); if (i < 0) return;
-  pl.hand.splice(i, 1); toDiscard(state, uid);
+  const [entry] = pl.hand.splice(i, 1); toDiscard(state, uid);
   const def = state.cards[uid].def;
+  (b[side].played ??= []).push({ uid, def, round: b.round, entry });   // for the early-retreat return (17.k, 18.i)
   if (def === 'elephants') b[side].elephants += 1; else b.moral[side] = 1;
   emit(ctx, 'cardPlayed', { actor: pid, rule: def === 'elephants' ? '18.b' : '18.c', pub: { battleId: b.id, round: b.round, player: pid, role: side === 'att' ? 'attacker' : 'defender', def, uid, source } });
 }
@@ -495,6 +502,7 @@ function finish(ctx, outcome) {
       emit(ctx, 'fledTroopReturned', { rule: '15.b', pub: { battleId: b.id, owner: b.fled.side === 'def' ? D : A, province: b.fled.side === 'def' ? t : b.att.from } });
     }
   }
+  settleBattleCards(ctx, b, outcome);
   emit(ctx, 'battleEnded', { actor: A, rule: '17.e', pub: { battleId: b.id, outcome, winner: outcome === 'conquered' ? A : outcome === 'retreat' ? null : (D ?? 'defender'), rounds: b.rounds.length, attackerLeft: b.att.own, borrowedDead: b.att.borrowedDead, target: t, from: b.att.from, defender: D ?? null, sea: !!b.sea, defenderLeft: outcome === 'conquered' ? 0 : defForce(state, b) } });
   const after = [];   // frames, pushed bottom-first: extra Revolt Roll, then card, then survivors on top (Q29)
   let exclude = null;
@@ -508,6 +516,38 @@ function finish(ctx, outcome) {
   if (b.att.borrowedDead > 0) after.unshift(extraRevoltFrame(ctx, A, exclude));
   state.battle = null;
   for (const f of after) if (f) pushFrame(ctx, f);
+}
+/**
+ * Battle cards when a battle ends (17.k, 18.i; Vidi Q141-Q144, 2026-10-25). Committed cards are spent: a Moral boost still queued
+ * for a later round goes to the discard pile too (the attacker's always, Q143). Except: when the attacker retreats after 3 or
+ * fewer rolled rounds (`earlyRetreatCardsBack.maxRounds`), also before round 1 (Q142), the defender takes back every battle card
+ * not used yet: a queued Moral boost, a Moral boost played for a round that was never rolled, and (flag
+ * `returnCommittedElephantsOnEarlyRetreat`, on) the committed Elephants. A Moral boost applied in a rolled round is used. The Horn
+ * of Titus Pullus is not a battle card and never comes back (Q144). Natives and the Senate Decree have no cards to return.
+ */
+function settleBattleCards(ctx, b, outcome) {
+  const { state, data } = ctx; const R = data.rules.earlyRetreatCardsBack ?? { enabled: false };
+  const rolled = b.rounds.length;
+  const early = outcome === 'retreat' && R.enabled && rolled <= R.maxRounds;
+  const spend = (side, uids) => {
+    const pid = b[side].player; const pl = pid && playerOf(state, pid); if (!pl || !uids.length) return;
+    const out = [];
+    for (const uid of uids) { const i = pl.hand.findIndex(c => c.uid === uid); if (i < 0) continue; pl.hand.splice(i, 1); toDiscard(state, uid); out.push(state.cards[uid].def); }
+    if (out.length) emit(ctx, 'battleCardsSpent', { actor: pid, rule: '18.i', pub: { battleId: b.id, player: pid, role: side === 'att' ? 'attacker' : 'defender', cards: out, reason: 'queued' } });
+  };
+  spend('att', b.att.queue ?? []); b.att.queue = [];   // Q143: the attacker's committed cards stay spent
+  if (!b.def.player) return;
+  if (!early) { spend('def', b.def.queue ?? []); b.def.queue = []; return; }
+  const pl = playerOf(state, b.def.player); const back = [];
+  for (const uid of b.def.queue ?? []) if (pl.hand.some(c => c.uid === uid)) back.push({ uid, def: state.cards[uid].def, kept: true });
+  b.def.queue = [];
+  for (const c of b.def.played ?? []) {
+    const unused = c.def === 'elephants' ? !!data.rules.returnCommittedElephantsOnEarlyRetreat : c.round > rolled;
+    if (!unused) continue;
+    const pile = state.discards[state.cards[c.uid].deck]; const i = pile.lastIndexOf(c.uid); if (i < 0) continue;
+    pile.splice(i, 1); pl.hand.push({ ...(c.entry ?? { uid: c.uid }) }); back.push({ uid: c.uid, def: c.def });
+  }
+  if (back.length) emit(ctx, 'battleCardsReturned', { actor: b.def.player, rule: '18.i', pub: { battleId: b.id, player: b.def.player, cards: back.map(c => c.def), round: rolled, reason: 'attackerRetreated' }, priv: { uids: back.map(c => c.uid) }, privTo: [b.def.player] });
 }
 function extraRevoltFrame(ctx, pid, exclude) {
   const { state, data } = ctx;

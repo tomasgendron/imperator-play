@@ -59,6 +59,22 @@ function openModal(html, { autoMs = 0, cls = '' } = {}) {
     if (autoMs) setTimeout(() => { if (modalDone === res) closeModal(); }, autoMs);
   });
 }
+// batch 6 item 2 (Vidi 2026-10-25): the three decks on the start / host / join screens; a click lists every card type in the deck
+// (art, name, text, copies). From the card data only: nothing about the current order of a deck or anyone's hand.
+function renderSetupDecks() {
+  const box = $('#setupDecks'); if (!box || !data) return;
+  box.innerHTML = `<div class="small sdhead"><b>The decks</b> <span class="sdsub">click one to see its cards</span></div><div class="sdrow">`
+    + G.deckCatalog(data).map(d => `<div class="deck sdeck" data-cat="${attr(d.key)}" role="button" tabindex="0" title="${attr(d.title)}: ${d.total} cards. Click to see them all."><img src="${img('deck.' + d.key)}" alt="${attr(d.title)}"><span>${esc(d.short)} · <b>${d.total}</b></span></div>`).join('') + '</div>';
+  $$('.sdeck', box).forEach(el => {
+    const open = () => { SND.play('button_click'); openDeckList(el.dataset.cat); };
+    el.onclick = open; el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
+  });
+}
+function openDeckList(key) {
+  const d = G.deckCatalog(data).find(x => x.key === key); if (!d) return;
+  return openModal(`<div class="dl-head"><img src="${img('deck.' + key)}" alt=""><div><h2>${esc(d.title)}</h2><p class="small">${d.total} cards of ${d.cards.length} kinds. This list shows what the deck holds, never its order or anyone's hand.</p></div><button class="btn" data-close id="dlClose">Close</button></div>`
+    + `<div class="dl-grid" id="dlGrid">${d.cards.map(c => `<div class="dl-card" data-def="${attr(c.def)}"><div class="cf art"><img src="${img(c.art)}" alt="${attr(c.name)}" loading="lazy"></div><div class="dl-txt"><b>${esc(c.name)}</b> <span class="dl-n">x${c.copies}</span>${c.battle ? ` <span class="bclabel" style="display:inline">${G.BATTLE_LABEL}</span>` : ''}<div class="small">${esc(c.text)}</div></div></div>`).join('')}</div>`, { cls: 'decklist' });
+}
 function closeModal() { $('#ovModal').classList.remove('on'); const f = modalDone; modalDone = null; if (f) f(); }
 const mustAck = () => ['displeased-alert', 'assassin-alert'].some(c => $('#modalBox').classList.contains(c));   // batch 5 item 8 / v22: only their button closes them
 $('#ovModal').addEventListener('click', e => { if (e.target.id === 'ovModal' && !mustAck()) closeModal(); });
@@ -68,6 +84,7 @@ async function boot() {
   try { ({ data, assets } = await loadGameData()); } catch (e) { document.body.innerHTML = `<pre style="padding:20px;color:#b02a1c">Imperator could not load its data:\n${esc(e.message)}</pre>`; return; }
   SND = createSound(assets); SND.ui();
   $$('[data-img]').forEach(e => { e.src = img(e.dataset.img); });
+  renderSetupDecks();
   $('#mapImg').src = img('map');
   try { const b = await (await fetch('BUILD.json', { cache: 'no-store' })).json(); uiLabel = b.uiLabel ?? `v23 · ${b.stamp}`; } catch { uiLabel = 'v23 · (no BUILD.json)'; }
   $('#tbVer').textContent = uiLabel;
@@ -1331,7 +1348,8 @@ function renderBuilder(legal) {
 const cardChoiceHtml = (legal, f = topFrame(st())) => {
   const items = G.battleCardChecklist(data, f?.held);
   return `<div class="bcchecks" id="bcChecks">${items.map(c => `<label class="bccheck" data-def="${attr(c.def)}"><input type="checkbox" data-bc="${attr(c.def)}"><img src="${img(c.art)}" alt=""><span><b>${esc(c.name)}</b> <span class="bclabel" style="display:inline">${G.BATTLE_LABEL}</span><br><span class="small">${esc(c.text)}</span></span></label>`).join('')}</div>`
-    + `<div class="bd-btns"><button class="btn confirm" id="bcConfirm">Use the ticked cards ▶</button></div><div class="small" id="bcSum">No card ticked: you fight without battle cards.</div>`;
+    + `<div class="bd-btns"><button class="btn confirm" id="bcConfirm">Use the ticked cards ▶</button></div><div class="small" id="bcSum">No card ticked: you fight without battle cards.</div>`
+    + (G.battleCardsHint(data, f?.role) ? `<div class="small bchint" id="bcHint">${esc(G.battleCardsHint(data, f?.role))}</div>` : '');
 };
 function wireCardChecks(root, legal, after) {
   const boxes = $$('input[data-bc]', root); const btn = $('#bcConfirm', root); if (!btn) return;

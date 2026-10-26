@@ -699,3 +699,20 @@ body.tabshidden:not(.tabforce) .main{grid-template-columns:clamp(300px,23vw,390p
 .netst.you{background:#fff1c2;color:#6b4a00}.netst.host{background:#e3e3f6;color:#2a2a7a}
 .player .toai{padding:0 6px;margin-left:4px;font-size:.72em}
 body[data-online="guest"] #bSave,body[data-online="guest"] #bLoad{display:none}
+
+/* batch 6 item 2: the decks on the start / lobby screens and their card list */
+.sethead{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.sethead-l{display:flex;flex-direction:column;gap:6px}
+.setdecks{padding:3px 10px;border:1px solid #d9c79a;border-radius:8px;background:#fffaf0;display:flex;gap:10px;align-items:center}
+.setdecks .sdhead{max-width:7.5em;line-height:1.15}
+.setdecks .sdsub{color:var(--muted)}
+.setdecks .sdrow{display:flex;gap:16px;justify-content:center;align-items:flex-end;--dkh:50px}
+.modal.decklist{flex-direction:column;align-items:stretch;gap:10px;width:min(1180px,96vw);max-width:96vw}
+.decklist .dl-head{display:flex;gap:14px;align-items:center}
+.decklist .dl-head img{height:70px;filter:drop-shadow(0 3px 3px rgba(0,0,0,.35))}
+.decklist .dl-head>div{flex:1}
+.decklist .dl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;overflow:auto;max-height:78vh;padding:2px}
+.decklist .dl-card{display:flex;gap:8px;align-items:flex-start;background:#fffaf0;border:1px solid #d9c79a;border-radius:8px;padding:6px}
+.decklist .dl-card .cf{width:96px;flex:none}
+.decklist .dl-txt{line-height:1.25}
+.decklist .dl-n{display:inline-block;background:var(--deep);color:#f4e6bf;border-radius:9px;padding:0 7px;font-weight:700;font-size:.9em}

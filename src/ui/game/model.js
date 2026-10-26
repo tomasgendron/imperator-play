@@ -104,6 +104,18 @@ export function cardView(data, def, uid = null) {
 }
 export const BATTLE_LABEL = 'Battle Card';
 
+/**
+ * Batch 6 item 2 (Vidi 2026-10-25): what each deck holds, for the start and lobby screens. Built from the card DATA only (never a game
+ * state), so it shows nothing about the order of a deck or anyone's hand: one entry per card type, with its number of copies.
+ */
+export const DECK_TITLES = { game: ['Game deck', 'Game'], resource: ['Resource deck', 'Resource'], displeased: ['Rome Is Displeased deck', 'Displeased'] };
+export function deckCatalog(data) {
+  return Object.entries(DECK_TITLES).map(([key, [title, short]]) => {
+    const cards = (data.decks[key] ?? []).map(c => ({ ...cardView(data, c.id), copies: c.copies ?? 1 }));
+    return { key, title, short, cards, total: cards.reduce((n, c) => n + c.copies, 0) };
+  });
+}
+
 /** Batch 5 item 4: the battle-card step as a checklist, one checkbox per card held ({def: n} from the chooseBattleCards frame). */
 export function battleCardChecklist(data, held) {
   return Object.entries(held ?? {}).flatMap(([def, n]) => Array.from({ length: n }, (_, i) => ({ def, i, id: `${def}#${i}`, ...cardView(data, def) })));
@@ -347,12 +359,33 @@ export function battleResultPopup(events, i, state, data) {
   } else if (p.outcome === 'retreat') {
     title = `${t} holds: ${nm(A)} retreats`;
     lines.push(`After ${p.rounds} round(s) ${nm(A)} pulls back ${p.attackerLeft} troop(s); you keep ${t} with ${p.defenderLeft} troop(s).`);
+    const back = cardsBack(events, i, data); if (back) lines.push(`You keep your unused battle cards: ${back} (17.k, 18.i).`);
   } else {
     title = `${t} held!`;
     lines.push(`After ${p.rounds} round(s) the attack is beaten off; you keep ${t} with ${p.defenderLeft} troop(s).`);
     if (rest.some(x => x.type === 'cardDrawn' && x.pub.player === D) || topFrame(state)?.kind === 'draw' && topFrame(state)?.player === D) lines.push('You win the defence: draw a Game Card.');
   }
   return { kind: 'battle', player: D, province: p.target, title, lines, art: 'dice.d6', sticky: true, players: [D, A] };
+}
+
+/** Batch 6 (Q141-Q144): the battle cards the defender took back in this battle (the battleCardsReturned event just before battleEnded), e.g. "Elephants!, Moral boost!". */
+export function cardsBack(events, i, data) {
+  const id = events[i].pub.battleId;
+  for (let j = i - 1; j >= 0 && j >= i - 8; j--) {
+    const e = events[j];
+    if (e.type === 'battleCardsReturned' && e.pub.battleId === id) {
+      const n = {}; for (const d of e.pub.cards) n[d] = (n[d] ?? 0) + 1;
+      return Object.entries(n).map(([d, k]) => (data.cardDefsById[d]?.name ?? d) + (k > 1 ? ` x${k}` : '')).join(', ');
+    }
+  }
+  return '';
+}
+/** Batch 6: the rule hint under the battle-card checklist for the defender (from the ruleset, so it follows the flags). */
+export function battleCardsHint(data, role) {
+  const R = data.rules.earlyRetreatCardsBack;
+  if (role !== 'defender' || !R?.enabled) return role === 'attacker' ? 'Your committed cards are spent with the battle, even if you retreat.' : '';
+  return `If the attacker retreats${R.retreatBeforeRound1 !== false ? ' before round 1 or' : ''} within ${R.maxRounds} rolled rounds, you keep every card not used yet`
+    + `${data.rules.returnCommittedElephantsOnEarlyRetreat ? ' (Elephants included)' : ''}; a Moral boost applied in a rolled round is used (17.k, 18.i).`;
 }
 
 /** M7 item 1: the result shown at the foot of the battle popup, for anyone watching. `events[i]` is battleEnded. Returns {title, lines[]}. */
@@ -370,6 +403,7 @@ export function battleSummary(events, i, state, data) {
   } else if (p.outcome === 'retreat') {
     title = `RETREAT: ${t} holds`;
     lines.push(`After ${p.rounds} round(s) ${nm(A)} pulls back ${p.attackerLeft} troop(s) to ${provName(data, p.from)}; ${dn} ${D ? 'keeps' : 'keep'} ${t} with ${p.defenderLeft}.`);
+    const back = cardsBack(events, i, data); if (back) lines.push(`${dn} keeps the unused battle cards: ${back} (17.k, 18.i).`);
   } else {
     title = `DEFEAT: ${t} holds`;
     lines.push(`After ${p.rounds} round(s) the attack is beaten off; ${dn} ${D ? 'keeps' : 'keep'} ${t} with ${p.defenderLeft} troop(s).`);

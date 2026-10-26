@@ -492,6 +492,18 @@
    "value": true,
    "rule": "17.y, Q59 default (own survivors may be split back to the origin; 1 stays, Roma 0)"
   },
+  "earlyRetreatCardsBack": {
+   "value": {
+    "enabled": true,
+    "maxRounds": 3,
+    "retreatBeforeRound1": true
+   },
+   "rule": "17.k, 18.i (Vidi 2026-10-25, Q141-Q144): the attacker retreats after 3 or fewer rolled rounds (or before round 1): the defender takes back its battle cards not used yet"
+  },
+  "returnCommittedElephantsOnEarlyRetreat": {
+   "value": true,
+   "rule": "17.k, 18.i (Vidi Q141, 2026-10-25): committed Elephants count as not used for the early-retreat return"
+  },
   "battleWinCard": {
    "value": {
     "attacker": true,

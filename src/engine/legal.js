@@ -34,7 +34,12 @@ export function legalActions(state, data) {
 
   if (f) {
     switch (f.kind) {
-      case 'roll': add({ type: 'ROLL' }, `Roll the ${f.die}${ROLL_LABEL[f.purpose] ? ' (' + ROLL_LABEL[f.purpose](f) + ')' : ''}`); break;
+      case 'roll':
+        add({ type: 'ROLL' }, `Roll the ${f.die}${ROLL_LABEL[f.purpose] ? ' (' + ROLL_LABEL[f.purpose](f) + ')' : ''}`);
+        // Q142: the attacker may retreat once the cards are committed, before round 1 is rolled (the defender takes its cards back, 18.i)
+        if (f.purpose === 'battleRound' && f.round === 1 && state.battle?.mode === 'attack' && !state.battle.rounds?.length && data.rules.earlyRetreatCardsBack?.retreatBeforeRound1 !== false)
+          add({ type: 'BATTLE_RETREAT' }, `Retreat before rolling (survivors go home${keepsCards(state, data) ? '; the defender keeps its battle cards' : ''})`);
+        break;
       case 'setupGeneral': {
         const taken = new Set(state.players.filter(p => p.general).map(p => p.general.id));
         for (const g of data.generals) if (!taken.has(g.id)) add({ type: 'CHOOSE_GENERAL', general: g.id }, `Choose ${g.name}`);
@@ -90,7 +95,7 @@ export function legalActions(state, data) {
         break;
       case 'battleContinue':
         add({ type: 'BATTLE_CONTINUE' }, `Continue the battle (${f.attacker} vs ${f.defender})`);
-        add({ type: 'BATTLE_RETREAT' }, 'Retreat (survivors go home)');
+        add({ type: 'BATTLE_RETREAT' }, `Retreat (survivors go home${keepsCards(state, data) ? '; the defender keeps its unused battle cards' : ''})`);
         break;
       case 'discardCards': {
         const o = f.options; const lbl = u => data.cardDefsById[state.cards[u].def]?.name ?? state.cards[u].def;
@@ -187,4 +192,11 @@ export function legalActions(state, data) {
   // dry-run everything except ROLL: the engine decides what is legal
   const probe = { ...state, log: [] };   // the log is not needed to judge legality, and cloning it for every candidate would be slow
   return out.filter(d => d.type === 'ROLL' || !applyAction(probe, d.action, { data }).error);
+}
+
+/** Batch 6 (Q141-Q142): would a retreat now give the defender battle cards back? Only committed cards count (public: cardPlayed). */
+function keepsCards(state, data) {
+  const b = state.battle; const R = data.rules.earlyRetreatCardsBack;
+  if (!b?.def?.player || !R?.enabled || (b.rounds?.length ?? 0) > R.maxRounds) return false;
+  return !!(b.def.queue?.length || b.def.played?.some(c => c.def === 'elephants' ? data.rules.returnCommittedElephantsOnEarlyRetreat : c.round > b.rounds.length));
 }

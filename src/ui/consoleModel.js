@@ -15,6 +15,8 @@ export function newSession(data, { seed = 'console', names = ['Vidi', 'Boardicca
   const { state, events } = createGame(data, { seed, players, options: { startProvinceMode: mode } });
   return { data, seed, steps: [{ state, events, action: null, error: null }] };
 }
+/** 'Elephants!, Moral boost! x2' from a list of card defs. */
+const cardList = (d, defs) => Object.entries(defs.reduce((o, k) => ((o[k] = (o[k] ?? 0) + 1), o), {})).map(([k, n]) => (d.cardDefsById?.[k]?.name ?? k) + (n > 1 ? ' x' + n : '')).join(', ');
 /** Setup-screen helpers (M4): the choices and a validation that names the seat and field of each problem. */
 export const setupChoices = data => ({
   generals: data.generals.map(g => ({ id: g.id, name: g.name })),
@@ -159,7 +161,9 @@ const T = {
   fledTroopJoined: (e, st) => `The fled troop joins ${pn(st, e.pub.to)}.`,
   fledTroopReturned: (e, st, d) => `The fled troop returns to ${prov(d, e.pub.province)}.`,
   battleEnded: (e, st) => `Battle over after ${e.pub.rounds} round(s): ${e.pub.outcome}${e.pub.winner && e.pub.winner !== 'defender' ? ', ' + pn(st, e.pub.winner) + ' wins' : ''}.`,
-  retreated: (e, st, d) => `${pn(st, e.pub.player)} retreats to ${prov(d, e.pub.to)} with ${e.pub.own} troop(s).`,
+  retreated: (e, st, d) => `${pn(st, e.pub.player)} retreats${e.pub.beforeRound1 ? ' before round 1 is rolled' : ''} to ${prov(d, e.pub.to)} with ${e.pub.own} troop(s).`,
+  battleCardsReturned: (e, st, d) => `${pn(st, e.pub.player)} keeps the unused battle cards because the attacker retreated ${e.pub.round ? 'in round ' + e.pub.round : 'before round 1'}: ${cardList(d, e.pub.cards)} (17.k, 18.i).`,
+  battleCardsSpent: (e, st, d) => `${pn(st, e.pub.player)}'s queued ${cardList(d, e.pub.cards)} ${e.pub.cards.length > 1 ? 'are' : 'is'} spent with the battle (18.i).`,
   survivorsPlaced: (e, st, d) => `${pn(st, e.pub.player)} keeps ${e.pub.stay} in ${prov(d, e.pub.target)} and sends ${e.pub.back} back to ${prov(d, e.pub.origin)}${e.pub.general ? (e.pub.generalBack ? '; the general goes back too' : '; the general stays') : ''}.`,
   provinceConquered: (e, st, d) => `${pn(st, e.pub.player)} conquers ${prov(d, e.pub.province)}${e.pub.from ? ' from ' + pn(st, e.pub.from) : ''} (${e.pub.troops} troops${e.pub.underGarrisoned ? ', UNDER-GARRISONED' : ''}).`,
   provinceLost: (e, st, d) => `${pn(st, e.pub.player)} loses ${prov(d, e.pub.province)}.`,

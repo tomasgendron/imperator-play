@@ -21,7 +21,10 @@ export class HostRoom {
     transport.onPeerClose(p => { const s = this.bySeatPeer(p); if (s) { s.connected = false; s.peer = null; this.changed(s.i); } });
   }
   bySeatPeer(p) { return this.seats.find(s => s.peer === p) ?? null; }
-  lobby() { return { code: this.code, started: this.started, seats: this.seats.map(s => ({ i: s.i, kind: s.kind, name: s.name, taken: !!s.token, connected: s.kind !== 'remote' || s.connected })) }; }
+  /** `connected` = the seat is playable (a guest seat: its guest answers). `guest` = an AI seat that once had a guest: whether that
+   *  guest is connected now (M14: the host may give the seat back). */
+  lobby() { return { code: this.code, started: this.started, seats: this.seats.map(s => ({ i: s.i, kind: s.kind, name: s.name, taken: !!s.token, connected: s.kind !== 'remote' || s.connected,
+    ...(s.kind === 'ai' && s.token ? { returnable: true, guestConnected: !!s.connected } : {}) })) }; }
   /** Every Online seat has its guest (and is connected): the host may start. */
   ready() { return this.seats.every(s => s.kind !== 'remote' || (s.token && s.connected)); }
   changed(i) { this.hooks.onSeat?.(this, i); this.sendLobby(); }
@@ -101,8 +104,23 @@ export class HostRoom {
     }));
     s.sentTo = to;
   }
-  /** The host's "give this seat to the AI" button (a dropped or away player). The page switches the engine controller to 'ai'. */
+  /** The host's "give this seat to the AI" button (a dropped or away player). The page switches the engine controller to 'ai'.
+   *  M14: the guest keeps its token, so the seat can be given back (seatBack) when the friend returns. */
   seatToAI(i) { const s = this.seats[i]; if (!s || s.kind !== 'remote') return false; s.kind = 'ai'; this.changed(i); if (s.peer && this.last) this.sendUpdate(s, this.last); return true; }
+  /** M14 (Vidi Q134-137): the reverse of seatToAI: a seat the AI took over from a guest goes back to that guest, who must be
+   *  connected now. The page switches the engine controller back to 'human'. Returns false (and changes nothing) otherwise. */
+  seatBack(i) {
+    const s = this.seats[i]; if (!s || s.kind !== 'ai' || !s.token || !s.connected || !s.peer) return false;
+    s.kind = 'remote'; this.changed(i); if (this.last) this.sendUpdate(s, this.last); return true;
+  }
+  /** M14: what a host save keeps of the room, so the host can resume the game online later: seat kinds, names, tokens, player ids. */
+  snapshot() { return { code: this.code, started: this.started, seats: this.seats.map(s => ({ i: s.i, kind: s.kind, name: s.name, token: s.token, playerId: s.playerId })) }; }
+  /** M14: a resumed online game (from a host save): the seats and tokens come back, nobody is connected until they rejoin. */
+  restore(snap) {
+    this.started = !!snap.started;
+    this.seats = snap.seats.map((x, i) => ({ i, kind: x.kind, name: x.name ?? '', peer: null, token: x.token ?? null, connected: false, lastSeen: 0, playerId: x.playerId ?? null, sentTo: null }));
+    this.sendLobby();
+  }
   /** Every PING_MS: ping each guest; one that has said nothing for AWAY_MS is shown as away (the host may give its seat to the AI).
    *  It comes back as soon as it answers again. */
   tick() {

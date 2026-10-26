@@ -698,7 +698,17 @@ body.tabshidden:not(.tabforce) .main{grid-template-columns:clamp(300px,23vw,390p
 .netst.on{background:#d9f2d9;color:#1d5d1d}.netst.away{background:#f6d6d0;color:#9b2a1a}
 .netst.you{background:#fff1c2;color:#6b4a00}.netst.host{background:#e3e3f6;color:#2a2a7a}
 .player .toai{padding:0 6px;margin-left:4px;font-size:.72em}
-body[data-online="guest"] #bSave,body[data-online="guest"] #bLoad{display:none}
+body[data-online="guest"] #bSave,body[data-online="guest"] #bLoad,body[data-joining="1"] #bSave,body[data-joining="1"] #bLoad{display:none}
+/* M14: the online strip (room code for the host; reconnecting / host away / AI seat for a guest) */
+.netbanner{position:fixed;top:94px;left:50%;transform:translateX(-50%);z-index:300;background:#fff4d6;border:2px solid #8a6d3b;border-radius:10px;padding:3px 12px;font-size:.85em;box-shadow:0 2px 8px #0004;display:flex;align-items:center;gap:6px;flex-wrap:wrap;max-width:92vw}
+.netbanner[hidden]{display:none}
+.netbanner.host{background:#eef3ff;border-color:#5a6fa3;padding:1px 10px;font-size:.78em;opacity:.92;z-index:90;top:auto;bottom:6px;left:8px;transform:none}
+.netbanner.reconnecting,.netbanner.lost{background:#fde2d8;border-color:#b0452a}
+.netbanner.hostAway{background:#fff0c0}
+.netbanner .nbaway{color:#9b2a1a;font-weight:700}
+.netbanner .spin{display:inline-block;animation:nbspin 1.2s linear infinite}
+@keyframes nbspin{to{transform:rotate(360deg)}}
+.player .toai.back{background:#d9f2d9}
 
 /* batch 6 item 2: the decks on the start / lobby screens and their card list */
 .sethead{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}

@@ -641,3 +641,20 @@ export function cardPlayPopup(events, i, state, data) {
   return { kind: 'cardPlayed', player: who, playerName: nm(who), human: isHuman(state, who), def: defId, uid: p.uid ?? null, deck,
     name: def?.name ?? defId, type: def?.type ?? null, verb: deck === 'resource' ? 'used' : 'played', outcome, battle: def?.type === 'battle' };
 }
+
+/**
+ * v29 (batch 8): may this screen act for seat `pid` right now? The General popup shows every action button for its player and greys them
+ * unless this is true (the player section shows them only for the seat that acts). `who` = whoActs(state); `legal` = this screen's own
+ * legal moves (a guest gets only its own seat's from the host, hot-seat only the human who acts). Returns { live, why, legal }.
+ */
+export function seatActsGate(state, pid, legal, { who = null, busy = false } = {}) {
+  const nm = id => nameOf(state, id);
+  if (state.phase === 'finished') return { live: false, why: 'The game is over.', legal: [] };
+  if (!who) return { live: false, why: 'Nobody can act right now.', legal: [] };
+  if (who !== pid) return { live: false, why: `It is ${nm(who)}'s move, not ${nm(pid)}'s.`, legal: [] };
+  if (!isHuman(state, pid)) return { live: false, why: `${nm(pid)} is played by the computer.`, legal: [] };
+  const own = (legal ?? []).filter(d => (d.playerId ?? pid) === pid);
+  if (!own.length) return { live: false, why: `Only ${nm(pid)}'s own screen can act for ${nm(pid)}.`, legal: [] };
+  if (busy) return { live: false, why: 'Wait: the last move is still being shown.', legal: own };
+  return { live: true, why: '', legal: own };
+}

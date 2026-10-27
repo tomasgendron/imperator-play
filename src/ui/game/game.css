@@ -774,3 +774,22 @@ body[data-online="guest"] #bSave,body[data-online="guest"] #bLoad,body[data-join
 .drawcall p{margin:0 0 10px;line-height:1.35}
 .drawcall .dc-btns{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 @media (max-height:600px){.drawcall{top:4vh}.drawcall .dc-row img{height:20vh}}
+
+/* =================== batch 8 (v29): the General popup carries every button (iPad) =================== */
+.modal.genview .gvacts{border:2px solid var(--gold);border-radius:8px;background:#fff8e0;padding:6px 8px;display:flex;flex-direction:column;gap:6px;flex:none}
+.modal.genview .gvacts .gvhead{font-size:14px;line-height:1.3}
+.modal.genview .gvacts .gvhead .sw{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:-2px}
+.modal.genview .gvacts .gvwhy{color:#7a1f12;font-style:italic}
+.modal.genview .gvacts .pacts{display:flex;flex-wrap:wrap;gap:6px;margin:0}
+.modal.genview .gvacts .pacts.turn{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px}
+.modal.genview .gvacts .pacts .btn{min-height:44px;min-width:44px;font-size:15px;padding:6px 10px;line-height:1.2;touch-action:manipulation;overflow:hidden;text-overflow:ellipsis}
+.modal.genview .gvacts .pacts.gvrd .btn{flex:1 1 150px}
+.modal.genview .gvacts .pacts .btn[disabled]{opacity:.45;filter:grayscale(.7);cursor:not-allowed}
+.modal.genview .gvacts .pacts .pnote{font-size:12px;align-self:center;color:var(--muted)}
+.modal.genview [data-close]{min-height:44px;touch-action:manipulation}
+@media (max-width:900px), (max-height:620px){
+  .modal.genview{flex-direction:column;align-items:stretch;overflow-y:auto;-webkit-overflow-scrolling:touch;max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px);max-width:calc(100vw - 12px);gap:8px;padding:10px}
+  .modal.genview .cardbig{height:min(26vh,220px);align-self:center;order:1}
+  .modal.genview .gvtxt{max-width:none;overflow:visible;padding-right:0}
+}
+@media (max-width:520px){.modal.genview .cardbig{display:none}.modal.genview .gvacts .pacts.turn{grid-template-columns:repeat(2,minmax(0,1fr))}}

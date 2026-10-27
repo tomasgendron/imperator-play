@@ -207,9 +207,9 @@ function pickGeneral(i, id) {
   renderSetup(); return true;
 }
 /** The general view: the full card art and every perk (what it does, when, the numbers and the rules.md labels). Leaves the text column open for a footer. */
-function generalViewHtml(id) {
+function generalViewHtml(id, top = '') {
   const v = G.generalView(data, id); const ln = l => `<li>${esc(l.text)} <span class="rref">(${esc(l.rules)})</span></li>`;
-  return `<div class="cardbig"><img src="${img('general.' + id)}" alt="${attr(v.name)} card"></div><div class="txt gvtxt" id="genView" data-gen="${id}">
+  return `<div class="cardbig"><img src="${img('general.' + id)}" alt="${attr(v.name)} card"></div><div class="txt gvtxt" id="genView" data-gen="${id}">${top}
     <h2>${esc(v.name)} <small>· ${esc(v.title)}</small></h2><p class="quote">“${esc(v.quote)}” <span class="rref">(${esc(v.rules)})</span></p>
     ${v.intro.length ? `<ul class="gvintro">${v.intro.map(ln).join('')}</ul>` : ''}
     ${v.perks.map(p => `<section class="gvperk" data-perk="${p.id}"><h3>${esc(p.name)}</h3><p class="when">When: ${esc(p.when)}</p><ul>${p.detail.map(ln).join('')}</ul></section>`).join('')}
@@ -222,9 +222,21 @@ function openGeneralView(id, { setup = false, player = null } = {}) {
   if (setup) foot = `<div class="gvfoot">${seats.map((x, i) => { const by = seats.findIndex((y, j) => j !== i && y.general === id); const mine = x.general === id;
     return `<button type="button" class="btn sm ${mine ? 'gold' : ''}" data-give="${i}" ${by >= 0 ? `disabled title="taken by ${attr(seats[by].name)}"` : ''}><span class="sw" style="background:${SEAT_COLORS[i]}"></span> ${mine ? '✓ ' : ''}${esc(x.name)}${x.controller === 'ai' && !/\(AI\)/.test(x.name) ? ' (AI)' : ''}</button>`; }).join('')}</div>`;
   else if (player) foot = `<p class="small">${esc(player.name)}'s general${player.general?.at ? ', now in ' + esc(prov(player.general.at)) : ''}.</p>`;
-  openModal(generalViewHtml(id) + `${setup ? '<p class="small">Give this general to:</p>' : ''}${foot}<button class="btn gold" data-close>Close</button></div>`, { cls: 'genview' });
+  const acts = player && !setup && S ? `<div class="gvacts" id="gvActs" data-pid="${attr(player.id)}">${genActsHtml(player.id)}</div>` : '';   // v29 (batch 8): every button, reachable on an iPad
+  openModal(generalViewHtml(id, acts) + `${setup ? '<p class="small">Give this general to:</p>' : ''}${foot}<button class="btn gold" data-close>Close</button></div>`, { cls: 'genview' });
   $$('#modalBox [data-give]').forEach(b => b.onclick = () => { if (pickGeneral(+b.dataset.give, id)) closeModal(); });
+  if (acts) wireActs($('#gvActs'), 'gv');
 }
+/** v29 (batch 8): the General popup's copy of the player section's buttons (same render and handler code, ids prefixed "gv"). */
+function genActsHtml(pid) {
+  const g = actsGate(pid);
+  return `<div class="gvhead"><span class="sw" style="background:var(--${col(pid)})"></span> <b>${esc(pn(pid))}</b>: roll, draw and actions${g.live ? '' : ` <span class="gvwhy small">${esc(g.why)}</span>`}</div>${panelActsHtml(pid, 'gv')}${turnActsHtml(pid, 'gv')}`;
+}
+function refreshGenActs() {
+  const ga = $('#gvActs'); if (!ga || !$('#ovModal').classList.contains('on')) return;
+  ga.innerHTML = genActsHtml(ga.dataset.pid); wireActs(ga, 'gv');
+}
+const actsGate = pid => { const s = st(); return G.seatActsGate(s, pid, mineNow(), { who: s.phase === 'turn' || s.phase === 'setup' ? whoActs(s) : null, busy }); };
 /**
  * The start-province map picker (M8 item 6, Q110): first the roll-off (the engine's, shown with every die), then each seat clicks its start in
  * REVERSE turn order (the last to move picks first); impossible provinces are greyed with the rule's reason.
@@ -1333,45 +1345,69 @@ function renderPlayers() {
     openGeneralView(p.general.id, { player: p });   // M8.1: the same detail view as on the setup screen
   });
   $$('.tray .rollbtn, .tray .diebox').forEach(b => b.onclick = () => { const d = mineNow().find(x => x.type === 'ROLL'); if (d) human(d); else { SND.play('error_denied'); toast(notDueText('roll')); } });
-  $$('#players .pacts [data-key]').forEach(b => b.onclick = () => { const d = mineNow().find(x => G.descKey(x) === b.dataset.key); if (d) human(d); else SND.play('error_denied'); });
-  const legal = mineNow();
-  $$('#pActs [data-key]').forEach(b => b.onclick = () => { const d = legal.find(x => G.descKey(x) === b.dataset.key); if (d) human(d); else SND.play('error_denied'); });
-  $$('#pActs [data-a]').forEach(b => b.onclick = () => { if (busy) return; SND.play('button_click'); ab = ab?.type === b.dataset.a ? null : { type: b.dataset.a, from: null, to: null, n: null, key: null }; setTab(ab ? 'build' : 'table'); render(); });
-  $$('#pActs [data-menu]').forEach(b => b.onclick = () => { if (!busy) openMenu(b.dataset.menu, legal); });
-  const ba = $('#bAsk'); if (ba) ba.onclick = () => { askPeek = false; renderAsk(mineNow()); };
-  const gm = $('#genMove'); if (gm) gm.onclick = () => { SND.play('button_click'); openGenMove(); };
-  const sl = $('#panelSell'); if (sl) sl.onclick = () => { SND.play('button_click'); openSell(); };
+  wireActs($('#players'), '');
+  refreshGenActs();
+}
+/** The handlers of the action buttons, shared by the player section (pre '') and the General popup (pre 'gv', which closes first). */
+const actId = (pre, x) => pre ? pre + x[0].toUpperCase() + x.slice(1) : x;
+function wireActs(root, pre = '') {
+  if (!root) return;
+  const shut = () => { if (pre) closeModal(); };
+  const one = sel => root.querySelector('#' + actId(pre, sel));
+  $$('.pacts [data-key]', root).forEach(b => b.onclick = () => { const d = mineNow().find(x => G.descKey(x) === b.dataset.key); if (d && !busy) { shut(); human(d); } else SND.play('error_denied'); });
+  $$(`#${actId(pre, 'pActs')} [data-a]`, root).forEach(b => b.onclick = () => { if (busy) return; SND.play('button_click'); shut(); ab = ab?.type === b.dataset.a ? null : { type: b.dataset.a, from: null, to: null, n: null, key: null }; setTab(ab ? 'build' : 'table'); render(); });
+  $$(`#${actId(pre, 'pActs')} [data-menu]`, root).forEach(b => b.onclick = () => { if (busy) return; shut(); openMenu(b.dataset.menu, mineNow()); });
+  const ba = one('bAsk'); if (ba) ba.onclick = () => { shut(); askPeek = false; renderAsk(mineNow()); };
+  const gm = one('genMove'); if (gm) gm.onclick = () => { SND.play('button_click'); shut(); openGenMove(); };
+  const sl = one('panelSell'); if (sl) sl.onclick = () => { SND.play('button_click'); shut(); openSell(); };
 }
 /** M7 items 8 and 10: the active player's own buttons, next to the die: Roll, Draw a card, Move general (free, 15.j), Sell a card (free, 20.p). */
-function panelActsHtml(pid) {
-  const s = st(); const f = topFrame(s); const legal = mineNow(); if (whoActs(s) !== pid) return '';
-  const b = [];
-  if (f?.kind === 'roll' && f.purpose !== 'battleRound' && f.purpose !== 'loyalty') for (const d of legal.filter(x => x.type === 'ROLL')) b.push(`<button class="btn sm gold prollbtn" data-key="${attr(G.descKey(d))}"${busy ? ' disabled' : ''}>🎲 ${esc(d.label)}</button>`);
+function panelActsHtml(pid, pre = '') {
+  const s = st(); const f = topFrame(s); const gv = !!pre;
+  if (!gv && whoActs(s) !== pid) return '';
+  const g = gv ? actsGate(pid) : null; const legal = gv ? g.legal : mineNow();
+  const b = []; const off = ` disabled title="${attr(g?.why || 'No roll or draw is due for this player now.')}"`;
+  if (f?.kind === 'roll' && f.purpose !== 'battleRound' && (gv || f.purpose !== 'loyalty')) for (const d of legal.filter(x => x.type === 'ROLL')) b.push(`<button class="btn sm gold prollbtn" data-key="${attr(G.descKey(d))}"${busy ? ' disabled' : ''}>🎲 ${esc(d.label)}</button>`);
+  if (gv && !b.length) b.push(`<button class="btn sm prollbtn"${off}>🎲 Roll</button>`);   // v29: always shown in the popup, greyed when no roll is due
+  const nr = b.length;
   if (f?.kind === 'draw') for (const d of legal.filter(x => x.type === 'DRAW_CARD')) b.push(`<button class="btn sm gold drawbtn" data-key="${attr(G.descKey(d))}"${busy ? ' disabled' : ''}>🂠 ${esc(d.label)}</button>`);
-  return b.length ? `<div class="pacts">${b.join('')}</div>` : '';
+  if (gv && b.length === nr) b.push(`<button class="btn sm drawbtn"${off}>🂠 Draw card</button>`);
+  return b.length ? `<div class="pacts${gv ? ' gvrd' : ''}">${b.join('')}</div>` : '';
 }
 const ROLL_NAMES = { gameRoll: 'GAME ROLL', revoltRoll: 'REVOLT ROLL', extraRevoltRoll: 'EXTRA REVOLT ROLL', rollOff: 'ROLL-OFF', startNative: 'START NATIVES', nativeRoll: 'NATIVES', loyalty: 'LOYALTY', startProvinces: 'DEAL STARTS', revoltPick: 'REVOLT PICK', startSides: 'DEAL SIDES' };
 /** Batch 4 item 4: the active player's turn actions (Attack, Ally, Move, Buy, Build, Play card, Sell, Scout, More, Move general, End Turn),
  *  in the panel below the Saved resources and the die, beside the general's card; or the button that reopens a pending question. */
-function turnActsHtml(pid) {
-  const s = st(); const f = topFrame(s); const w = whoActs(s);
-  if (s.phase !== 'turn' || w !== pid) return '';
-  const legal = mineNow(); if (!legal.length) return '';
+function turnActsHtml(pid, pre = '') {
+  const s = st(); const f = topFrame(s); const w = whoActs(s); const I = x => actId(pre, x);
+  const grey = why => pre ? greyActsHtml(pre, why) : '';
+  if (s.phase !== 'turn' || w !== pid) return grey(actsGate(pid).why || 'Not this player\'s turn.');
+  const legal = pre ? actsGate(pid).legal : mineNow(); if (!legal.length) return grey(actsGate(pid).why);
   const dis = busy ? ' disabled' : '';
-  if (f) return OWN_UI.includes(f.kind) && !(f.kind === 'chooseBattleCards' && f.role === 'defender') ? '' : `<div class="pacts turn" id="pActs"><button class="btn sm gold wide" id="bAsk"${dis}>${esc(G.frameTitle(s, data))}…</button></div>`;
+  if (f) return OWN_UI.includes(f.kind) && !(f.kind === 'chooseBattleCards' && f.role === 'defender') ? grey(f.kind === 'roll' ? 'Roll first.' : f.kind === 'draw' ? 'Draw first.' : 'Finish the current step first.') : `<div class="pacts turn" id="${I('pActs')}"><button class="btn sm gold wide" id="${I('bAsk')}"${dis}>${esc(G.frameTitle(s, data))}…</button></div>`;
   const c = G.categorize(legal); const b = [];
+  const none = why => ` disabled title="${attr(why)}"`;   // v29: the popup shows every button, greyed when it has nothing to do now
   for (const t of ['ATTACK', 'ALLY', 'MOVE']) if (c.move.some(d => d.type === t)) b.push(`<button class="btn sm ${ab?.type === t ? 'on' : ''}" data-a="${t}"${dis}>${{ ATTACK: 'Attack', ALLY: 'Ally', MOVE: 'Move' }[t]}</button>`);
+    else if (pre) b.push(`<button class="btn sm" data-a="${t}"${none(`No ${{ ATTACK: 'attack', ALLY: 'ally', MOVE: 'move' }[t]} is possible right now.`)}>${{ ATTACK: 'Attack', ALLY: 'Ally', MOVE: 'Move' }[t]}</button>`);
   b.push(`<button class="btn sm" data-menu="buy"${dis}>Buy…</button>`, `<button class="btn sm" data-menu="build"${dis}>Build…</button>`);
   const heldCards = G.handCards(G.playerById(s, pid)).some(x => data.cardDefsById[s.cards[x.uid].def]?.type !== 'battle');   // M8 item 3: the menu also says why a card is not playable
   if (c.card.length || heldCards) b.push(`<button class="btn sm" data-menu="card"${dis} title="Play a card from your hand">Card…</button>`);
-  if (legal.some(x => x.type === 'SELL_CARD')) b.push(`<button class="btn sm" id="panelSell"${dis} title="Free: +${data.rules.sellCard?.gold ?? 2} Gold per card (20.p)">Sell…</button>`);
+  else if (pre) b.push(`<button class="btn sm" data-menu="card"${none('No card to play.')}>Card…</button>`);
+  if (legal.some(x => x.type === 'SELL_CARD')) b.push(`<button class="btn sm" id="${I('panelSell')}"${dis} title="Free: +${data.rules.sellCard?.gold ?? 2} Gold per card (20.p)">Sell…</button>`);
+  else if (pre) b.push(`<button class="btn sm"${none('No card to sell.')}>Sell…</button>`);
   if (c.scout.length) b.push(`<button class="btn sm" data-menu="scout"${dis} title="Scout a target: roll its natives (${c.scout.length} targets)">Scout…</button>`);
   if (c.other.length) b.push(`<button class="btn sm" data-menu="other"${dis} title="${c.other.length} more action(s)">More…</button>`);
-  if (legal.some(x => x.type === 'MOVE_GENERAL')) b.push(`<button class="btn sm genbtn" id="genMove"${dis} title="Move your general: free, once per turn, along your own chain (15.j)">⚑ General</button>`);
+  if (legal.some(x => x.type === 'MOVE_GENERAL')) b.push(`<button class="btn sm genbtn" id="${I('genMove')}"${dis} title="Move your general: free, once per turn, along your own chain (15.j)">⚑ General</button>`);
+  else if (pre) b.push(`<button class="btn sm genbtn"${none(s.turn.generalMoved ? 'General moved this turn.' : 'Your general cannot move now.')}>⚑ General</button>`);
   else if (s.turn.generalMoved) b.push('<span class="small pnote">General moved this turn</span>');
   const end = c.end[0];
-  if (end) b.push(`<button class="btn sm gold endturn wide" id="bEnd" data-key="${attr(G.descKey(end))}" title="${attr(end.label)}"${dis}>End Turn ▶</button>`);
-  return `<div class="pacts turn" id="pActs">${b.join('')}</div>`;
+  if (end) b.push(`<button class="btn sm gold endturn wide" id="${I('bEnd')}" data-key="${attr(G.descKey(end))}" title="${attr(end.label)}"${dis}>End Turn ▶</button>`);
+  return `<div class="pacts turn" id="${I('pActs')}">${b.join('')}</div>`;
+}
+/** v29: the General popup's action buttons when this player may not act now: all of them, greyed, with the reason. */
+function greyActsHtml(pre, why) {
+  const off = ` disabled title="${attr(why)}"`;
+  const names = [['Attack', 'data-a="ATTACK"'], ['Ally', 'data-a="ALLY"'], ['Move', 'data-a="MOVE"'], ['Buy…', 'data-menu="buy"'], ['Build…', 'data-menu="build"'], ['Card…', 'data-menu="card"'], ['Sell…', ''], ['⚑ General', 'class-genbtn'], ['End Turn ▶', 'class-endturn wide']];
+  return `<div class="pacts turn gvoff" id="${actId(pre, 'pActs')}">${names.map(([t, a]) => a.startsWith('class-') ? `<button class="btn sm ${a.slice(6)}"${off}>${t}</button>` : `<button class="btn sm" ${a}${off}>${t}</button>`).join('')}</div>`;
 }
 function trayHtml(pid) {
   const s = st(); const f = topFrame(s);

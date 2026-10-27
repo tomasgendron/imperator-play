@@ -308,7 +308,7 @@ function validate() {
 }
 /** The seats as the engine gets them: an Online seat is a 'human' controller named after its guest (M11). */
 const remoteName = i => NET?.role === 'host' ? NET.room.seats[i]?.name ?? '' : '';
-const engineSeats = () => seats.map((x, i) => ({ name: x.controller === 'remote' ? (remoteName(i) || `Guest ${i + 1}`) : x.name.trim(), controller: x.controller === 'remote' ? 'human' : x.controller, general: x.general, startProvince: x.start || undefined, startSide: sidesOn() && $('#startMode').value === 'selected' ? x.side || undefined : undefined }));
+const engineSeats = () => seats.map((x, i) => ({ name: x.controller === 'remote' ? (remoteName(i) || `Guest ${i + 1}`) : x.name.trim(), controller: x.controller === 'remote' ? 'human' : x.controller, general: x.general, startProvince: x.start || (x.skip ? 'random' : undefined), startSide: sidesOn() && $('#startMode').value === 'selected' ? x.side || undefined : undefined }));
 function startGame() {
   if (!validate()) return;
   const mode = $('#startMode').value;

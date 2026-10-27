@@ -1,8 +1,8 @@
 {
- "milestone": "M17",
- "stamp": "2026-10-26 10:01 PM MT",
- "base": "1da6855",
- "label": "build M17 · 2026-10-26 10:01 PM MT",
- "uiVersion": 29,
- "uiLabel": "v29 · Oct 26 2026 10:01 PM MT"
+ "milestone": "M17.1",
+ "stamp": "2026-10-27 1:23 PM MT",
+ "base": "bf8df36",
+ "label": "build M17.1 · 2026-10-27 1:23 PM MT",
+ "uiVersion": 29.1,
+ "uiLabel": "v29.1 · Oct 27 2026 1:23 PM MT"
 }

@@ -103,7 +103,7 @@ export function validateSetup(data, { players = [], startProvinceMode = data.rul
       gens.push(p.general);
     }
   });
-  const starts = players.map((p, i) => [i, p.startProvince]).filter(([, id]) => id);
+  const starts = players.map((p, i) => [i, p.startProvince]).filter(([, id]) => id && id !== 'random');   // 'random' = "Random for this seat" (v29.1)
   const two = sidesApply(data, players.length);
   const sidesSet = players.map(p => p.startSide).filter(Boolean);
   if (sidesSet.some(x => !OTHER_SIDE[x])) err(null, 'startSide', 'BAD_OPTION', 'A start side is "west" or "east" (4.g).');
@@ -144,7 +144,7 @@ export function createGame(data, { seed, players, options = {} }) {
   check(players.length <= Math.min(data.rules.maxPlayers, data.generals.length), 'TOO_MANY_PLAYERS', `At most ${Math.min(data.rules.maxPlayers, data.generals.length)} players (only ${data.generals.length} generals are defined, Q4).`, '15.e');
   const v = validateSetup(data, { players, startProvinceMode: options.startProvinceMode, allowCloseStarts: options.allowCloseStarts });
   if (!v.ok) fail(v.errors[0].code, v.errors[0].message);
-  const ps = players.map((p, i) => ({ id: p.id ?? 'p' + (i + 1), name: p.name ?? 'Player ' + (i + 1), color: p.color ?? PALETTE[i], general: p.general === 'random' ? null : p.general ?? null, controller: p.controller ?? 'human', startProvince: p.startProvince ?? null, startSide: p.startSide ?? null }));
+  const ps = players.map((p, i) => ({ id: p.id ?? 'p' + (i + 1), name: p.name ?? 'Player ' + (i + 1), color: p.color ?? PALETTE[i], general: p.general === 'random' ? null : p.general ?? null, controller: p.controller ?? 'human', startProvince: p.startProvince && p.startProvince !== 'random' ? p.startProvince : null, startSide: p.startSide ?? null }));
   check(new Set(ps.map(p => p.id)).size === ps.length, 'BAD_PLAYERS', 'Player ids must be unique.');
   const preset = ps.filter(p => p.general).map(p => p.general);
   for (const g of preset) check(data.generalsById[g], 'UNKNOWN_GENERAL', `Unknown general "${g}".`);
@@ -160,7 +160,12 @@ export function createGame(data, { seed, players, options = {} }) {
     ids.forEach((id, i) => { state.provinces[id].reward = rewards[i]; });
   }
   const presetSides = Object.fromEntries(ps.filter(p => p.startSide).map(p => [p.id, p.startSide]));
-  state.setup = { presetStarts: Object.fromEntries(ps.filter(p => p.startProvince).map(p => [p.id, p.startProvince])), ...(Object.keys(presetSides).length ? { presetSides } : {}), stage: 'rollOff', rollOff: { round: 1, queue: ps.map(p => p.id), keys: Object.fromEntries(ps.map(p => [p.id, []])) } };
+  // v29.1 (M17.1): "Random general" chosen on the setup screen is kept: the generals stage draws a free general for these seats on state.rng
+  // (host-authoritative) and never asks them again; general null / left out still means "choose in the game" (console, tests)
+  const randomGenerals = ps.filter((p, i) => players[i].general === 'random').map(p => p.id);
+  // v29.1: likewise "Random for this seat" (Selected starts, startProvince 'random'): that seat's start is drawn on state.rng, never asked
+  const randomStarts = ps.filter((p, i) => players[i].startProvince === 'random').map(p => p.id);
+  state.setup = { ...(randomGenerals.length ? { randomGenerals } : {}), ...(randomStarts.length && mode === 'pick' ? { randomStarts } : {}), presetStarts: Object.fromEntries(ps.filter(p => p.startProvince).map(p => [p.id, p.startProvince])), ...(Object.keys(presetSides).length ? { presetSides } : {}), stage: 'rollOff', rollOff: { round: 1, queue: ps.map(p => p.id), keys: Object.fromEntries(ps.map(p => [p.id, []])) } };
   const ctx = makeCtx(state, data, {});
   emit(ctx, 'gameCreated', { rule: '4.a', pub: { seed, players: ps.map(p => ({ id: p.id, name: p.name })), startProvinceMode: mode } });
   settle(ctx);
@@ -168,6 +173,21 @@ export function createGame(data, { seed, players, options = {} }) {
 }
 
 // ------------------------------------------------------------------ helpers
+// v29.1: the legal starts for a seat that chose "Random for this seat" (as CHOOSE_START_PROVINCE, without the listed close-start exceptions)
+function randomStartOptions(state, data, pid) {
+  const two = sidesApply(data, state.players.length); const side = state.setup?.sides?.[pid] ?? null;
+  const taken = state.players.filter(p => p.startProvince).map(p => p.startProvince);
+  const remaining = state.players.filter(p => !p.startProvince && p.id !== pid).length;
+  const D = new Map(); const dist = x => D.get(x) ?? (D.set(x, distances(data, x)), D.get(x));
+  const close = !!state.config.allowCloseStarts;
+  const far = (x, ys) => close || ys.every(y => dist(x)[y] >= data.rules.startProvinceMinDistance);
+  const okSide = (c, chosen) => !two || (sideOf(data, c) && !chosen.some(y => sideOf(data, y) === sideOf(data, c)));
+  const fits = (k, chosen) => k === 0 || data.provinceIds.some(c => data.provincesById[c].startingEligible && okSide(c, chosen) && !chosen.includes(c) && far(c, chosen) && fits(k - 1, chosen.concat(c)));
+  return data.provinceIds.filter(id => data.provincesById[id].startingEligible && state.provinces[id].owner === null
+    && (!two || (sideOf(data, id) && (!side || sideOf(data, id) === side) && okSide(id, taken)))
+    && far(id, taken) && (close || fits(remaining, taken.concat(id))));
+}
+
 function placeStart(ctx, pid, id) {
   const { state, data } = ctx;
   const p = state.provinces[id]; const pl = mustPlayer(state, pid);
@@ -302,6 +322,14 @@ onSettle(ctx => {
   }
   if (su.stage === 'generals') {
     const next = [...state.turnOrder].reverse().find(id => !playerOf(state, id).general);   // reverse turn order (Q4)
+    if (next && su.randomGenerals?.includes(next)) {   // v29.1: the setup screen's "Random general": drawn now, not asked
+      const taken = new Set(state.players.filter(p => p.general).map(p => p.general.id));
+      const free = data.generals.map(g => g.id).filter(g => !taken.has(g));
+      const id = free[int(state.rng, free.length) - 1];
+      playerOf(state, next).general = { id, at: null };
+      emit(ctx, 'generalChosen', { actor: next, rule: 'Q4', pub: { player: next, general: id, random: true } });
+      return true;
+    }
     if (next) { pushFrame(ctx, { kind: 'setupGeneral', player: next }); return true; }
     state.players.forEach(p => { if (p.general && !data.generalsById[p.general.id]) fail('UNKNOWN_GENERAL', 'bad general'); });
     su.stage = 'provinces';
@@ -334,9 +362,17 @@ onSettle(ctx => {
           return true;
         }
         const first = [...state.turnOrder].reverse().find(id => !playerOf(state, id).startProvince);
-        pushFrame(ctx, { kind: 'setupSide', player: first }); return true;
+        if (!su.randomStarts?.includes(first)) { pushFrame(ctx, { kind: 'setupSide', player: first }); return true; }
       }
       const next = [...state.turnOrder].reverse().find(id => !playerOf(state, id).startProvince);
+      if (next && su.randomStarts?.includes(next)) {   // v29.1: "Random for this seat": a random legal start (the same rules as a hand pick), on state.rng
+        const opts = randomStartOptions(state, data, next);
+        check(opts.length, 'START_LEAVES_NO_ROOM', 'No valid start province is left for a random start.', 'Q3');
+        const id = opts[int(state.rng, opts.length) - 1];
+        placeStart(ctx, next, id);
+        emit(ctx, 'startProvinceRandom', { actor: next, rule: '4.b', pub: { player: next, province: id } });
+        return true;
+      }
       if (next) { pushFrame(ctx, { kind: 'setupStartProvince', player: next }); return true; }
     }
     su.stage = 'natives';

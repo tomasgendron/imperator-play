@@ -10,7 +10,8 @@ const prov = (data, id) => data.provincesById[id]?.name ?? id;
  * (M4 setup screen). mode = 'random' | 'selected' | 'pick' | 'classic'. Throws an EngineError-like Error when the setup is invalid.
  */
 export function newSession(data, { seed = 'console', names = ['Vidi', 'Boardicca'], seats = null, mode = 'random' } = {}) {
-  const players = seats ? seats.map(x => ({ name: x.name, controller: x.controller ?? 'human', ...(x.general && x.general !== 'random' ? { general: x.general } : {}), ...(x.startProvince ? { startProvince: x.startProvince } : {}) }))
+  // v29.1: 'random' and startSide are passed on (they were dropped: a "Random general" human was asked again, a chosen side was lost)
+  const players = seats ? seats.map(x => ({ name: x.name, controller: x.controller ?? 'human', ...(x.general ? { general: x.general } : {}), ...(x.startProvince ? { startProvince: x.startProvince } : {}), ...(x.startSide ? { startSide: x.startSide } : {}) }))
     : names.map(name => ({ name }));
   const { state, events } = createGame(data, { seed, players, options: { startProvinceMode: mode } });
   return { data, seed, steps: [{ state, events, action: null, error: null }] };
@@ -87,10 +88,11 @@ const T = {
   rollOffResult: (e, st) => `${pn(st, e.pub.player)} rolls ${e.pub.value} in the roll-off (round ${e.pub.round}).`,
   rollOffTie: (e, st) => `Tie in the roll-off between ${e.pub.players.map(id => pn(st, id)).join(' and ')}: they roll again (round ${e.pub.round}).`,
   turnOrderSet: (e, st) => `Turn order: ${e.pub.order.map(id => pn(st, id)).join(', ')}.`,
-  generalChosen: (e, st, d) => `${pn(st, e.pub.player)} takes ${d.generalsById[e.pub.general]?.name ?? e.pub.general}.`,
+  generalChosen: (e, st, d) => `${pn(st, e.pub.player)} takes ${d.generalsById[e.pub.general]?.name ?? e.pub.general}${e.pub.random ? ' (random general, chosen on the setup screen)' : ''}.`,
   startProvincesDealt: (e, st, d) => `Start provinces dealt: ${e.pub.sides ? 'sides ' + e.pub.sides.map(x => pn(st, x.player) + ' ' + x.side).join(', ') + '; ' : ''}${e.pub.assignments.map(a => pn(st, a.player) + ' ' + prov(d, a.province)).join(', ')} (distance ${e.pub.usedDistance}).`,
   startSideChosen: (e, st) => `${pn(st, e.pub.player)} chooses the ${e.pub.side}: ${e.pub.sides.map(x => pn(st, x.player) + ' ' + x.side).join(', ')} (4.g).`,
   startSidesSet: (e, st) => `Start sides: ${e.pub.sides.map(x => pn(st, x.player) + ' ' + x.side).join(', ')} (4.g).`,
+  startProvinceRandom: (e, st, d) => `${pn(st, e.pub.player)}'s start was drawn at random ("Random for this seat" on the setup screen).`,
   startProvinceChosen: (e, st, d) => `${pn(st, e.pub.player)} starts in ${prov(d, e.pub.province)} with ${e.pub.troops} troops.`,
   startNativesRolled: (e, st, d) => `${prov(d, e.pub.province)} natives: d6 ${e.pub.d6}, ${e.pub.count}.`,
   senateDecree: (e) => `Senate Decree ${e.pub.number}: every player sends a legion against Carthage.`,

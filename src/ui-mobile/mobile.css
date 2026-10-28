@@ -377,3 +377,18 @@ input,select,textarea{font-size:16px}   /* iOS Safari zooms into smaller inputs 
 .arow.on{border-color:var(--gold2);box-shadow:0 0 0 2px var(--gold2)}
 .as-sum{font-size:16px;margin:6px 0}
 .sheet .sh-foot{flex-wrap:wrap}
+
+/* ---------- v30.2: Join (a phone is a guest in online games) ---------- */
+#joinBox .jstat{margin-top:8px;font-size:13px;color:var(--ink2);min-height:18px;line-height:1.35}
+#joinBox .jstat.bad{color:#f0a35e}
+#joinBox .glob ul{list-style:none;margin:6px 0 0;padding:0}
+#joinBox .glob li{display:flex;align-items:center;gap:8px;min-height:32px;font-size:14px}
+#joinBox .glob li .sw{width:14px;height:14px;border-radius:4px;background:var(--c);flex:none}
+#joinBox .glob .small{color:var(--muted);font-size:12px}
+.netbar{font-size:12.5px;line-height:1.35;padding:6px 10px;background:#3a2a10;border-bottom:1px solid #f0a35e66;color:var(--ink);display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.netbar.lost,.netbar.ended{background:#3a1414;border-color:#e0606066}
+.netbar.ai{background:#16283a;border-color:#5aa0e066}
+.netbar .btn.sm{min-height:var(--tap);min-width:var(--tap);padding:0 12px}
+.netbar input{min-height:var(--tap);width:8.5em;border-radius:8px;border:1px solid var(--line2);background:#00000060;color:var(--ink);padding:0 8px;text-transform:uppercase}
+.netbar .spin{display:inline-block;animation:nbspin 1.2s linear infinite}
+@keyframes nbspin{to{transform:rotate(360deg)}}

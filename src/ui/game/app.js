@@ -11,41 +11,31 @@ import { HostRoom, PING_MS } from '../../net/host.js';
 import { GuestClient, HOST_AWAY_MS } from '../../net/guest.js';
 import { createPeerTransport, createBroadcastTransport } from '../../net/transport.js';
 import { roomCode, normCode } from '../../net/protocol.js';
+import { createController } from '../core/controller.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-// v26.1 (Vidi 2026-10-25, the stuck Revolt Roll): a host page in a background tab has its timers throttled by the browser (1 s, then
-// once a minute), so its animations, popups and AI delays held a guest's move for minutes ("No roll is due for you right now" on the
-// guest). Hidden, the host skips the waits: `sleep` returns at once and `later` runs through a MessageChannel (not throttled).
-const hostHidden = () => NET?.role === 'host' && document.hidden;
-const later = (fn, ms) => { if (!hostHidden()) return setTimeout(fn, ms); const c = new MessageChannel(); c.port1.onmessage = () => { c.port1.close(); fn(); }; c.port2.postMessage(0); return null; };
-const sleep = ms => new Promise(r => (hostHidden() ? r() : setTimeout(r, ms)));
+// M18 / v30: the game controller (the session, apply, the AI timing, the autosave, the v26.1 background-tab rule: hostHidden, later,
+// sleep) lives in src/ui/core/controller.js, shared with the mobile page. This page keeps its state there (C.S, C.busy, C.NET, ...)
+// and gives it the desktop view below.
+const C = createController({
+  data: () => data, render: () => render(), playEvents: (evs, before) => playEvents(evs, before), freezeControls: () => freezeControls(),
+  applied: ({ fromAi }) => { if (!fromAi) ab = null; $('#ovAsk').classList.remove('on'); },
+  thinking: pid => $$('.player').forEach(el => el.classList.toggle('thinking', el.dataset.pid === pid)),
+  toast: m => toast(m), sound: id => SND.play(id), showGameOver: () => showGameOver(), displeasedAlert: f => displeasedAlert(f),
+  guestSend: a => guestSend(a), netPush: () => netPush(), hostDrain: () => hostDrain(), guestDrain: () => guestDrain(),
+});
+const { hostHidden, later, sleep, spd, full, st, mineNow, apply, schedule, displeasedDraw, human, withOnline, makeSaveNow, autosave } = C;
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const attr = s => esc(s).replace(/'/g, '&#39;');
 
 let data, assets, SND;
-let S = null;                    // the session (history of states)
-let viewer = null, hidden = false;
-let busy = false, aiTimer = null, aiPaused = false;
+let hidden = false;
 let ab = null;                   // builder {type, from, to, n, key}
 let selected = null, tab = 'table';
 let lastRoll = {};               // pid -> {die, value, purpose}
 let bv = null;                   // battle view built from events
-let overShown = false, askPeek = false, uiLabel = 'v17';
-let speed = 1;
-try { speed = Number(localStorage.getItem('imperator.speed')) || 1; } catch { /* */ }
-const spd = ms => Math.max(10, ms * speed);
-
-// M12 (online step c): an online host's own screen shows the host's seat view too (viewFor: no peeking at the guests' hands or
-// prompts); the engine, the AI, saves and the guests' updates use the full state (full()). Offline hot-seat: unchanged.
-const full = () => G.stateOf(S);
-let seatViewCache = { s: null, me: null, v: null };
-const st = () => {
-  const s = G.stateOf(S);
-  if (NET?.role !== 'host' || !NET.me || !s) return s;
-  if (seatViewCache.s !== s || seatViewCache.me !== NET.me) seatViewCache = { s, me: NET.me, v: viewFor(s, data, NET.me) };
-  return seatViewCache.v;
-};
+let overShown = false, askPeek = false;
 const img = (id, o = {}) => { const r = resolveAsset(assets, id, o); return r.path ?? r.fallback ?? r.placeholder; };
 const prov = id => data.provincesById[id]?.name ?? id;
 const pn = id => G.nameOf(st(), id);
@@ -92,9 +82,9 @@ async function boot() {
   $$('[data-img]').forEach(e => { e.src = img(e.dataset.img); });
   renderSetupDecks();
   $('#mapImg').src = img('map');
-  try { const b = await (await fetch('BUILD.json', { cache: 'no-store' })).json(); uiLabel = b.uiLabel ?? `v23 · ${b.stamp}`; } catch { uiLabel = 'v23 · (no BUILD.json)'; }
-  $('#tbVer').textContent = uiLabel;
-  $('#speed').value = String(speed); if (!$('#speed').value) { $('#speed').value = '1'; speed = 1; }
+  try { const b = await (await fetch('BUILD.json', { cache: 'no-store' })).json(); C.uiLabel = b.uiLabel ?? `v23 · ${b.stamp}`; } catch { C.uiLabel = 'v23 · (no BUILD.json)'; }
+  $('#tbVer').textContent = C.uiLabel;
+  $('#speed').value = String(C.speed); if (!$('#speed').value) { $('#speed').value = '1'; C.speed = 1; }
   wireStatic();
   const jc = new URLSearchParams(location.search).get('join');
   if (jc) { playWhere = 'join'; $('#joinCode').value = normCode(jc); }
@@ -111,7 +101,7 @@ let pickSeat = 0;   // which seat picks its start on the map (Selected starts)
 let rollOff = null; // Q110: Selected starts roll off first: {seed, n, order: seat indexes in turn order, rolls} (G.rollOffPreview), null = not rolled
 // M12: an online game's seed gets a secret 128-bit salt, so a guest cannot find it by trying seeds against the public dice
 // (the seed field holds a short number; the room code is known to every guest).
-const seedNow = () => ($('#seed').value.trim() || 'game') + (NET?.role === 'host' && NET.salt ? '#' + NET.salt : '');
+const seedNow = () => ($('#seed').value.trim() || 'game') + (C.NET?.role === 'host' && C.NET.salt ? '#' + C.NET.salt : '');
 /** Q110: the pick order, reverse turn order (the last to move picks first); [] before the roll-off. */
 const pickOrder = () => (rollOff && rollOff.n === seats.length && rollOff.seed === seedNow() ? [...rollOff.order].reverse() : []);
 const decided = x => !!x.start || !!x.skip;
@@ -222,7 +212,7 @@ function openGeneralView(id, { setup = false, player = null } = {}) {
   if (setup) foot = `<div class="gvfoot">${seats.map((x, i) => { const by = seats.findIndex((y, j) => j !== i && y.general === id); const mine = x.general === id;
     return `<button type="button" class="btn sm ${mine ? 'gold' : ''}" data-give="${i}" ${by >= 0 ? `disabled title="taken by ${attr(seats[by].name)}"` : ''}><span class="sw" style="background:${SEAT_COLORS[i]}"></span> ${mine ? '✓ ' : ''}${esc(x.name)}${x.controller === 'ai' && !/\(AI\)/.test(x.name) ? ' (AI)' : ''}</button>`; }).join('')}</div>`;
   else if (player) foot = `<p class="small">${esc(player.name)}'s general${player.general?.at ? ', now in ' + esc(prov(player.general.at)) : ''}.</p>`;
-  const acts = player && !setup && S ? `<div class="gvacts" id="gvActs" data-pid="${attr(player.id)}">${genActsHtml(player.id)}</div>` : '';   // v29 (batch 8): every button, reachable on an iPad
+  const acts = player && !setup && C.S ? `<div class="gvacts" id="gvActs" data-pid="${attr(player.id)}">${genActsHtml(player.id)}</div>` : '';   // v29 (batch 8): every button, reachable on an iPad
   openModal(generalViewHtml(id, acts) + `${setup ? '<p class="small">Give this general to:</p>' : ''}${foot}<button class="btn gold" data-close>Close</button></div>`, { cls: 'genview' });
   $$('#modalBox [data-give]').forEach(b => b.onclick = () => { if (pickGeneral(+b.dataset.give, id)) closeModal(); });
   if (acts) wireActs($('#gvActs'), 'gv');
@@ -236,7 +226,7 @@ function refreshGenActs() {
   const ga = $('#gvActs'); if (!ga || !$('#ovModal').classList.contains('on')) return;
   ga.innerHTML = genActsHtml(ga.dataset.pid); wireActs(ga, 'gv');
 }
-const actsGate = pid => { const s = st(); return G.seatActsGate(s, pid, mineNow(), { who: s.phase === 'turn' || s.phase === 'setup' ? whoActs(s) : null, busy }); };
+const actsGate = pid => { const s = st(); return G.seatActsGate(s, pid, mineNow(), { who: s.phase === 'turn' || s.phase === 'setup' ? whoActs(s) : null, busy: C.busy }); };
 /**
  * The start-province map picker (M8 item 6, Q110): first the roll-off (the engine's, shown with every die), then each seat clicks its start in
  * REVERSE turn order (the last to move picks first); impossible provinces are greyed with the rule's reason.
@@ -307,32 +297,32 @@ function validate() {
   $('#startGame').disabled = !ok; return ok;
 }
 /** The seats as the engine gets them: an Online seat is a 'human' controller named after its guest (M11). */
-const remoteName = i => NET?.role === 'host' ? NET.room.seats[i]?.name ?? '' : '';
+const remoteName = i => C.NET?.role === 'host' ? C.NET.room.seats[i]?.name ?? '' : '';
 const engineSeats = () => seats.map((x, i) => ({ name: x.controller === 'remote' ? (remoteName(i) || `Guest ${i + 1}`) : x.name.trim(), controller: x.controller === 'remote' ? 'human' : x.controller, general: x.general, startProvince: x.start || (x.skip ? 'random' : undefined), startSide: sidesOn() && $('#startMode').value === 'selected' ? x.side || undefined : undefined }));
 function startGame() {
   if (!validate()) return;
   const mode = $('#startMode').value;
   try {
-    S = G.newSession(data, { seed: seedNow(), mode, seats: engineSeats().map(x => ({ ...x, startProvince: mode === 'selected' ? x.startProvince : undefined })) });
-    if (mode === 'selected' && pickOrder().length) S = G.playRollOff(S);   // Q110: already rolled on the setup screen (same seed, same dice): not asked again
+    C.S = G.newSession(data, { seed: seedNow(), mode, seats: engineSeats().map(x => ({ ...x, startProvince: mode === 'selected' ? x.startProvince : undefined })) });
+    if (mode === 'selected' && pickOrder().length) C.S = G.playRollOff(C.S);   // Q110: already rolled on the setup screen (same seed, same dice): not asked again
   } catch (e) { $('#setupErrors').textContent = e.message; return; }
-  if (NET?.role === 'host') { NET.me = G.stateOf(S).players[seats.findIndex(x => x.controller === 'human')].id; NET.room.start(G.stateOf(S).players.map(p => p.id)); }
+  if (C.NET?.role === 'host') { C.NET.me = G.stateOf(C.S).players[seats.findIndex(x => x.controller === 'human')].id; C.NET.room.start(G.stateOf(C.S).players.map(p => p.id)); }
   SND.play('deck_shuffle'); enterGame();
 }
 function enterGame() {
   $('#toast').classList.remove('on');
   document.body.className = 'screen-game'; document.body.dataset.screen = 'game'; applyTabsHidden();
   closeBattlePop(); closeModal();
-  viewer = null; for (const k of Object.keys(news)) delete news[k]; ab = null; bv = null; lastRoll = {}; overShown = false; aiPaused = false; selected = null; busy = false;
+  C.viewer = null; for (const k of Object.keys(news)) delete news[k]; ab = null; bv = null; lastRoll = {}; overShown = false; C.aiPaused = false; selected = null; C.busy = false;
   $('#ovOver').classList.remove('on'); clearBattle(); setTab('table');
-  document.body.dataset.online = NET ? NET.role : '';
-  if (NET?.role === 'host') netPush();
+  document.body.dataset.online = C.NET ? C.NET.role : '';
+  if (C.NET?.role === 'host') netPush();
   autosave(); render(); schedule();
 }
 
 // ------------------------------------------------------------------ M11: online play (host and join by room code; src/net/*)
 // The host's page runs the engine and is the only one that rolls dice; guests send moves and render the views the host sends.
-let NET = null;            // host: {role, code, transport, room, me, inbox}; guest: {role, code, transport, client, me, q, pending}
+// C.NET: host {role, code, transport, room, me, inbox}; guest {role, code, transport, client, me, q, pending}
 let playWhere = 'local';   // setup screen: 'local' (this computer) | 'host' | 'join'
 const netMode = () => new URLSearchParams(location.search).get('net');   // 'local' = BroadcastChannel between tabs (tests, no network)
 let peerLib = null;
@@ -373,24 +363,24 @@ function renderOnline() {
   document.body.dataset.joining = playWhere === 'join' ? '1' : '';   // M14: no Save / Load in the top bar while joining (a guest has nothing to save)
   if (playWhere === 'host') {
     seats.forEach((x, i) => { if (x.controller === 'remote') x.name = remoteName(i) || `Online ${i + 1}`; });
-    const code = NET?.role === 'host' ? NET.code : null;
+    const code = C.NET?.role === 'host' ? C.NET.code : null;
     $('#hostCode').textContent = code ?? '…'; $('#hostLink').value = code ? joinLink(code) : ''; $('#hostCopy').disabled = !code;
     syncRoom();
   }
 }
-const syncRoom = () => { if (NET?.role === 'host' && document.body.dataset.screen === 'setup') NET.room.configure(seats.map(x => ({ kind: x.controller === 'remote' ? 'remote' : x.controller === 'ai' ? 'ai' : 'local', name: x.name.trim() || 'Host' }))); };
+const syncRoom = () => { if (C.NET?.role === 'host' && document.body.dataset.screen === 'setup') C.NET.room.configure(seats.map(x => ({ kind: x.controller === 'remote' ? 'remote' : x.controller === 'ai' ? 'ai' : 'local', name: x.name.trim() || 'Host' }))); };
 /** Can the host start? Every Online seat needs its player (connected), and exactly one seat is the host's own. */
 function hostReadiness() {
-  if (NET?.role !== 'host') return { ok: false, why: $('#hostStatus').dataset.err ? '' : 'Opening the room…' };
+  if (C.NET?.role !== 'host') return { ok: false, why: $('#hostStatus').dataset.err ? '' : 'Opening the room…' };
   if (seats.filter(x => x.controller === 'human').length !== 1) return { ok: false, why: 'Mark exactly one seat as You (this computer).' };
   if (!seats.some(x => x.controller === 'remote')) return { ok: false, why: 'Mark at least one seat as Online, or play on this computer instead.' };
-  const wait = NET.room.seats.filter(x => x.kind === 'remote' && !(x.token && x.connected)).length;
-  return wait ? { ok: false, why: `Waiting for ${wait} player${wait > 1 ? 's' : ''} to join: send them the code ${NET.code} or the link.` } : { ok: true, why: 'Everyone is here: press Start game.' };
+  const wait = C.NET.room.seats.filter(x => x.kind === 'remote' && !(x.token && x.connected)).length;
+  return wait ? { ok: false, why: `Waiting for ${wait} player${wait > 1 ? 's' : ''} to join: send them the code ${C.NET.code} or the link.` } : { ok: true, why: 'Everyone is here: press Start game.' };
 }
 async function openHost() {
   const st0 = $('#hostStatus'); st0.textContent = 'Opening a room…'; st0.dataset.err = '';
   let lastErr = null;
-  for (let k = 0; k < 4 && playWhere === 'host' && !NET; k++) {
+  for (let k = 0; k < 4 && playWhere === 'host' && !C.NET; k++) {
     const code = roomCode();
     let t; try { t = await makeTransport(); await t.open({ role: 'host', code }); }
     catch (e) { lastErr = e; try { t?.close(); } catch { /* */ } if (e.code === 'ROOM_TAKEN') continue; break; }
@@ -399,16 +389,16 @@ async function openHost() {
     st0.textContent = 'Room open. Send the code or the link to the other players; they choose "Join with a code".';
     renderSetup(); return;
   }
-  if (!NET && playWhere === 'host') { st0.textContent = lastErr?.message ?? 'Could not open a room.'; st0.dataset.err = '1'; validate(); }
+  if (!C.NET && playWhere === 'host') { st0.textContent = lastErr?.message ?? 'Could not open a room.'; st0.dataset.err = '1'; validate(); }
 }
 function hostNet(t, code, salt) {
-  NET = { role: 'host', code, transport: t, me: null, inbox: [], salt };
-  NET.room = new HostRoom({ transport: t, build: uiLabel, code, seats: [], data, hooks: {
-    onSeat: () => queueMicrotask(() => { if (!NET) return; if (document.body.dataset.screen === 'setup') renderSetup(); else if (S) { render(); autosave(); } }),
-    onAct: (i, action, reply, fresh) => { NET.inbox.push({ i, action, reply, fresh }); if (!busy) hostDrain(); else nudgeHost(i); },
+  C.NET = { role: 'host', code, transport: t, me: null, inbox: [], salt };
+  C.NET.room = new HostRoom({ transport: t, build: C.uiLabel, code, seats: [], data, hooks: {
+    onSeat: () => queueMicrotask(() => { if (!C.NET) return; if (document.body.dataset.screen === 'setup') renderSetup(); else if (C.S) { render(); autosave(); } }),
+    onAct: (i, action, reply, fresh) => { C.NET.inbox.push({ i, action, reply, fresh }); if (!C.busy) hostDrain(); else nudgeHost(i); },
   } });
-  NET.ping = setInterval(() => { if (!NET?.quiet) NET?.room?.tick(); }, PING_MS);   // quiet: tests only (a host that stops answering)
-  return NET;
+  C.NET.ping = setInterval(() => { if (!C.NET?.quiet) C.NET?.room?.tick(); }, PING_MS);   // quiet: tests only (a host that stops answering)
+  return C.NET;
 }
 /** M14: an autosave (or save file) of an online game this browser hosted: it has the room (code, seats, guest tokens). */
 function onlineSave(text) { try { const o = typeof text === 'string' ? JSON.parse(text) : text; return o?.online?.room?.seats && o.snapshot?.phase !== 'finished' ? o : null; } catch { return null; } }
@@ -417,7 +407,7 @@ function onlineSave(text) { try { const o = typeof text === 'string' ? JSON.pars
 async function resumeOnline(obj) {
   const show = m => { const el = $('#ldErr') ?? $('#setupErrors'); if (el) el.textContent = m; else toast(m); };
   let ns; try { ns = G.readSave(obj, data); } catch (e) { show(e.message); return false; }
-  const on = obj.online; netLeave(); clearTimeout(aiTimer);
+  const on = obj.online; netLeave(); clearTimeout(C.aiTimer);
   playWhere = 'host'; show('Reopening the room…');
   let t = null, code = null, err = null;
   for (let k = 0; k < 5 && !t; k++) {
@@ -427,8 +417,8 @@ async function resumeOnline(obj) {
   }
   if (!t) { playWhere = 'local'; show('Could not reopen the room: ' + (err?.message ?? 'no network')); renderSetup(); return false; }
   hostNet(t, code, on.salt ?? newSalt());
-  NET.room.restore({ ...on.room, code }); NET.me = on.me;
-  S = ns; closeModal(); enterGame();
+  C.NET.room.restore({ ...on.room, code }); C.NET.me = on.me;
+  C.S = ns; closeModal(); enterGame();
   if (code === on.code) toast(`Online game resumed: room ${code}. Your friends' pages reconnect by themselves.`);
   else openModal(`<div class="ask" id="resumedNew"><h2>Resumed under a new code</h2><p>The old room code <b>${esc(on.code)}</b> is taken, so the game is open under <b class="roomcode" id="resumedCode">${esc(code)}</b>.</p>
     <p>Send this link to your friends (their seats are kept; a page still trying the old code can also type the new one):</p><p><input id="resumedLink" readonly size="52" value="${attr(joinLink(code, on.code))}"> <button class="btn sm" id="resumedCopy">Copy link</button></p><button class="btn gold" data-close>OK</button></div>`);
@@ -437,65 +427,65 @@ async function resumeOnline(obj) {
 }
 /** One guest move at a time, when the host's page is not busy animating (they queue meanwhile). */
 async function hostDrain() {
-  if (NET?.role !== 'host' || busy || !S || !NET.inbox.length) return;
-  const { action, reply, fresh } = NET.inbox.shift();
+  if (C.NET?.role !== 'host' || C.busy || !C.S || !C.NET.inbox.length) return;
+  const { action, reply, fresh } = C.NET.inbox.shift();
   if (fresh && !fresh()) reply({ code: 'STALE', message: 'The game moved on before your move arrived; choose again.' });   // v26.1: a re-sent copy
   else await apply(action, { remote: reply });
-  if (NET?.inbox.length && !busy) hostDrain();
+  if (C.NET?.inbox.length && !C.busy) hostDrain();
 }
 /** v26.1: a guest's move arrived while this host page is busy (an animation, or a popup waiting for OK): a hidden page closes its
  *  popup at once (nobody is looking, and the guest must not wait for it); a visible one tells the host to click OK. */
 function nudgeHost(i) {
-  if (!NET || NET.role !== 'host' || !S) return;
+  if (!C.NET || C.NET.role !== 'host' || !C.S) return;
   if (document.hidden) { if (modalDone) closeModal(); if (bpDone) closeBattlePop(); return; }
   if (document.body.dataset.popup || modalDone || bpDone) toast(`${st().players[i]?.name ?? 'A guest'} has moved and is waiting: click OK to go on`);
 }
 /** After each step on the host: every guest gets its view and its legal moves. */
 function netPush() {
-  if (NET?.role !== 'host' || !S) return;
-  const c = current(S); NET.room.update({ seq: S.steps.length, state: c.state, events: c.events ?? [], by: c.action?.playerId ?? null });
+  if (C.NET?.role !== 'host' || !C.S) return;
+  const c = current(C.S); C.NET.room.update({ seq: C.S.steps.length, state: c.state, events: c.events ?? [], by: c.action?.playerId ?? null });
 }
 /** The host's "→ AI" button: a dropped or away player's seat is played by the AI from now on. */
 function seatToAI(i) {
-  if (NET?.role !== 'host' || !S) return;
+  if (C.NET?.role !== 'host' || !C.S) return;
   const s = st(); const pid = s.players[i]?.id; const nm = s.players[i]?.name;
   if (!window.confirm(`Give ${nm}'s seat to the AI? (You can give it back when ${nm} is connected again.)`)) return;
-  if (!NET.room.seatToAI(i)) return;
-  const c = current(S);
-  S = { ...S, steps: [...S.steps.slice(0, -1), { ...c, state: { ...c.state, players: c.state.players.map(p => (p.id === pid ? { ...p, controller: 'ai' } : p)) } }] };
-  NET.room.update({ seq: S.steps.length, state: full(), events: [], by: null });
+  if (!C.NET.room.seatToAI(i)) return;
+  const c = current(C.S);
+  C.S = { ...C.S, steps: [...C.S.steps.slice(0, -1), { ...c, state: { ...c.state, players: c.state.players.map(p => (p.id === pid ? { ...p, controller: 'ai' } : p)) } }] };
+  C.NET.room.update({ seq: C.S.steps.length, state: full(), events: [], by: null });
   toast(`${nm} is now played by the AI`); autosave(); render(); schedule();
 }
 /** M14: the reverse: a seat the AI took over goes back to its friend, who is connected again. */
 function seatBack(i) {
-  if (NET?.role !== 'host' || !S) return;
+  if (C.NET?.role !== 'host' || !C.S) return;
   const s = st(); const pid = s.players[i]?.id; const nm = s.players[i]?.name;
-  if (!NET.room.seatBack(i)) { toast(`${nm} is not connected: the seat stays with the AI`); return; }
-  const c = current(S);
-  S = { ...S, steps: [...S.steps.slice(0, -1), { ...c, state: { ...c.state, players: c.state.players.map(p => (p.id === pid ? { ...p, controller: 'human' } : p)) } }] };
-  NET.room.update({ seq: S.steps.length, state: full(), events: [], by: null });
+  if (!C.NET.room.seatBack(i)) { toast(`${nm} is not connected: the seat stays with the AI`); return; }
+  const c = current(C.S);
+  C.S = { ...C.S, steps: [...C.S.steps.slice(0, -1), { ...c, state: { ...c.state, players: c.state.players.map(p => (p.id === pid ? { ...p, controller: 'human' } : p)) } }] };
+  C.NET.room.update({ seq: C.S.steps.length, state: full(), events: [], by: null });
   toast(`${nm} plays their seat again`); autosave(); render(); schedule();
 }
 function netBadge(pid) {
-  if (!NET || !S) return '';
+  if (!C.NET || !C.S) return '';
   const i = st().players.findIndex(p => p.id === pid);
-  if (pid === NET.me) return '<span class="netst you" title="This computer">you</span>';
-  const seat = NET.role === 'host' ? NET.room.seats[i] : NET.client.lobby?.seats?.[i];
+  if (pid === C.NET.me) return '<span class="netst you" title="This computer">you</span>';
+  const seat = C.NET.role === 'host' ? C.NET.room.seats[i] : C.NET.client.lobby?.seats?.[i];
   if (seat?.kind === 'ai' && (seat.token || seat.returnable)) {   // M14: a guest's seat the AI plays for now
-    const on = NET.role === 'host' ? !!(seat.connected && seat.peer) : !!seat.guestConnected;
+    const on = C.NET.role === 'host' ? !!(seat.connected && seat.peer) : !!seat.guestConnected;
     return `<span class="netst ${on ? 'on' : 'away'}" title="The AI plays this seat for now; its player is ${on ? 'connected' : 'not connected'}">AI · ${on ? 'player online' : 'player away'}</span>`
-      + (NET.role === 'host' && st().phase !== 'finished' && on ? `<button type="button" class="btn sm toai back" data-seatback="${i}" title="Give the seat back to its player">← back</button>` : '');
+      + (C.NET.role === 'host' && st().phase !== 'finished' && on ? `<button type="button" class="btn sm toai back" data-seatback="${i}" title="Give the seat back to its player">← back</button>` : '');
   }
   if (!seat || seat.kind !== 'remote') return seat?.kind === 'local' ? '<span class="netst host" title="The host plays this seat">host</span>' : '';
   const on = seat.connected;
   return `<span class="netst ${on ? 'on' : 'away'}" title="${on ? 'Connected' : 'Not connected (or not answering)'}">● ${on ? 'online' : 'away'}</span>`
-    + (NET.role === 'host' && st().phase !== 'finished' ? `<button type="button" class="btn sm toai" data-toai="${i}" title="Let the AI play this seat (you can give it back later)">→ AI</button>` : '');
+    + (C.NET.role === 'host' && st().phase !== 'finished' ? `<button type="button" class="btn sm toai" data-toai="${i}" title="Let the AI play this seat (you can give it back later)">→ AI</button>` : '');
 }
 function netLeave() {
-  if (!NET) return;
-  const n = NET; NET = null; clearInterval(n.ping); renderNetBanner();
+  if (!C.NET) return;
+  const n = C.NET; C.NET = null; clearInterval(n.ping); renderNetBanner();
   // M14: HOST_LEFT lets the guests wait and reconnect (the host may resume from its save); a finished game says GAME_OVER (final)
-  try { if (n.role === 'host') n.room.close(S && G.stateOf(S).phase === 'finished' ? 'GAME_OVER' : 'HOST_LEFT'); else n.client.leave(); } catch (e) { console.warn('leave', e); }
+  try { if (n.role === 'host') n.room.close(C.S && G.stateOf(C.S).phase === 'finished' ? 'GAME_OVER' : 'HOST_LEFT'); else n.client.leave(); } catch (e) { console.warn('leave', e); }
   document.body.dataset.online = '';
 }
 
@@ -511,22 +501,22 @@ async function joinGame() {
   const mine = saved && (saved.code === code || (joinWas && saved.code === joinWas));   // M14: ?was=OLD: the same game under a new code
   let t; try { t = await makeTransport(); } catch (e) { say(e.message, true); $('#joinGo').disabled = false; return; }
   const n = { role: 'guest', code, transport: t, me: null, q: [], pending: false, shown: null, healOff: 0 };
-  const inGame = () => S && document.body.dataset.screen === 'game';
-  n.client = new GuestClient({ transport: t, makeTransport, build: uiLabel, name, token: mine ? saved.token : null, data, hooks: {
-    onWelcome: (c, m) => { n.code = c.code; if (NET === n) pendDone(); else n.pending = false; try { localStorage.setItem(SEAT_TOKEN_KEY, JSON.stringify({ code: c.code, token: m.token, seat: m.seat, at: Date.now() })); } catch { /* */ }
+  const inGame = () => C.S && document.body.dataset.screen === 'game';
+  n.client = new GuestClient({ transport: t, makeTransport, build: C.uiLabel, name, token: mine ? saved.token : null, data, hooks: {
+    onWelcome: (c, m) => { n.code = c.code; if (C.NET === n) pendDone(); else n.pending = false; try { localStorage.setItem(SEAT_TOKEN_KEY, JSON.stringify({ code: c.code, token: m.token, seat: m.seat, at: Date.now() })); } catch { /* */ }
       if (!inGame()) say(`Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}, ${SEAT_COLOR_NAMES[m.seat]}). Waiting for the host to start…`); },
-    onLobby: (c, m) => { if (NET === n) renderGuestLobby(m); if (S && NET === n) render(); },
-    onUpdate: (c, u) => { if (NET !== n) return; n.me = u.you.playerId; n.q.push(u); if (!inGame()) { guestEnter(); } else guestDrain(); },
-    onReject: (c, m) => { if (NET !== n) return;
+    onLobby: (c, m) => { if (C.NET === n) renderGuestLobby(m); if (C.S && C.NET === n) render(); },
+    onUpdate: (c, u) => { if (C.NET !== n) return; n.me = u.you.playerId; n.q.push(u); if (!inGame()) { guestEnter(); } else guestDrain(); },
+    onReject: (c, m) => { if (C.NET !== n) return;
       if (!inGame()) { say(m.message, true); return; }
       pendDone(); if (m.code !== 'STALE') { SND.play('error_denied'); toast(m.message); } render(); },
-    onBye: (c, r) => { if (NET !== n) return;
+    onBye: (c, r) => { if (C.NET !== n) return;
       if (r === 'HOST_LEFT' && !c.ended) return;   // M14: not final: the host may resume the game; the client reconnects (onStatus)
       if (r === 'BUILD_MISMATCH' || r === 'FULL' || r === 'STARTED') { $('#joinGo').disabled = false; netLeave(); return; }
       if (r === 'GAME_OVER' && inGame()) { n.lost = 'The game is over; the host closed the room.'; renderNetBanner(); return; }
       netLost(r === 'SEAT_REMOVED' ? 'The host removed your seat.' : r === 'REPLACED' ? 'You joined this game from another tab; this tab is disconnected.' : 'The host ended the connection.'); },
-    onHostGone: () => { if (NET === n) netLost('Lost the connection to the host.'); },
-    onStatus: (c, status, info) => { if (NET !== n) return;
+    onHostGone: () => { if (C.NET === n) netLost('Lost the connection to the host.'); },
+    onStatus: (c, status, info) => { if (C.NET !== n) return;
       n.status = status; n.info = info; (n.statuses ??= []).push(status + (info.why ? ':' + info.why : ''));
       if (status === 'reconnecting' || status === 'lost') pendDone();
       if (status === 'connected' && info.rejoined) { if (inGame()) toast('Reconnected: you are back in your seat'); else say(`Reconnected to room ${c.code}.`); }
@@ -534,28 +524,28 @@ async function joinGame() {
       if (!inGame() && status === 'lost') { say('Could not reach the host. Press Join to try again.', true); $('#joinGo').disabled = false; netLeave(); return; }
       renderNetBanner(); if (inGame()) render(); },
   } });
-  NET = n;
+  C.NET = n;
   n.ping = setInterval(() => { n.client.tick(); try { guestHeal(); } catch (e) { console.warn('heal', e); } }, 2000);
-  try { await n.client.join(code); } catch (e) { if (NET === n) netLeave(); say(e.message, true); $('#joinGo').disabled = false; return; }
+  try { await n.client.join(code); } catch (e) { if (C.NET === n) netLeave(); say(e.message, true); $('#joinGo').disabled = false; return; }
 }
 const whyText = w => ({ LINK_LOST: 'the link dropped', HOST_LEFT: 'the host left the game', NO_ROOM: 'the room is not open', NETWORK: 'network error', TIMEOUT: 'no answer', RETRY: 'retrying' })[w] ?? String(w ?? 'no link').toLowerCase().replace(/_/g, ' ');
 /** M14: the online strip in the game: for the host, the room code and its link; for a guest, the link to the host (reconnecting,
  *  the host away, given up, or the seat played by the AI for now). body[data-net-status] is for tests. */
 function renderNetBanner() {
   const el = $('#netBanner'); if (!el) return;
-  const game = S && document.body.dataset.screen === 'game';
-  if (!NET || !game) { el.hidden = true; el.innerHTML = ''; document.body.dataset.netStatus = ''; return; }
-  if (NET.role === 'host') {
-    const away = NET.room.seats.filter(x => x.token && !x.connected).map(x => x.name || 'a guest');
+  const game = C.S && document.body.dataset.screen === 'game';
+  if (!C.NET || !game) { el.hidden = true; el.innerHTML = ''; document.body.dataset.netStatus = ''; return; }
+  if (C.NET.role === 'host') {
+    const away = C.NET.room.seats.filter(x => x.token && !x.connected).map(x => x.name || 'a guest');
     document.body.dataset.netStatus = 'host';
     el.className = 'netbanner host'; el.hidden = false;
-    el.innerHTML = `🌐 Room <b class="roomcode" id="nbRoom">${esc(NET.code)}</b> <button type="button" class="btn sm" id="nbCopy" title="${attr(joinLink(NET.code))}">Copy link</button>${away.length ? ` <span class="nbaway">${esc(away.join(', '))} ${away.length > 1 ? 'are' : 'is'} away</span>` : ''}`;
-    $('#nbCopy').onclick = () => navigator.clipboard?.writeText(joinLink(NET.code)).then(() => toast('Link copied'), () => toast(joinLink(NET.code)));
+    el.innerHTML = `🌐 Room <b class="roomcode" id="nbRoom">${esc(C.NET.code)}</b> <button type="button" class="btn sm" id="nbCopy" title="${attr(joinLink(C.NET.code))}">Copy link</button>${away.length ? ` <span class="nbaway">${esc(away.join(', '))} ${away.length > 1 ? 'are' : 'is'} away</span>` : ''}`;
+    $('#nbCopy').onclick = () => navigator.clipboard?.writeText(joinLink(C.NET.code)).then(() => toast('Link copied'), () => toast(joinLink(C.NET.code)));
     return;
   }
-  const c = NET.client; const status = NET.lost ? 'ended' : c.status === 'connected' && c.hostAway ? 'hostAway' : c.status === 'connected' && c.ai ? 'ai' : c.status === 'connected' && NET.pending && NET.slow ? 'waiting' : c.status;
+  const c = C.NET.client; const status = C.NET.lost ? 'ended' : c.status === 'connected' && c.hostAway ? 'hostAway' : c.status === 'connected' && c.ai ? 'ai' : c.status === 'connected' && C.NET.pending && C.NET.slow ? 'waiting' : c.status;
   document.body.dataset.netStatus = status;
-  const i = NET.info ?? {};
+  const i = C.NET.info ?? {};
   let html = '';
   if (status === 'reconnecting') html = `<span class="spin">⟳</span> <b>Reconnecting…</b> Lost the host (${esc(whyText(i.why))}). Try ${i.attempt} of ${i.of}, next in ${Math.max(1, Math.round((i.inMs ?? 0) / 1000))} s. Your seat is kept. <button type="button" class="btn sm" id="nbNow">Try now</button> <span class="small">new code?</span> <input id="nbCode" size="7" maxlength="16" placeholder="${attr(c.code)}" spellcheck="false" aria-label="A new room code from the host"> <button type="button" class="btn sm" id="nbLeave">Leave</button>`;
   else if (status === 'lost') html = `<b>Could not reach the host.</b> Your seat is kept: if the host resumed under a new code, type it: <input id="nbCode" size="8" maxlength="16" placeholder="${attr(c.code)}" spellcheck="false"> <button type="button" class="btn sm gold" id="nbNow">Try again</button> <button type="button" class="btn sm" id="nbLeave">Leave</button>`;
@@ -570,25 +560,25 @@ function renderNetBanner() {
   if ($('#nbLeave')) $('#nbLeave').onclick = () => { if (window.confirm('Leave this online game?')) toSetup(); };
 }
 function renderGuestLobby(m) {
-  const rows = (m.seats ?? []).map(x => `<li><span class="sw" style="background:${SEAT_COLORS[x.i]}"></span> <b>${esc(x.kind === 'remote' ? x.name || 'waiting for a player…' : x.name)}</b> <span class="small">${x.kind === 'local' ? '(host)' : x.kind === 'ai' ? '(AI)' : x.taken ? (x.connected ? '(online)' : '(away)') : ''}${NET?.client?.seat === x.i ? ' ← you' : ''}</span></li>`).join('');
+  const rows = (m.seats ?? []).map(x => `<li><span class="sw" style="background:${SEAT_COLORS[x.i]}"></span> <b>${esc(x.kind === 'remote' ? x.name || 'waiting for a player…' : x.name)}</b> <span class="small">${x.kind === 'local' ? '(host)' : x.kind === 'ai' ? '(AI)' : x.taken ? (x.connected ? '(online)' : '(away)') : ''}${C.NET?.client?.seat === x.i ? ' ← you' : ''}</span></li>`).join('');
   $('#guestLobby').innerHTML = rows ? `<b>Players</b><ul>${rows}</ul><p class="small">The host chooses the generals and the start provinces, then starts the game.</p>` : '';
 }
 function netLost(msg) {
-  const n = NET; if (!n) return;
-  if (!S || document.body.dataset.screen !== 'game') { $('#joinStatus').textContent = msg; $('#joinStatus').classList.add('bad'); $('#joinGo').disabled = false; NET = null; try { n.transport.close(); } catch { /* */ } return; }
+  const n = C.NET; if (!n) return;
+  if (!C.S || document.body.dataset.screen !== 'game') { $('#joinStatus').textContent = msg; $('#joinStatus').classList.add('bad'); $('#joinGo').disabled = false; C.NET = null; try { n.transport.close(); } catch { /* */ } return; }
   n.lost = msg; document.body.dataset.netLost = '1'; render();
   openModal(`<div class="ask" id="netLostBox"><h2>Disconnected</h2><p>${esc(msg)}</p><button class="btn gold" data-close>OK</button></div>`);
 }
 function guestEnter() {
-  const u = NET.q.shift(); if (!u) return;
-  S = { data, seed: 'room ' + NET.code, steps: [{ state: u.state, events: [], action: null, error: null, legal: u.legal, seq: u.seq }] }; NET.shown = u.seq;
+  const u = C.NET.q.shift(); if (!u) return;
+  C.S = { data, seed: 'room ' + C.NET.code, steps: [{ state: u.state, events: [], action: null, error: null, legal: u.legal, seq: u.seq }] }; C.NET.shown = u.seq;
   $('#joinGo').disabled = false; SND.play('deck_shuffle'); enterGame();
-  if (NET.q.length) guestDrain();
+  if (C.NET.q.length) guestDrain();
 }
 /** Plays the host's updates in order, animating each like a local move (several waiting at once: only the last is animated). */
 async function guestDrain() {
-  if (NET?.role !== 'guest' || busy || !S || !NET.q.length || document.body.dataset.screen !== 'game') return;
-  const n = NET;
+  if (C.NET?.role !== 'guest' || C.busy || !C.S || !C.NET.q.length || document.body.dataset.screen !== 'game') return;
+  const n = C.NET;
   // v26.1: all waiting updates at once (only the last is animated); a throw anywhere (the view, the render) asks the host for the
   // whole view again instead of leaving this screen on an old step with the queue stuck.
   let u, before;
@@ -596,43 +586,43 @@ async function guestDrain() {
     while (n.q.length) {
       u = n.q.shift(); before = st();
       if (n.throwOnce) { n.throwOnce = false; throw new Error('test: the page could not apply this update'); }
-      S = { ...S, steps: [...S.steps.slice(-2), { state: u.state, events: u.anim ?? [], action: null, error: null, legal: u.legal, seq: u.seq }] };
+      C.S = { ...C.S, steps: [...C.S.steps.slice(-2), { state: u.state, events: u.anim ?? [], action: null, error: null, legal: u.legal, seq: u.seq }] };
       n.shown = u.seq;
       if (u.by === n.me) { pendDone(); ab = null; }
       if (u.resynced) resyncNote(u);
     }
   } catch (e) { return guestBroke(e); }
-  busy = true; document.body.dataset.busy = '1';
+  C.busy = true; document.body.dataset.busy = '1';
   try { freezeControls(); $('#ovAsk').classList.remove('on'); await playEvents(u.anim ?? [], before); } catch (e) { console.warn('animation', e); }
-  busy = false; document.body.dataset.busy = '';
+  C.busy = false; document.body.dataset.busy = '';
   try { render(); schedule(); } catch (e) { return guestBroke(e); }
   guestDrain();
 }
 /** v26.1: the page could not show an update: ask for a full resync (once per few seconds) and say so. */
 function guestBroke(e) {
   console.error('guest update', e);
-  busy = false; document.body.dataset.busy = '';
-  if (NET?.role !== 'guest') return;
-  NET.broke = (NET.broke ?? 0) + 1; document.body.dataset.guestBroke = String(NET.broke);
-  NET.client.resync('APPLY');
+  C.busy = false; document.body.dataset.busy = '';
+  if (C.NET?.role !== 'guest') return;
+  C.NET.broke = (C.NET.broke ?? 0) + 1; document.body.dataset.guestBroke = String(C.NET.broke);
+  C.NET.client.resync('APPLY');
 }
 /** v26.1: the small visible note after a resync (the screen had fallen behind the host and now shows the game as it is). */
 function resyncNote(u) {
-  NET.resynced = (NET.resynced ?? 0) + 1; document.body.dataset.resynced = String(NET.resynced);
+  C.NET.resynced = (C.NET.resynced ?? 0) + 1; document.body.dataset.resynced = String(C.NET.resynced);
   toast('Resynced with the host: your screen now shows the game as it is');
 }
 /** v26.1, every 2 s on a guest: a queue nothing drains (a popup that ended without draining) is drained; a screen whose shown step is
  *  not the client's last one (an update it never applied) asks for a resync. Two ticks in a row, so a drain in progress is not hit. */
 function guestHeal() {
-  const n = NET; if (n?.role !== 'guest' || !S || document.body.dataset.screen !== 'game' || n.client.status !== 'connected') return;
-  if (busy) { n.healOff = 0; return; }
+  const n = C.NET; if (n?.role !== 'guest' || !C.S || document.body.dataset.screen !== 'game' || n.client.status !== 'connected') return;
+  if (C.busy) { n.healOff = 0; return; }
   if (n.q.length) { guestDrain(); return; }
   if (n.client.seq != null && n.shown !== n.client.seq) { if (++n.healOff >= 2) { n.healOff = 0; n.client.resync('VIEW'); } } else n.healOff = 0;
 }
 function guestSend(action) {
-  if (NET.pending || NET.lost) { if (NET.lost) toast(NET.lost); return false; }
-  if (NET.client.status !== 'connected') { toast('Reconnecting to the host: wait a moment'); return false; }   // M14
-  NET.pending = true; NET.client.act(action); pendWatch();
+  if (C.NET.pending || C.NET.lost) { if (C.NET.lost) toast(C.NET.lost); return false; }
+  if (C.NET.client.status !== 'connected') { toast('Reconnecting to the host: wait a moment'); return false; }   // M14
+  C.NET.pending = true; C.NET.client.act(action); pendWatch();
   freezeControls(); $('#ovAsk').classList.remove('on'); return true;
 }
 /** v26.1 (the stuck Revolt Roll): a move this guest sent and the host has not answered yet. After PEND_SLOW_MS the banner says so
@@ -640,87 +630,38 @@ function guestSend(action) {
  *  checks the seq when it applies a move, so a copy of a move that did arrive is refused as STALE, never applied twice). */
 const PEND_SLOW_MS = 6000, PEND_RETRY_MS = 25000;
 function pendWatch() {
-  const n = NET; clearTimeout(n.pendSlow); clearTimeout(n.pendRetry); n.slow = false;
-  n.pendSlow = setTimeout(() => { if (NET === n && n.pending) { n.slow = true; renderNetBanner(); } }, PEND_SLOW_MS);
-  n.pendRetry = setTimeout(() => { if (NET === n && n.pending) { n.pending = false; n.slow = false; toast('The host has not answered your move yet: you can make it again'); render(); } }, PEND_RETRY_MS);
+  const n = C.NET; clearTimeout(n.pendSlow); clearTimeout(n.pendRetry); n.slow = false;
+  n.pendSlow = setTimeout(() => { if (C.NET === n && n.pending) { n.slow = true; renderNetBanner(); } }, PEND_SLOW_MS);
+  n.pendRetry = setTimeout(() => { if (C.NET === n && n.pending) { n.pending = false; n.slow = false; toast('The host has not answered your move yet: you can make it again'); render(); } }, PEND_RETRY_MS);
 }
 function pendDone() {
-  if (NET?.role !== 'guest') return;
-  const was = NET.slow; NET.pending = false; NET.slow = false; clearTimeout(NET.pendSlow); clearTimeout(NET.pendRetry);
+  if (C.NET?.role !== 'guest') return;
+  const was = C.NET.slow; C.NET.pending = false; C.NET.slow = false; clearTimeout(C.NET.pendSlow); clearTimeout(C.NET.pendRetry);
   if (was) renderNetBanner();
 }
 /** v26.1: why a click on your roll or draw did nothing (it used to say "No roll is due for you right now" in every case). */
 function notDueText(kind) {
-  if (NET?.role === 'guest') {
-    if (NET.pending) return `Your move was sent: waiting for the host to answer${NET.slow ? ' (their page may be showing a popup, or be in the background)' : '…'}`;
-    if (NET.client.ai) return 'The host gave your seat to the AI: the AI plays it for now';
-    if (NET.client.status !== 'connected') return 'Reconnecting to the host: wait a moment';
+  if (C.NET?.role === 'guest') {
+    if (C.NET.pending) return `Your move was sent: waiting for the host to answer${C.NET.slow ? ' (their page may be showing a popup, or be in the background)' : '…'}`;
+    if (C.NET.client.ai) return 'The host gave your seat to the AI: the AI plays it for now';
+    if (C.NET.client.status !== 'connected') return 'Reconnecting to the host: wait a moment';
   }
   const s = st(); const w = whoActs(s); const f = topFrame(s);
   // v26.1: the screen says it is this guest's move but there is none for it: the screen is behind the host. Ask for the whole view.
-  if (NET?.role === 'guest' && f && w === NET.me && NET.client.resync('CLICK')) return 'Checking with the host: your screen was behind. One moment…';
-  if (f && w && w !== viewer) return `No ${kind} is due for you right now: it is ${pn(w)}'s ${f.kind === 'roll' || f.kind === 'draw' ? f.kind : 'move'}`;
+  if (C.NET?.role === 'guest' && f && w === C.NET.me && C.NET.client.resync('CLICK')) return 'Checking with the host: your screen was behind. One moment…';
+  if (f && w && w !== C.viewer) return `No ${kind} is due for you right now: it is ${pn(w)}'s ${f.kind === 'roll' || f.kind === 'draw' ? f.kind : 'move'}`;
   return `No ${kind} is due for you right now`;
 }
 
-// ------------------------------------------------------------------ the loop: apply an action, animate its events, schedule the AI
-async function apply(action, { fromAi = false, remote = null } = {}) {
-  if (busy || !S) return false;
-  if (NET?.role === 'guest') return guestSend(action);
-  const before = st();
-  const r = G.play(S, action);
-  if (remote) remote(r.error);   // M11: a guest's move; the engine's checks decide, its error goes back to that guest only
-  if (r.error) { if (!remote) { SND.play('error_denied'); toast(r.error.message + (r.error.rule ? ` (${r.error.rule})` : '')); } return false; }
-  S = r.session; busy = true; document.body.dataset.busy = '1';
-  if (NET?.role === 'host') netPush();
-  freezeControls();
-  if (!fromAi) ab = null;
-  $('#ovAsk').classList.remove('on');
-  const evs = NET?.role === 'host' && NET.me ? eventsFor(current(S).events, NET.me) : current(S).events;   // M12: the host sees its seat's events
-  if (!hostHidden()) { try { await playEvents(evs, before); } catch (e) { console.warn('animation', e); } }   // v26.1: a hidden host does not animate
-  busy = false; document.body.dataset.busy = '';
-  autosave(); render(); schedule();
-  return true;
-}
+// ------------------------------------------------------------------ the loop (apply, schedule: src/ui/core/controller.js)
+
 /** Batch 4 item 1: the buttons on screen were drawn for the state before this move. While its events animate (a battle's last
  *  round, the VICTORY result waiting for OK, ...) they must not stay up: the battle popup's roll/continue buttons go, the panel's go grey. */
 function freezeControls() {
   $('#bCtl').innerHTML = '';
   $$('#players button, #phActions button:not(#bPause)').forEach(b => { b.disabled = true; });
 }
-function schedule() {
-  clearTimeout(aiTimer); aiTimer = null; autoRoll = false;
-  if (!S || document.body.dataset.screen !== 'game') return;
-  const s = st();
-  if (s.phase === 'finished') { showGameOver(); return; }
-  if (NET?.role === 'guest') { if (!busy) humanAuto(s); return; }   // M11: a guest runs no AI and no automatic rolls: the host does
-  if (NET?.role === 'host' && !busy && NET.inbox.length) { later(hostDrain, 0); return; }
-  if (!busy && humanAuto(s)) return;
-  if (aiPaused || busy || !G.aiToMove(S)) return;
-  const f = topFrame(s); const auto = f && f.kind === 'roll' && !f.player;
-  $$('.player').forEach(el => el.classList.toggle('thinking', el.dataset.pid === whoActs(s)));
-  aiTimer = later(async () => { aiTimer = null; if (busy || !G.aiToMove(S) || aiPaused) return; await apply(G.aiMove(S), { fromAi: true }); }, spd(auto ? 300 : 650));
-}
-/** Batch 5 items 1 and 8: what happens by itself for a human. Scouting rolls the natives at once (no Roll click, 17.h); a Rome Is
- *  Displeased draw that falls on a human is announced first by a big banner that waits for OK (16.m). */
-let displeasedSeen = null, autoRoll = false;
-function humanAuto(s) {
-  const f = topFrame(s); if (!f) return false;
-  if (f.kind === 'roll' && f.purpose === 'nativeRoll' && G.isHuman(s, f.player) && NET?.role !== 'guest') {
-    autoRoll = true; document.body.dataset.humanTurn = '';
-    aiTimer = later(() => { aiTimer = null; autoRoll = false; if (!busy && topFrame(st())?.purpose === 'nativeRoll') apply({ type: 'ROLL', playerId: f.player }); else render(); }, spd(200));
-    return true;
-  }
-  if (f.kind === 'draw' && f.deck === 'displeased' && G.isHuman(s, f.player) && (!NET || f.player === viewer) && displeasedSeen !== f.id) {
-    displeasedSeen = f.id; busy = true; document.body.dataset.busy = '1';
-    displeasedAlert(f).then(draw => {
-      busy = false; document.body.dataset.busy = ''; render(); schedule(); guestDrain();
-      const d = draw && !busy && displeasedDraw(f); if (d && topFrame(st())?.id === f.id) human(d);   // v27: "Draw the card now"
-    });   // v26.1: an update that came during the alert
-    return true;
-  }
-  return false;
-}
+
 /** Resolves true when the player chose "Draw it now" (v27): only offered when this screen may make that draw (its own seat online). */
 async function displeasedAlert(f) {
   const s = st(); const p = G.playerById(s, f.player);
@@ -736,8 +677,7 @@ async function displeasedAlert(f) {
   document.body.dataset.popup = '';
   return draw;
 }
-/** The DRAW from Rome Is Displeased this screen may make for frame `f` (null: not this screen's draw). */
-function displeasedDraw(f) { return mineNow().find(d => d.type === 'DRAW_CARD' && d.action.playerId === f.player && (!NET || f.player === NET.me)) ?? null; }
+
 async function assassinAlert(p) {
   for (const x of p.strikes) flashToken(x.province);
   document.body.dataset.popup = 'assassinAlert'; SND.play('error_denied');
@@ -748,7 +688,6 @@ async function assassinAlert(p) {
     + `<button class="btn gold big" data-close id="assOk">OK, I understand</button></div></div>`, { cls: 'assassin-alert' });
   document.body.dataset.popup = '';
 }
-const human = d => { if (busy) return; SND.play('button_click'); return apply(d.range ? G.withValue(d, d._v ?? d.range.max) : d.action); };
 
 // ------------------------------------------------------------------ events -> animations, modals, sounds
 async function playEvents(events, before = null) {
@@ -791,22 +730,22 @@ async function playEvents(events, before = null) {
         endBattleView(e); await sleep(spd(400));
         // M7 item 1: the result is told inside the battle popup. A human defender who is not at the screen gets it later as "While you were away".
         const p = G.battleResultPopup(events, i, s, data); const away = p ? queueNews(p) : false;
-        const sum = G.battleSummary(events, i, s, data, viewer);
-        const look = [e.actor, e.pub.defender].filter(x => x && G.isHuman(s, x) && x === viewer);
-        await battleResult(p && !away && p.player === viewer ? { ...sum, title: p.title, lines: p.lines } : sum, look.length > 0);
+        const sum = G.battleSummary(events, i, s, data, C.viewer);
+        const look = [e.actor, e.pub.defender].filter(x => x && G.isHuman(s, x) && x === C.viewer);
+        await battleResult(p && !away && p.player === C.viewer ? { ...sum, title: p.title, lines: p.lines } : sum, look.length > 0);
         break;
       }
       // romeRoll / senateDecree: told by the Game Roll popup (gameRollResolved, item 1)
       case 'displeasedDrawn': await flipCard('displeased', e.pub.def, 'draws from Rome Is Displeased', G.isHuman(s, e.pub.player), e.pub.player); break;
       case 'cardDrawn': {
-        const def = e.pub.def ?? (e.priv && e.pub.player === viewer ? e.priv.def : null);
+        const def = e.pub.def ?? (e.priv && e.pub.player === C.viewer ? e.priv.def : null);
         if (def && (G.isHuman(s, e.pub.player) || e.pub.deck !== 'game')) await flipCard(e.pub.deck, def, `draws a ${e.pub.deck === 'game' ? 'Game' : 'Resource'} card`, G.isHuman(s, e.pub.player), e.pub.player);
         else toast(`${pn(e.pub.player)} draws a ${e.pub.deck === 'game' ? 'Game Card (hidden)' : e.pub.deck + ' card'}`);
         break;
       }
       case 'troopsAssassinated': {   // v22: a human victim must see and acknowledge it (never for AI victims or natives)
         const prev = events[i - 1];
-        if (!(prev?.type === 'troopsAssassinated' && prev.pub.player === e.pub.player)) for (const p of G.assassinPopups(events, i, s, data)) if (!NET || p.victim === viewer) await assassinAlert(p);
+        if (!(prev?.type === 'troopsAssassinated' && prev.pub.player === e.pub.player)) for (const p of G.assassinPopups(events, i, s, data)) if (!C.NET || p.victim === C.viewer) await assassinAlert(p);
         break;
       }
       case 'provinceRevolted': if (!shownRevolts.has(i)) { flashToken(e.pub.province); await deliver(G.revoltPopup(events, i, s, data)); } break;
@@ -826,7 +765,7 @@ async function eventModal(artId, title, body) {
 /** Game Roll / Revolt Roll / revolt popups (M6 items 1 and 7). Sticky ones (a human lost a province) wait for OK; the rest close themselves. */
 async function rollPopup(p) {
   if (!p) return;
-  if (NET && p.sticky && p.players?.length && !p.players.includes(viewer)) p = { ...p, sticky: false };   // v26.1: online, only your own waits for OK
+  if (C.NET && p.sticky && p.players?.length && !p.players.includes(C.viewer)) p = { ...p, sticky: false };   // v26.1: online, only your own waits for OK
   const num = p.value !== undefined ? `<div class="rollnum">${esc(p.value)}</div>` : '';
   const hit = p.matched ? `<div class="rollprov" id="rollProv"><span class="small">Province${p.matched.length === 1 ? '' : 's'} with number ${esc(p.value)}:</span>${p.matched.length ? p.matched.map(m => `<span class="rp ${m.owner ? col(m.owner) : 'nat'}" data-prov="${m.id}"><b>${esc(m.name)}</b> <i>${esc(m.holder)}</i></span>`).join('') : '<span class="rp none">none</span>'}</div>` : '';
   for (const m of p.matched ?? []) flashToken(m.id);
@@ -838,15 +777,15 @@ async function rollPopup(p) {
 /** Hot-seat (item 7): a revolt that hits a human who is not looking right now is shown again when that human's context comes up. */
 const news = {};
 const NEWS_KINDS = new Set(['revolt', 'battle', 'displeased']);
-function queueNews(p) { if (!p || !NEWS_KINDS.has(p.kind) || !G.isHuman(st(), p.player)) return false; if (p.player !== (NET ? NET.me : G.viewerFor(st(), viewer))) { if (!NET) (news[p.player] ??= []).push(p); return true; } return false; }   // M11: online, each player's own screen shows it
+function queueNews(p) { if (!p || !NEWS_KINDS.has(p.kind) || !G.isHuman(st(), p.player)) return false; if (p.player !== (C.NET ? C.NET.me : G.viewerFor(st(), C.viewer))) { if (!C.NET) (news[p.player] ??= []).push(p); return true; } return false; }   // M11: online, each player's own screen shows it
 /** Q100 (Vidi 2026-10-22): a popup that affects a human waits for OK. If that human is looking now they get it at once; in hot-seat,
  *  when someone else is at the screen, that player sees a short self-closing version and the affected human gets it as "While you were away". */
 async function deliver(p) { if (!p) return; if (queueNews(p)) await rollPopup({ ...p, sticky: false }); else await rollPopup(p); }
 async function showNews() {
-  const list = viewer && news[viewer]; if (!list?.length || busy) return;
-  delete news[viewer]; busy = true; document.body.dataset.busy = '1';
+  const list = C.viewer && news[C.viewer]; if (!list?.length || C.busy) return;
+  delete news[C.viewer]; C.busy = true; document.body.dataset.busy = '1';
   for (const p of list) await rollPopup({ ...p, title: `While you were away: ${p.title}`, sticky: true });
-  busy = false; document.body.dataset.busy = ''; render(); schedule(); guestDrain();
+  C.busy = false; document.body.dataset.busy = ''; render(); schedule(); guestDrain();
 }
 /**
  * v27 (M15): the "card played" popup — which card, WHO played it (at the top) and its outcome. It never waits on anyone
@@ -1019,19 +958,19 @@ function drawArrow(from, to, color) {
 
 // ------------------------------------------------------------------ render
 function render() {
-  if (!S) return;
+  if (!C.S) return;
   const s = st();
-  const nv = NET ? NET.me : G.viewerFor(s, viewer);   // M11: online, the screen always belongs to this page's own seat
-  viewer = nv;
+  const nv = C.NET ? C.NET.me : G.viewerFor(s, C.viewer);   // M11: online, the screen always belongs to this page's own seat
+  C.viewer = nv;
   document.body.dataset.whoActs = whoActs(s) ?? '';
   document.body.dataset.frame = topFrame(s)?.kind ?? (s.phase === 'turn' ? 'free' : s.phase);
-  document.body.dataset.viewer = viewer ?? '';
+  document.body.dataset.viewer = C.viewer ?? '';
   const legal = mineNow();
   document.body.dataset.humanTurn = legal.length ? '1' : '';
   renderTop(); renderPhase(legal); renderPlayers(); renderMap(legal); renderTable(); renderDecks(legal); renderHand(legal); renderLog(); renderBuilder(legal); renderBattleCtl(legal); renderAsk(legal); renderDrawCall(legal);
   document.body.classList.toggle('p3mode', s.players.length >= 3);
-  if (!busy && !bpDone && !s.battle && $('#ovBattle').classList.contains('on')) closeBattlePop();
-  if (viewer && news[viewer]?.length && !busy) setTimeout(showNews, 0);
+  if (!C.busy && !bpDone && !s.battle && $('#ovBattle').classList.contains('on')) closeBattlePop();
+  if (C.viewer && news[C.viewer]?.length && !C.busy) setTimeout(showNews, 0);
   deadEndFlag();
 }
 /**
@@ -1044,7 +983,7 @@ function renderDrawCall(legal) {
   const el = $('#drawCall'); if (!el) return;
   const s = st(); const f = topFrame(s);
   const humans = s.players.filter(p => G.isHuman(s, p.id)).length;
-  const on = !!f && f.kind === 'draw' && f.deck === 'game' && f.reason === 'reward' && humans >= 2 && !busy && drawCallHidden !== f.id && !hostHidden();
+  const on = !!f && f.kind === 'draw' && f.deck === 'game' && f.reason === 'reward' && humans >= 2 && !C.busy && drawCallHidden !== f.id && !hostHidden();
   if (!on) { el.classList.remove('on'); el.innerHTML = ''; delete el.dataset.frame; document.body.dataset.drawCall = ''; return; }
   if (el.dataset.frame === f.id) return;
   const mine = legal.find(d => d.type === 'DRAW_CARD');
@@ -1059,25 +998,17 @@ function renderDrawCall(legal) {
  *  file to send (the engine's own fuzz tests find none; this is the safety net). */
 let deadSeen = null;
 function deadEndFlag() {
-  if (!S || NET?.role === 'guest' || busy) return;
+  if (!C.S || C.NET?.role === 'guest' || C.busy) return;
   const d = G.deadEnd(full(), data); document.body.dataset.deadEnd = d ? d.frame : '';
   if (!d) { deadSeen = null; return; }
-  const key = (topFrame(full())?.id ?? 'free') + '|' + S.steps.length; if (deadSeen === key) return; deadSeen = key;
+  const key = (topFrame(full())?.id ?? 'free') + '|' + C.S.steps.length; if (deadSeen === key) return; deadSeen = key;
   console.error('dead end', d.text);
   setTimeout(() => openModal(`<div class="ask" id="deadEnd" style="max-width:520px"><h2>The game cannot go on</h2><p>${esc(d.text)} This is a bug in the game, not something you did.</p><p class="small">Export a save file and send it to us: the save loads at this exact position once it is fixed.</p><button class="btn gold" id="deSave">Export a save file</button> <button class="btn" data-close>Close</button></div>`), 0);
   setTimeout(() => { const b = $('#deSave'); if (b) b.onclick = () => { download(G.saveFileName(st()), JSON.stringify(makeSaveNow('file'))); toast('Save file exported'); }; }, 10);
 }
-/** The human who decides now and their legal moves (none for AI seats). Hot-seat (Q95, Vidi 2026-10-21): no curtain; the board
- *  switches to the next player's context at End Turn, and the optional hide-hand toggle covers the hand. */
-function mineNow() {
-  if (NET?.role === 'guest') return NET.pending ? [] : current(S).legal ?? [];   // M11: the host sends each guest its legal moves
-  const s = full(); const w = whoActs(s);   // the full state: legal moves need the own hand and the decks
-  if (!G.isHuman(s, w) || w !== viewer) return [];
-  return G.humanLegal(s, data, w);
-}
 function renderTop() {
   const s = st();
-  $('#tbInfo').textContent = s.phase === 'setup' ? `Setup · seed ${S.seed.split('#')[0]}` : `Turn ${s.turn.number} · round ${s.turn.round} · seed ${S.seed.split('#')[0]}`;
+  $('#tbInfo').textContent = s.phase === 'setup' ? `Setup · seed ${C.S.seed.split('#')[0]}` : `Turn ${s.turn.number} · round ${s.turn.round} · seed ${C.S.seed.split('#')[0]}`;
 }
 function renderPhase(legal) {
   const s = st(); const f = topFrame(s); const a = s.phase === 'turn' ? s.turn.activePlayerId : whoActs(s);
@@ -1088,7 +1019,7 @@ function renderPhase(legal) {
   const w = whoActs(s); let html = ''; let prompt = esc(G.describePrompt(s, data));
   if (s.phase === 'finished') html = '<button class="btn gold" id="bOver">Results</button>';
   else if (!legal.length) {
-    html = `<span class="small">${G.isHuman(s, w) ? 'Waiting for ' + esc(pn(w)) : esc(pn(w)) + ' (AI) is thinking…'}</span> ${NET?.role === 'guest' ? '' : `<button class="btn sm" id="bPause">${aiPaused ? 'Resume AI ▶' : 'Pause AI ⏸'}</button>`}`;
+    html = `<span class="small">${G.isHuman(s, w) ? 'Waiting for ' + esc(pn(w)) : esc(pn(w)) + ' (AI) is thinking…'}</span> ${C.NET?.role === 'guest' ? '' : `<button class="btn sm" id="bPause">${C.aiPaused ? 'Resume AI ▶' : 'Pause AI ⏸'}</button>`}`;
   } else if (!f) {
     // batch 4 item 4: the turn's action buttons sit in the active player's panel; the phase bar only hints
     html = `<span class="small phhint">◂ Your actions: in ${esc(pn(w))}'s panel, on the left</span>`;
@@ -1101,7 +1032,7 @@ function renderPhase(legal) {
     prompt = `<b class="you">${esc(pn(w))}</b>: ${esc(G.frameTitle(s, data))} · ${esc(G.describePrompt(s, data).replace(/^.*?: /, ''))}`;
   }
   $('#phActions').innerHTML = html; $('#phPrompt').innerHTML = prompt;
-  const pz = $('#bPause'); if (pz) pz.onclick = () => { aiPaused = !aiPaused; render(); schedule(); };
+  const pz = $('#bPause'); if (pz) pz.onclick = () => { C.aiPaused = !C.aiPaused; render(); schedule(); };
   const bo = $('#bOver'); if (bo) bo.onclick = () => { overShown = false; showGameOver(); };
 }
 function openMenu(k, legal) {
@@ -1354,9 +1285,9 @@ function wireActs(root, pre = '') {
   if (!root) return;
   const shut = () => { if (pre) closeModal(); };
   const one = sel => root.querySelector('#' + actId(pre, sel));
-  $$('.pacts [data-key]', root).forEach(b => b.onclick = () => { const d = mineNow().find(x => G.descKey(x) === b.dataset.key); if (d && !busy) { shut(); human(d); } else SND.play('error_denied'); });
-  $$(`#${actId(pre, 'pActs')} [data-a]`, root).forEach(b => b.onclick = () => { if (busy) return; SND.play('button_click'); shut(); ab = ab?.type === b.dataset.a ? null : { type: b.dataset.a, from: null, to: null, n: null, key: null }; setTab(ab ? 'build' : 'table'); render(); });
-  $$(`#${actId(pre, 'pActs')} [data-menu]`, root).forEach(b => b.onclick = () => { if (busy) return; shut(); openMenu(b.dataset.menu, mineNow()); });
+  $$('.pacts [data-key]', root).forEach(b => b.onclick = () => { const d = mineNow().find(x => G.descKey(x) === b.dataset.key); if (d && !C.busy) { shut(); human(d); } else SND.play('error_denied'); });
+  $$(`#${actId(pre, 'pActs')} [data-a]`, root).forEach(b => b.onclick = () => { if (C.busy) return; SND.play('button_click'); shut(); ab = ab?.type === b.dataset.a ? null : { type: b.dataset.a, from: null, to: null, n: null, key: null }; setTab(ab ? 'build' : 'table'); render(); });
+  $$(`#${actId(pre, 'pActs')} [data-menu]`, root).forEach(b => b.onclick = () => { if (C.busy) return; shut(); openMenu(b.dataset.menu, mineNow()); });
   const ba = one('bAsk'); if (ba) ba.onclick = () => { shut(); askPeek = false; renderAsk(mineNow()); };
   const gm = one('genMove'); if (gm) gm.onclick = () => { SND.play('button_click'); shut(); openGenMove(); };
   const sl = one('panelSell'); if (sl) sl.onclick = () => { SND.play('button_click'); shut(); openSell(); };
@@ -1367,10 +1298,10 @@ function panelActsHtml(pid, pre = '') {
   if (!gv && whoActs(s) !== pid) return '';
   const g = gv ? actsGate(pid) : null; const legal = gv ? g.legal : mineNow();
   const b = []; const off = ` disabled title="${attr(g?.why || 'No roll or draw is due for this player now.')}"`;
-  if (f?.kind === 'roll' && f.purpose !== 'battleRound' && (gv || f.purpose !== 'loyalty')) for (const d of legal.filter(x => x.type === 'ROLL')) b.push(`<button class="btn sm gold prollbtn" data-key="${attr(G.descKey(d))}"${busy ? ' disabled' : ''}>🎲 ${esc(d.label)}</button>`);
+  if (f?.kind === 'roll' && f.purpose !== 'battleRound' && (gv || f.purpose !== 'loyalty')) for (const d of legal.filter(x => x.type === 'ROLL')) b.push(`<button class="btn sm gold prollbtn" data-key="${attr(G.descKey(d))}"${C.busy ? ' disabled' : ''}>🎲 ${esc(d.label)}</button>`);
   if (gv && !b.length) b.push(`<button class="btn sm prollbtn"${off}>🎲 Roll</button>`);   // v29: always shown in the popup, greyed when no roll is due
   const nr = b.length;
-  if (f?.kind === 'draw') for (const d of legal.filter(x => x.type === 'DRAW_CARD')) b.push(`<button class="btn sm gold drawbtn" data-key="${attr(G.descKey(d))}"${busy ? ' disabled' : ''}>🂠 ${esc(d.label)}</button>`);
+  if (f?.kind === 'draw') for (const d of legal.filter(x => x.type === 'DRAW_CARD')) b.push(`<button class="btn sm gold drawbtn" data-key="${attr(G.descKey(d))}"${C.busy ? ' disabled' : ''}>🂠 ${esc(d.label)}</button>`);
   if (gv && b.length === nr) b.push(`<button class="btn sm drawbtn"${off}>🂠 Draw card</button>`);
   return b.length ? `<div class="pacts${gv ? ' gvrd' : ''}">${b.join('')}</div>` : '';
 }
@@ -1382,7 +1313,7 @@ function turnActsHtml(pid, pre = '') {
   const grey = why => pre ? greyActsHtml(pre, why) : '';
   if (s.phase !== 'turn' || w !== pid) return grey(actsGate(pid).why || 'Not this player\'s turn.');
   const legal = pre ? actsGate(pid).legal : mineNow(); if (!legal.length) return grey(actsGate(pid).why);
-  const dis = busy ? ' disabled' : '';
+  const dis = C.busy ? ' disabled' : '';
   if (f) return OWN_UI.includes(f.kind) && !(f.kind === 'chooseBattleCards' && f.role === 'defender') ? grey(f.kind === 'roll' ? 'Roll first.' : f.kind === 'draw' ? 'Draw first.' : 'Finish the current step first.') : `<div class="pacts turn" id="${I('pActs')}"><button class="btn sm gold wide" id="${I('bAsk')}"${dis}>${esc(G.frameTitle(s, data))}…</button></div>`;
   const c = G.categorize(legal); const b = [];
   const none = why => ` disabled title="${attr(why)}"`;   // v29: the popup shows every button, greyed when it has nothing to do now
@@ -1474,7 +1405,7 @@ function renderMap(legal) {
   else if (builder) $('#arrows').innerHTML = '';
 }
 function tokenClick(id) {
-  if (busy) return;
+  if (C.busy) return;
   const s = st(); const legal = mineNow(); const f = topFrame(s);
   if (ab && !f) {
     const tree = G.builderTree(legal, ab.type); const dests = tree[ab.from] ?? {};
@@ -1555,7 +1486,7 @@ function renderDecks(legal) {
   }
 }
 function renderHand(legal) {
-  const s = st(); const h = G.handFor(s, data, viewer);
+  const s = st(); const h = G.handFor(s, data, C.viewer);
   const body = $('#handBody');
   const plays = legal.filter(d => (d.type === 'PLAY_CARD' || d.type === 'USE_SAVED_RESOURCE') && d.action.cardUid);   // batch 5 item 6: a saved Road / Wall is playable from its tile
   if (!h.owner) {
@@ -1579,7 +1510,7 @@ function renderHand(legal) {
  *  no-target card plays at once, a saved Road / Wall card opens the Build screen on "where"). The view closes by itself after 8 s,
  *  on Close, or on a click anywhere outside it; any click inside it keeps it up. */
 function openCardView(uid) {
-  const s = st(); const legal = mineNow(); const owner = G.handFor(s, data, viewer).owner;
+  const s = st(); const legal = mineNow(); const owner = G.handFor(s, data, C.viewer).owner;
   const c = G.cardView(data, s.cards[uid].def, uid); const pv = G.cardPlayView(s, data, legal, uid);
   const sell = legal.find(d => d.type === 'SELL_CARD' && d.action.cardUid === uid);
   const play = pv.mode === 'targets' ? `<button class="btn gold" id="playThis" data-mode="targets">Play ${esc(c.name)}: choose the target…</button>`
@@ -1587,7 +1518,7 @@ function openCardView(uid) {
     : pv.mode === 'build' ? `<button class="btn gold" id="playThis" data-mode="build" data-piece="${pv.piece}">Use this ${esc(c.name)} card now (free): choose where…</button>`
     : `<p class="small whynot" id="cardWhy">${esc((owner && G.cardBlockReason(s, data, owner, uid)) ?? (c.battle ? "Can't play now: commit it in a battle (18.i)." : pv.reason ?? "Can't play now."))}</p>`;
   let left = CARD_VIEW_MS / 1000;
-  const p = openModal(`${whoBar(owner ?? viewer, 'holds this card in hand')}<div class="cardbig"><img src="${img(c.art)}" alt=""></div><div class="txt" id="cardView" data-uid="${uid}"><h2>${esc(c.name)}</h2>${c.battle ? `<span class="bclabel">${G.BATTLE_LABEL}</span>` : ''}<p>${esc(c.text)}</p>${play}${sell ? `<button class="btn" id="sellThis" data-key="${attr(G.descKey(sell))}">Sell it for ${data.rules.sellCard?.gold ?? 2} Gold (free)</button>` : ''}<button class="btn" data-close id="cvClose">Close</button><p class="small cvtimer" id="cvTimer">Closes by itself in ${left} s, or click anywhere outside the card.</p></div>`, { autoMs: CARD_VIEW_MS, cls: 'cardview' });
+  const p = openModal(`${whoBar(owner ?? C.viewer, 'holds this card in hand')}<div class="cardbig"><img src="${img(c.art)}" alt=""></div><div class="txt" id="cardView" data-uid="${uid}"><h2>${esc(c.name)}</h2>${c.battle ? `<span class="bclabel">${G.BATTLE_LABEL}</span>` : ''}<p>${esc(c.text)}</p>${play}${sell ? `<button class="btn" id="sellThis" data-key="${attr(G.descKey(sell))}">Sell it for ${data.rules.sellCard?.gold ?? 2} Gold (free)</button>` : ''}<button class="btn" data-close id="cvClose">Close</button><p class="small cvtimer" id="cvTimer">Closes by itself in ${left} s, or click anywhere outside the card.</p></div>`, { autoMs: CARD_VIEW_MS, cls: 'cardview' });
   const tick = setInterval(() => { left -= 1; const t = $('#cvTimer'); if (!t || left < 0) { clearInterval(tick); return; } t.textContent = `Closes by itself in ${left} s, or click anywhere outside the card.`; }, 1000);
   p.then(() => clearInterval(tick));
   const pt = $('#playThis');
@@ -1600,7 +1531,7 @@ function openCardView(uid) {
   const sb = $('#sellThis'); if (sb) sb.onclick = () => { closeModal(); SND.play('gold_gain'); human(sell); };
 }
 function renderLog() {
-  $('#log').innerHTML = G.logFor(st(), data, 150, viewer).map(l => `<li class="${l.cls}">${esc(l.text)}${l.rule ? `<span class="r">${esc(l.rule)}</span>` : ''}</li>`).join('');
+  $('#log').innerHTML = G.logFor(st(), data, 150, C.viewer).map(l => `<li class="${l.cls}">${esc(l.text)}${l.rule ? `<span class="r">${esc(l.rule)}</span>` : ''}</li>`).join('');
 }
 
 // ------------------------------------------------------------------ builder (attack / ally / move, then Borrow, Battle cards, perk)
@@ -1686,7 +1617,7 @@ function renderBuilder(legal) {
     const d = legal.find(x => G.descKey(x) === b.dataset.key); if (!d) { SND.play('error_denied'); return; }
     const r = $(`#pane-build input[data-range-for="${CSS.escape(b.dataset.key)}"]`);
     if (!f && ab?.type === 'ATTACK' && d.type === 'ATTACK') {     // items 3 and 5: borrow and Scipio's perk travel with the ATTACK itself
-      if (busy) return; SND.play('button_click');
+      if (C.busy) return; SND.play('button_click');
       const act = { ...G.withValue(d, r ? +r.value : d.range.max) };
       if ($('#abB')) act.borrow = +$('#abB').value; else act.borrow = 0;
       if (ab.perk && act.withGeneral) act.perk = ab.perk;
@@ -1713,7 +1644,7 @@ function wireCardChecks(root, legal, after) {
 }
 function renderBattleCtl(legal) {
   const f = topFrame(st()); let h = '';
-  if (!busy && st().battle && f && ((f.kind === 'roll' && (f.purpose === 'battleRound' || f.purpose === 'loyalty')) || f.kind === 'battleContinue')) {
+  if (!C.busy && st().battle && f && ((f.kind === 'roll' && (f.purpose === 'battleRound' || f.purpose === 'loyalty')) || f.kind === 'battleContinue')) {
     h = legal.map(d => `<button class="btn sm ${d.type === 'BATTLE_RETREAT' ? '' : 'gold'}" data-key="${attr(G.descKey(d))}">${esc(d.label)}</button>`).join('');
     if (legal.length && st().battle) openBattlePop();
   }
@@ -1727,7 +1658,7 @@ let askFrame = null;
 const OWN_UI = ['roll', 'draw', 'battleContinue', ...BUILDER_FRAMES];
 function renderAsk(legal) {
   const s = st(); const f = topFrame(s); const ov = $('#ovAsk'); const box = $('#askBox');
-  const need = f && legal.length && !busy && !(OWN_UI.includes(f.kind) && !(f.kind === 'chooseBattleCards' && f.role === 'defender'));
+  const need = f && legal.length && !C.busy && !(OWN_UI.includes(f.kind) && !(f.kind === 'chooseBattleCards' && f.role === 'defender'));
   if (!need) { ov.classList.remove('on', 'peek'); box.innerHTML = ''; return; }
   if (askFrame !== f.id) { askFrame = f.id; askPeek = false; }   // a new prompt always opens in full
   const w = whoActs(s);
@@ -1764,18 +1695,14 @@ function applyTabsHidden() {
   b.textContent = tabsHidden ? '▴ Show Provinces / Battle' : '▾ Hide'; b.setAttribute('aria-pressed', tabsHidden ? 'true' : 'false');
   b.title = tabsHidden ? 'Show the Provinces / Battle section again' : 'Hide the Provinces / Battle section: the map gets the room';
 }
-function setTabsHidden(h) { tabsHidden = !!h; try { localStorage.setItem('imperator.tabsHidden', tabsHidden ? '1' : '0'); } catch { /* */ } applyTabsHidden(); if (S) renderMap(mineNow()); }
+function setTabsHidden(h) { tabsHidden = !!h; try { localStorage.setItem('imperator.tabsHidden', tabsHidden ? '1' : '0'); } catch { /* */ } applyTabsHidden(); if (C.S) renderMap(mineNow()); }
 function setTab(t) { tab = t; document.body.classList.toggle('battletab', t === 'battle' || t === 'build'); document.body.classList.toggle('tabforce', t === 'build'); $$('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); $$('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + t)); }
 
 // ------------------------------------------------------------------ save / load / game over
-/** M14: a host's save keeps the room (code, seats, guest tokens, the seed salt), so "Resume online game" can reopen it. */
-const withOnline = o => (NET?.role === 'host' && NET.me && NET.room.started ? { ...o, online: { code: NET.code, me: NET.me, salt: NET.salt, room: NET.room.snapshot() } } : o);
-const makeSaveNow = kind => withOnline(G.makeSave(S, { appVersion: uiLabel, kind }));
-function autosave() { if (!S || NET?.role === 'guest') return; try { localStorage.setItem('imperator.autosave', JSON.stringify(makeSaveNow('autosave'))); } catch (e) { console.warn('autosave failed', e.message); } }
 function download(name, text) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = name; document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); }
 function saveMenu() {
-  if (!S) { toast('No game to save yet'); return; }
-  openModal(`<div class="ask" style="display:flex;flex-direction:column;gap:8px;min-width:380px"><h2>Save game</h2><button class="btn gold" id="svSlot">Save in this browser</button><button class="btn" id="svFile">Export a JSON file</button><p class="small">The file holds everything, hidden hands included: keep it for yourself, do not share it mid-game. The game also autosaves after every move.${NET?.role === 'host' ? ' An online game\'s save also keeps the room and your friends\' seats: load it and choose "Resume online" to reopen the room.' : ''}</p><button class="btn" data-close>Close</button></div>`);
+  if (!C.S) { toast('No game to save yet'); return; }
+  openModal(`<div class="ask" style="display:flex;flex-direction:column;gap:8px;min-width:380px"><h2>Save game</h2><button class="btn gold" id="svSlot">Save in this browser</button><button class="btn" id="svFile">Export a JSON file</button><p class="small">The file holds everything, hidden hands included: keep it for yourself, do not share it mid-game. The game also autosaves after every move.${C.NET?.role === 'host' ? ' An online game\'s save also keeps the room and your friends\' seats: load it and choose "Resume online" to reopen the room.' : ''}</p><button class="btn" data-close>Close</button></div>`);
   $('#svSlot').onclick = () => { try { localStorage.setItem('imperator.save.slot1', JSON.stringify(makeSaveNow('slot'))); toast('Saved in this browser'); SND.play('card_play'); closeModal(); } catch (e) { toast('Could not save: ' + e.message); } };
   $('#svFile').onclick = () => { download(G.saveFileName(st()), JSON.stringify(makeSaveNow('file'))); toast('Save file exported'); closeModal(); };
 }
@@ -1800,9 +1727,9 @@ function loadFrom(obj, { local = false } = {}) {
   }
   const show = m => { const el = $('#ldErr') ?? (document.body.dataset.screen === 'setup' ? $('#setupErrors') : null); if (el) el.textContent = m; else toast(m); };
   let ns; try { ns = G.readSave(obj, data); } catch (e) { show(e.message); return false; }
-  if (NET) { netLeave(); playWhere = 'local'; }   // M11: a loaded save is played on this computer
-  const prev = S; clearTimeout(aiTimer); S = ns; closeModal();
-  try { enterGame(); } catch (e) { console.warn('load', e); S = prev; if (prev) { render(); schedule(); } else renderSetup(); show('This save could not be shown by this build: ' + e.message + ' (the file itself is not changed).'); return false; }
+  if (C.NET) { netLeave(); playWhere = 'local'; }   // M11: a loaded save is played on this computer
+  const prev = C.S; clearTimeout(C.aiTimer); C.S = ns; closeModal();
+  try { enterGame(); } catch (e) { console.warn('load', e); C.S = prev; if (prev) { render(); schedule(); } else renderSetup(); show('This save could not be shown by this build: ' + e.message + ' (the file itself is not changed).'); return false; }
   toast('Game loaded'); SND.play('deck_shuffle'); return true;
 }
 function showGameOver() {
@@ -1813,29 +1740,29 @@ function showGameOver() {
   const ov = $('#ovOver');
   ov.innerHTML = `<h1>IMPERATOR!</h1><div style="font-size:1.6em"><b style="color:var(--${col(w.id)});background:#f3e7c4;padding:0 10px;border-radius:6px" id="winnerName">${esc(w.name)}</b> wins${w.prestige >= data.rules.winPrestige ? ` with ${w.prestige} Prestige` : ' as the last player standing'} on turn ${s.turn.number}.</div>
     <table id="finalTable"><tr><th>Player</th><th>Seat</th><th>Prestige</th><th>Provinces</th><th>Troops</th><th>Gold</th></tr>${rows}</table>
-    <div class="row"><button class="btn gold big" id="ovNew">New game</button><button class="btn" id="ovLook">Look at the board</button>${NET?.role === 'guest' ? '' : '<button class="btn" id="ovExport">Export the save</button>'}</div>`;
+    <div class="row"><button class="btn gold big" id="ovNew">New game</button><button class="btn" id="ovLook">Look at the board</button>${C.NET?.role === 'guest' ? '' : '<button class="btn" id="ovExport">Export the save</button>'}</div>`;
   ov.classList.add('on'); document.body.dataset.over = s.winner;
   $('#ovNew').onclick = () => { ov.classList.remove('on'); toSetup(); };
   $('#ovLook').onclick = () => ov.classList.remove('on');
-  if ($('#ovExport')) $('#ovExport').onclick = () => download(G.saveFileName(s), JSON.stringify(G.makeSave(S, { appVersion: uiLabel, kind: 'final' })));
+  if ($('#ovExport')) $('#ovExport').onclick = () => download(G.saveFileName(s), JSON.stringify(G.makeSave(C.S, { appVersion: C.uiLabel, kind: 'final' })));
 }
-function toSetup() { if (NET) { netLeave(); playWhere = 'local'; } clearTimeout(aiTimer); $('#toast').classList.remove('on'); S = null; document.body.dataset.over = ''; ['#ovOver', '#ovAsk', '#ovModal'].forEach(x => $(x).classList.remove('on')); renderSetup(); }
+function toSetup() { if (C.NET) { netLeave(); playWhere = 'local'; } clearTimeout(C.aiTimer); $('#toast').classList.remove('on'); C.S = null; document.body.dataset.over = ''; ['#ovOver', '#ovAsk', '#ovModal'].forEach(x => $(x).classList.remove('on')); renderSetup(); }
 
 // ------------------------------------------------------------------ static wiring
 function wireStatic() {
   $('#bSound').onclick = () => SND.toggle();
-  $('#speed').onchange = e => { speed = Number(e.target.value) || 1; try { localStorage.setItem('imperator.speed', String(speed)); } catch { /* */ } };
+  $('#speed').onchange = e => { C.speed = Number(e.target.value) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } };
   $('#bSave').onclick = saveMenu; $('#bLoad').onclick = loadMenu; $('#setupLoad').onclick = loadMenu;
-  $('#bNew').onclick = () => { if (!S || S && st().phase === 'finished' || window.confirm(NET?.role === 'guest' ? 'Leave this online game?' : NET ? 'Leave this online game? Your guests are disconnected (it stays in your autosave).' : 'Leave this game? It stays in the autosave.')) toSetup(); };
+  $('#bNew').onclick = () => { if (!C.S || C.S && st().phase === 'finished' || window.confirm(C.NET?.role === 'guest' ? 'Leave this online game?' : C.NET ? 'Leave this online game? Your guests are disconnected (it stays in your autosave).' : 'Leave this game? It stays in the autosave.')) toSetup(); };
   $$('#playWhere .segb').forEach(b => b.onclick = () => setPlayWhere(b.dataset.where));
   $('#hostCopy').onclick = () => { const t = $('#hostLink').value; navigator.clipboard?.writeText(t).then(() => toast('Link copied'), () => { $('#hostLink').select(); }); };
   $('#joinGo').onclick = joinGame;
   // M14: a closed or reloaded tab says goodbye, so the other side knows at once (a host: guests start reconnecting and wait
   // for "Resume online game"; a guest: its seat shows as away). The host's autosave already has the room.
-  window.addEventListener('pagehide', () => { if (!NET) return; try { if (NET.role === 'host') { autosave(); NET.room.close('HOST_LEFT'); } else NET.client.leave(); } catch { /* */ } });
+  window.addEventListener('pagehide', () => { if (!C.NET) return; try { if (C.NET.role === 'host') { autosave(); C.NET.room.close('HOST_LEFT'); } else C.NET.client.leave(); } catch { /* */ } });
   $('#joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinGame(); });
   try { $('#joinName').value = localStorage.getItem('imperator.online.name') || ''; } catch { /* */ }
-  const toggleHide = () => { hidden = !hidden; SND.play('card_flip'); if (S) renderHand(mineNow()); };
+  const toggleHide = () => { hidden = !hidden; SND.play('card_flip'); if (C.S) renderHand(mineNow()); };
   $('#bHide').onclick = toggleHide; $('#bHide2').onclick = toggleHide; $('#bReveal').onclick = toggleHide;
   $('#addSeat').onclick = () => setSeatCount(3);
   $('#delSeat').onclick = () => setSeatCount(2);
@@ -1851,10 +1778,10 @@ function wireStatic() {
   $('#tabsToggle').onclick = () => { SND.play('button_click'); setTabsHidden(!tabsHidden); };
   applyTabsHidden();
   $$('.deck[data-deck]').forEach(d => d.onclick = () => { const k = d.dataset.key; const x = k && mineNow().find(y => G.descKey(y) === k); if (x) human(x); else { SND.play('error_denied'); toast(notDueText('draw from this deck')); } });
-  $('#mapwrap').addEventListener('click', e => { if (!e.target.closest('.info') && !e.target.closest('.tok') && !e.target.closest('.maptools')) { selected = null; hideInfo(); if (S) renderMap(mineNow()); } });
+  $('#mapwrap').addEventListener('click', e => { if (!e.target.closest('.info') && !e.target.closest('.tok') && !e.target.closest('.maptools')) { selected = null; hideInfo(); if (C.S) renderMap(mineNow()); } });
   $('#chkLinks').onchange = e => $('#links').classList.toggle('on', e.target.checked);
-  $('#chkNames').onchange = () => S && renderMap(mineNow());
-  document.addEventListener('visibilitychange', () => { if (hostHidden() && NET.inbox.length) { if (modalDone) closeModal(); if (bpDone) closeBattlePop(); } });   // v26.1
+  $('#chkNames').onchange = () => C.S && renderMap(mineNow());
+  document.addEventListener('visibilitychange', () => { if (hostHidden() && C.NET.inbox.length) { if (modalDone) closeModal(); if (bpDone) closeBattlePop(); } });   // v26.1
   document.addEventListener('keydown', e => {
     if (e.target.closest && e.target.closest('input,select,textarea')) return;
     if (e.key === 'm' || e.key === 'M') SND.toggle();
@@ -1864,15 +1791,15 @@ function wireStatic() {
 
 // test / debugging hook: read-only views plus the AI's suggestion for the seat that must act (the UI test clicks what it suggests)
 window.__imperator = {
-  state: () => (S ? G.stateOf(S) : null), view: () => (S ? st() : null), busy: () => busy || autoRoll, viewer: () => viewer, legal: () => (S ? mineNow() : []),
-  suggest: () => (S && NET?.role !== 'guest' ? G.aiMove(S) : null), play: a => { apply(a); return null; },   // M11: does not wait for the animations
-  net: () => (NET ? { role: NET.role, code: NET.code, me: NET.me, pending: !!NET.pending, seats: NET.role === 'host' ? NET.room.lobby().seats : NET.client.lobby?.seats ?? [], queued: NET.role === 'host' ? NET.inbox.length : NET.q.length, status: NET.role === 'guest' ? NET.client.status : 'host', hostAway: NET.role === 'guest' ? NET.client.hostAway : false, ai: NET.role === 'guest' ? NET.client.ai : false, reconnects: NET.role === 'guest' ? NET.client.reconnects : 0, statuses: NET.statuses ?? [], token: NET.role === 'guest' ? NET.client.token : null,
-    seq: NET.role === 'guest' ? NET.client.seq : S?.steps.length ?? null, shown: NET.shown ?? null, resyncs: NET.role === 'guest' ? NET.client.resyncs : NET.room.resyncs ?? 0, resynced: NET.resynced ?? 0 } : null),
+  state: () => (C.S ? G.stateOf(C.S) : null), view: () => (C.S ? st() : null), busy: () => C.busy || C.autoRoll, viewer: () => C.viewer, legal: () => (C.S ? mineNow() : []),
+  suggest: () => (C.S && C.NET?.role !== 'guest' ? G.aiMove(C.S) : null), play: a => { apply(a); return null; },   // M11: does not wait for the animations
+  net: () => (C.NET ? { role: C.NET.role, code: C.NET.code, me: C.NET.me, pending: !!C.NET.pending, seats: C.NET.role === 'host' ? C.NET.room.lobby().seats : C.NET.client.lobby?.seats ?? [], queued: C.NET.role === 'host' ? C.NET.inbox.length : C.NET.q.length, status: C.NET.role === 'guest' ? C.NET.client.status : 'host', hostAway: C.NET.role === 'guest' ? C.NET.client.hostAway : false, ai: C.NET.role === 'guest' ? C.NET.client.ai : false, reconnects: C.NET.role === 'guest' ? C.NET.client.reconnects : 0, statuses: C.NET.statuses ?? [], token: C.NET.role === 'guest' ? C.NET.client.token : null,
+    seq: C.NET.role === 'guest' ? C.NET.client.seq : C.S?.steps.length ?? null, shown: C.NET.shown ?? null, resyncs: C.NET.role === 'guest' ? C.NET.client.resyncs : C.NET.room.resyncs ?? 0, resynced: C.NET.resynced ?? 0 } : null),
   // M14 test hooks: a guest's link drops (as if the network went away); a host that stops pinging
-  netDrop: () => { const c = NET?.role === 'guest' && NET.client; if (c) { try { c.transport.close(); } catch { /* */ } c.linkLost('LINK_LOST'); } }, netQuiet: on => { if (NET?.role === 'host') NET.quiet = !!on; },
+  netDrop: () => { const c = C.NET?.role === 'guest' && C.NET.client; if (c) { try { c.transport.close(); } catch { /* */ } c.linkLost('LINK_LOST'); } }, netQuiet: on => { if (C.NET?.role === 'host') C.NET.quiet = !!on; },
   // v26.1 test hooks: the host loses its next k updates (a message that never arrives); a guest page fails to apply its next update
-  netLose: k => { if (NET?.role !== 'host') return; const t = NET.room.transport; t._send ??= t.send; let left = k; t.send = (p, m) => { if (m?.t === 'update' && left > 0) { left--; return; } t._send(p, m); }; },
-  netBreak: () => { if (NET?.role === 'guest') NET.throwOnce = true; }, keyOf: a => { const d = S && G.findDesc(mineNow(), a); return d ? G.descKey(d) : null; },
-  sounds: () => SND.played.slice(-80), label: () => uiLabel,
+  netLose: k => { if (C.NET?.role !== 'host') return; const t = C.NET.room.transport; t._send ??= t.send; let left = k; t.send = (p, m) => { if (m?.t === 'update' && left > 0) { left--; return; } t._send(p, m); }; },
+  netBreak: () => { if (C.NET?.role === 'guest') C.NET.throwOnce = true; }, keyOf: a => { const d = C.S && G.findDesc(mineNow(), a); return d ? G.descKey(d) : null; },
+  sounds: () => SND.played.slice(-80), label: () => C.uiLabel,
 };
 boot();

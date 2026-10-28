@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<!--uidetect:start (the same rule as src/ui/detect.js: phone -> mobile.html, everything else -> index.html; ?join= / ?net= kept)--><script>
+(function (page) { try {
+  var n = navigator, l = location, ua = n.userAgent || '', K = 'imperator.ui', st = null, m = /[?&]ui=(mobile|desktop|auto)\b/.exec(l.search), q = m ? m[1] : null;
+  try { st = localStorage.getItem(K); if (q === 'auto') localStorage.removeItem(K); else if (q) localStorage.setItem(K, q); } catch (e) { /* private mode */ }
+  var f = q === 'auto' ? null : q || (st === 'mobile' || st === 'desktop' ? st : null);
+  var pad = /iPad/.test(ua) || (/Macintosh/.test(ua) && n.maxTouchPoints > 1);
+  var coarse = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches), touch = coarse || n.maxTouchPoints > 0;
+  var phone = !pad && (/iPhone|iPod/.test(ua) || (/Android/.test(ua) && /Mobile/.test(ua)) || !!(n.userAgentData && n.userAgentData.mobile) || (coarse && Math.min(screen.width, screen.height) < 600));
+  var ui = f || (phone ? 'mobile' : 'desktop');
+  window.__imperatorUI = { ui: ui, forced: !!f, phone: phone, touch: touch, page: page };
+  if ((ui === 'mobile') !== (page === 'mobile')) {
+    var rest = l.search.replace(/^\?/, '').split('&').filter(function (x) { return x && !/^ui=/.test(x); }).join('&');
+    l.replace((ui === 'mobile' ? 'mobile.html' : 'index.html') + (rest ? '?' + rest : '') + l.hash);
+  } else if (page === 'index' && touch) document.addEventListener('DOMContentLoaded', function () {   // v30: touch screens only (Q3)
+    var keep = l.search.replace(/^\?/, '').split('&').filter(function (x) { return x && !/^ui=/.test(x); }).join('&'), d = document, b = d.createElement('div');
+    b.id = 'uiSwitch'; b.innerHTML = '<a id="uiMobileLink" href="mobile.html?ui=mobile' + (keep ? '&' + keep : '') + l.hash + '">\ud83d\udcf1 Use mobile view</a>' + (f ? ' \u00b7 <a id="uiAutoLink" href="index.html?ui=auto' + (keep ? '&' + keep : '') + l.hash + '">Automatic</a>' : '');
+    b.setAttribute('style', 'position:fixed;left:10px;bottom:10px;z-index:50;font:14px sans-serif;background:#f3e7c4;border:1px solid #8a6a1f;border-radius:10px;padding:10px 12px');
+    var c = d.createElement('style'); c.textContent = 'body:not(.screen-setup) #uiSwitch{display:none}#uiSwitch a{color:#5a3d0c;font-weight:700}';
+    d.head.appendChild(c); d.body.appendChild(b);
+  });
+} catch (e) { /* never block the page */ } })('mobile');
+</script><!--uidetect:end-->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="theme-color" content="#17120f">
+<title>Imperator · mobile</title>
+<link rel="icon" href="data:,">
+<!--importmap:start (tools/stamp-build.mjs: cache-busting, do not edit)--><script type="importmap">
+{
+ "imports": {
+  "./src/engine/actions.js": "./src/engine/actions.js?v=M18-202610281028a",
+  "./src/engine/ai.js": "./src/engine/ai.js?v=M18-202610281028a",
+  "./src/engine/aiConfig.js": "./src/engine/aiConfig.js?v=M18-202610281028a",
+  "./src/engine/apply.js": "./src/engine/apply.js?v=M18-202610281028a",
+  "./src/engine/battle.js": "./src/engine/battle.js?v=M18-202610281028a",
+  "./src/engine/cards.js": "./src/engine/cards.js?v=M18-202610281028a",
+  "./src/engine/core.js": "./src/engine/core.js?v=M18-202610281028a",
+  "./src/engine/data.js": "./src/engine/data.js?v=M18-202610281028a",
+  "./src/engine/dataNode.js": "./src/engine/dataNode.js?v=M18-202610281028a",
+  "./src/engine/displeased.js": "./src/engine/displeased.js?v=M18-202610281028a",
+  "./src/engine/index.js": "./src/engine/index.js?v=M18-202610281028a",
+  "./src/engine/legal.js": "./src/engine/legal.js?v=M18-202610281028a",
+  "./src/engine/odds.js": "./src/engine/odds.js?v=M18-202610281028a",
+  "./src/engine/registry.js": "./src/engine/registry.js?v=M18-202610281028a",
+  "./src/engine/rng.js": "./src/engine/rng.js?v=M18-202610281028a",
+  "./src/engine/selectors.js": "./src/engine/selectors.js?v=M18-202610281028a",
+  "./src/engine/setup.js": "./src/engine/setup.js?v=M18-202610281028a",
+  "./src/engine/state.js": "./src/engine/state.js?v=M18-202610281028a",
+  "./src/engine/turn.js": "./src/engine/turn.js?v=M18-202610281028a",
+  "./src/engine/view.js": "./src/engine/view.js?v=M18-202610281028a",
+  "./src/net/guest.js": "./src/net/guest.js?v=M18-202610281028a",
+  "./src/net/host.js": "./src/net/host.js?v=M18-202610281028a",
+  "./src/net/protocol.js": "./src/net/protocol.js?v=M18-202610281028a",
+  "./src/net/transport.js": "./src/net/transport.js?v=M18-202610281028a",
+  "./src/ui-mobile/app.js": "./src/ui-mobile/app.js?v=M18-202610281028a",
+  "./src/ui-mobile/map.js": "./src/ui-mobile/map.js?v=M18-202610281028a",
+  "./src/ui/assets.js": "./src/ui/assets.js?v=M18-202610281028a",
+  "./src/ui/buildLabel.js": "./src/ui/buildLabel.js?v=M18-202610281028a",
+  "./src/ui/console.js": "./src/ui/console.js?v=M18-202610281028a",
+  "./src/ui/consoleModel.js": "./src/ui/consoleModel.js?v=M18-202610281028a",
+  "./src/ui/core/controller.js": "./src/ui/core/controller.js?v=M18-202610281028a",
+  "./src/ui/detect.js": "./src/ui/detect.js?v=M18-202610281028a",
+  "./src/ui/game/app.js": "./src/ui/game/app.js?v=M18-202610281028a",
+  "./src/ui/game/model.js": "./src/ui/game/model.js?v=M18-202610281028a",
+  "./src/ui/game/sound.js": "./src/ui/game/sound.js?v=M18-202610281028a",
+  "./src/ui/loadData.js": "./src/ui/loadData.js?v=M18-202610281028a",
+  "./src/ui/main.js": "./src/ui/main.js?v=M18-202610281028a",
+  "./src/ui/viewModel.js": "./src/ui/viewModel.js?v=M18-202610281028a",
+  "./src/vendor/peerjs.min.js": "./src/vendor/peerjs.min.js?v=M18-202610281028a"
+ }
+}
+</script><!--importmap:end-->
+<link rel="stylesheet" href="src/ui-mobile/mobile.css?v=M18-202610281028a">
+</head>
+<body data-screen="boot" data-ui="mobile">
+<!-- M18 / v30 (PLAN-mobile.md): the phone page. The same engine, rules data, AI and controller (src/ui/core/controller.js) as the
+     desktop page (index.html); only the screen is different. index.html never loads anything from src/ui-mobile/. -->
+<div class="st" id="start" hidden></div>
+<div class="app" id="app" hidden>
+  <div class="lcol">
+    <header class="top">
+      <button class="iconbtn" id="bMenu" aria-label="Menu">☰</button>
+      <div class="brand">IMPERATOR<small id="topInfo">v30</small></div>
+      <div class="spacer"></div>
+      <button class="diechip" id="dieChip" aria-label="The last roll"><img id="dieImg" alt="">&nbsp;<b id="dieVal">–</b></button>
+    </header>
+    <div class="players" id="players"></div>
+    <button class="logpeek" id="bLog" aria-label="Open the game log"><span class="grab"></span><span class="txt" id="logLast"></span><span class="cnt">Log ▴</span></button>
+  </div>
+  <div class="mapwrap" id="mapwrap">
+    <div class="mapinner" id="mapinner"><img class="mapimg" id="mapImg" alt="Map" draggable="false"><div id="tokens"></div></div>
+    <div class="minimap" id="minimap"><i id="mmv"></i></div>
+    <div class="mapctl"><button id="zIn" aria-label="Zoom in">＋</button><button id="zOut" aria-label="Zoom out">－</button><button id="zFit" aria-label="Fit the whole map">⤢</button></div>
+    <div class="maphint" id="maphint">Pinch to zoom · drag to pan · tap a province</div>
+  </div>
+  <div class="rcol">
+    <div class="steps" id="steps"></div>
+    <div class="prompt" id="prompt"></div>
+    <div class="handmini" id="handmini"></div>
+    <div class="acts" id="acts"></div>
+  </div>
+</div>
+<div class="scrim" id="scrim"></div>
+<section class="sheet" id="sheet" role="dialog" aria-modal="true"></section>
+<div class="mtoast" id="toast" role="status"></div>
+<input type="file" id="importFile" accept=".json,application/json" hidden>
+<script type="module" src="src/ui-mobile/app.js?v=M18-202610281028a"></script>
+</body></html>

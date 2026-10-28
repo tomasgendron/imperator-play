@@ -2,51 +2,77 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!--uidetect:start (the same rule as src/ui/detect.js: phone -> mobile.html, everything else -> index.html; ?join= / ?net= kept)--><script>
+(function (page) { try {
+  var n = navigator, l = location, ua = n.userAgent || '', K = 'imperator.ui', st = null, m = /[?&]ui=(mobile|desktop|auto)\b/.exec(l.search), q = m ? m[1] : null;
+  try { st = localStorage.getItem(K); if (q === 'auto') localStorage.removeItem(K); else if (q) localStorage.setItem(K, q); } catch (e) { /* private mode */ }
+  var f = q === 'auto' ? null : q || (st === 'mobile' || st === 'desktop' ? st : null);
+  var pad = /iPad/.test(ua) || (/Macintosh/.test(ua) && n.maxTouchPoints > 1);
+  var coarse = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches), touch = coarse || n.maxTouchPoints > 0;
+  var phone = !pad && (/iPhone|iPod/.test(ua) || (/Android/.test(ua) && /Mobile/.test(ua)) || !!(n.userAgentData && n.userAgentData.mobile) || (coarse && Math.min(screen.width, screen.height) < 600));
+  var ui = f || (phone ? 'mobile' : 'desktop');
+  window.__imperatorUI = { ui: ui, forced: !!f, phone: phone, touch: touch, page: page };
+  if ((ui === 'mobile') !== (page === 'mobile')) {
+    var rest = l.search.replace(/^\?/, '').split('&').filter(function (x) { return x && !/^ui=/.test(x); }).join('&');
+    l.replace((ui === 'mobile' ? 'mobile.html' : 'index.html') + (rest ? '?' + rest : '') + l.hash);
+  } else if (page === 'index' && touch) document.addEventListener('DOMContentLoaded', function () {   // v30: touch screens only (Q3)
+    var keep = l.search.replace(/^\?/, '').split('&').filter(function (x) { return x && !/^ui=/.test(x); }).join('&'), d = document, b = d.createElement('div');
+    b.id = 'uiSwitch'; b.innerHTML = '<a id="uiMobileLink" href="mobile.html?ui=mobile' + (keep ? '&' + keep : '') + l.hash + '">\ud83d\udcf1 Use mobile view</a>' + (f ? ' \u00b7 <a id="uiAutoLink" href="index.html?ui=auto' + (keep ? '&' + keep : '') + l.hash + '">Automatic</a>' : '');
+    b.setAttribute('style', 'position:fixed;left:10px;bottom:10px;z-index:50;font:14px sans-serif;background:#f3e7c4;border:1px solid #8a6a1f;border-radius:10px;padding:10px 12px');
+    var c = d.createElement('style'); c.textContent = 'body:not(.screen-setup) #uiSwitch{display:none}#uiSwitch a{color:#5a3d0c;font-weight:700}';
+    d.head.appendChild(c); d.body.appendChild(b);
+  });
+} catch (e) { /* never block the page */ } })('index');
+</script><!--uidetect:end-->
 <title>Imperator</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
 <!--importmap:start (tools/stamp-build.mjs: cache-busting, do not edit)--><script type="importmap">
 {
  "imports": {
-  "./src/engine/actions.js": "./src/engine/actions.js?v=M17.1-20261027123p",
-  "./src/engine/ai.js": "./src/engine/ai.js?v=M17.1-20261027123p",
-  "./src/engine/aiConfig.js": "./src/engine/aiConfig.js?v=M17.1-20261027123p",
-  "./src/engine/apply.js": "./src/engine/apply.js?v=M17.1-20261027123p",
-  "./src/engine/battle.js": "./src/engine/battle.js?v=M17.1-20261027123p",
-  "./src/engine/cards.js": "./src/engine/cards.js?v=M17.1-20261027123p",
-  "./src/engine/core.js": "./src/engine/core.js?v=M17.1-20261027123p",
-  "./src/engine/data.js": "./src/engine/data.js?v=M17.1-20261027123p",
-  "./src/engine/dataNode.js": "./src/engine/dataNode.js?v=M17.1-20261027123p",
-  "./src/engine/displeased.js": "./src/engine/displeased.js?v=M17.1-20261027123p",
-  "./src/engine/index.js": "./src/engine/index.js?v=M17.1-20261027123p",
-  "./src/engine/legal.js": "./src/engine/legal.js?v=M17.1-20261027123p",
-  "./src/engine/odds.js": "./src/engine/odds.js?v=M17.1-20261027123p",
-  "./src/engine/registry.js": "./src/engine/registry.js?v=M17.1-20261027123p",
-  "./src/engine/rng.js": "./src/engine/rng.js?v=M17.1-20261027123p",
-  "./src/engine/selectors.js": "./src/engine/selectors.js?v=M17.1-20261027123p",
-  "./src/engine/setup.js": "./src/engine/setup.js?v=M17.1-20261027123p",
-  "./src/engine/state.js": "./src/engine/state.js?v=M17.1-20261027123p",
-  "./src/engine/turn.js": "./src/engine/turn.js?v=M17.1-20261027123p",
-  "./src/engine/view.js": "./src/engine/view.js?v=M17.1-20261027123p",
-  "./src/net/guest.js": "./src/net/guest.js?v=M17.1-20261027123p",
-  "./src/net/host.js": "./src/net/host.js?v=M17.1-20261027123p",
-  "./src/net/protocol.js": "./src/net/protocol.js?v=M17.1-20261027123p",
-  "./src/net/transport.js": "./src/net/transport.js?v=M17.1-20261027123p",
-  "./src/ui/assets.js": "./src/ui/assets.js?v=M17.1-20261027123p",
-  "./src/ui/buildLabel.js": "./src/ui/buildLabel.js?v=M17.1-20261027123p",
-  "./src/ui/console.js": "./src/ui/console.js?v=M17.1-20261027123p",
-  "./src/ui/consoleModel.js": "./src/ui/consoleModel.js?v=M17.1-20261027123p",
-  "./src/ui/game/app.js": "./src/ui/game/app.js?v=M17.1-20261027123p",
-  "./src/ui/game/model.js": "./src/ui/game/model.js?v=M17.1-20261027123p",
-  "./src/ui/game/sound.js": "./src/ui/game/sound.js?v=M17.1-20261027123p",
-  "./src/ui/loadData.js": "./src/ui/loadData.js?v=M17.1-20261027123p",
-  "./src/ui/main.js": "./src/ui/main.js?v=M17.1-20261027123p",
-  "./src/ui/viewModel.js": "./src/ui/viewModel.js?v=M17.1-20261027123p",
-  "./src/vendor/peerjs.min.js": "./src/vendor/peerjs.min.js?v=M17.1-20261027123p"
+  "./src/engine/actions.js": "./src/engine/actions.js?v=M18-202610281028a",
+  "./src/engine/ai.js": "./src/engine/ai.js?v=M18-202610281028a",
+  "./src/engine/aiConfig.js": "./src/engine/aiConfig.js?v=M18-202610281028a",
+  "./src/engine/apply.js": "./src/engine/apply.js?v=M18-202610281028a",
+  "./src/engine/battle.js": "./src/engine/battle.js?v=M18-202610281028a",
+  "./src/engine/cards.js": "./src/engine/cards.js?v=M18-202610281028a",
+  "./src/engine/core.js": "./src/engine/core.js?v=M18-202610281028a",
+  "./src/engine/data.js": "./src/engine/data.js?v=M18-202610281028a",
+  "./src/engine/dataNode.js": "./src/engine/dataNode.js?v=M18-202610281028a",
+  "./src/engine/displeased.js": "./src/engine/displeased.js?v=M18-202610281028a",
+  "./src/engine/index.js": "./src/engine/index.js?v=M18-202610281028a",
+  "./src/engine/legal.js": "./src/engine/legal.js?v=M18-202610281028a",
+  "./src/engine/odds.js": "./src/engine/odds.js?v=M18-202610281028a",
+  "./src/engine/registry.js": "./src/engine/registry.js?v=M18-202610281028a",
+  "./src/engine/rng.js": "./src/engine/rng.js?v=M18-202610281028a",
+  "./src/engine/selectors.js": "./src/engine/selectors.js?v=M18-202610281028a",
+  "./src/engine/setup.js": "./src/engine/setup.js?v=M18-202610281028a",
+  "./src/engine/state.js": "./src/engine/state.js?v=M18-202610281028a",
+  "./src/engine/turn.js": "./src/engine/turn.js?v=M18-202610281028a",
+  "./src/engine/view.js": "./src/engine/view.js?v=M18-202610281028a",
+  "./src/net/guest.js": "./src/net/guest.js?v=M18-202610281028a",
+  "./src/net/host.js": "./src/net/host.js?v=M18-202610281028a",
+  "./src/net/protocol.js": "./src/net/protocol.js?v=M18-202610281028a",
+  "./src/net/transport.js": "./src/net/transport.js?v=M18-202610281028a",
+  "./src/ui-mobile/app.js": "./src/ui-mobile/app.js?v=M18-202610281028a",
+  "./src/ui-mobile/map.js": "./src/ui-mobile/map.js?v=M18-202610281028a",
+  "./src/ui/assets.js": "./src/ui/assets.js?v=M18-202610281028a",
+  "./src/ui/buildLabel.js": "./src/ui/buildLabel.js?v=M18-202610281028a",
+  "./src/ui/console.js": "./src/ui/console.js?v=M18-202610281028a",
+  "./src/ui/consoleModel.js": "./src/ui/consoleModel.js?v=M18-202610281028a",
+  "./src/ui/core/controller.js": "./src/ui/core/controller.js?v=M18-202610281028a",
+  "./src/ui/detect.js": "./src/ui/detect.js?v=M18-202610281028a",
+  "./src/ui/game/app.js": "./src/ui/game/app.js?v=M18-202610281028a",
+  "./src/ui/game/model.js": "./src/ui/game/model.js?v=M18-202610281028a",
+  "./src/ui/game/sound.js": "./src/ui/game/sound.js?v=M18-202610281028a",
+  "./src/ui/loadData.js": "./src/ui/loadData.js?v=M18-202610281028a",
+  "./src/ui/main.js": "./src/ui/main.js?v=M18-202610281028a",
+  "./src/ui/viewModel.js": "./src/ui/viewModel.js?v=M18-202610281028a",
+  "./src/vendor/peerjs.min.js": "./src/vendor/peerjs.min.js?v=M18-202610281028a"
  }
 }
 </script><!--importmap:end-->
-<link rel="stylesheet" href="src/ui/game/game.css?v=M17.1-20261027123p">
+<link rel="stylesheet" href="src/ui/game/game.css?v=M18-202610281028a">
 </head>
 <body class="screen-setup">
 <!-- M5 game page: the approved mockup v12 look (mockup/mockup.template.html), wired to the engine by src/ui/game/app.js. -->
@@ -240,7 +266,7 @@
 })();
 </script>
 <noscript>Imperator needs JavaScript.</noscript>
-<script type="module" src="src/ui/game/app.js?v=M17.1-20261027123p"></script>
-<script type="module" src="src/ui/buildLabel.js?v=M17.1-20261027123p"></script>
+<script type="module" src="src/ui/game/app.js?v=M18-202610281028a"></script>
+<script type="module" src="src/ui/buildLabel.js?v=M18-202610281028a"></script>
 </body>
 </html>

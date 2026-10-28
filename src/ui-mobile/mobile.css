@@ -392,3 +392,27 @@ input,select,textarea{font-size:16px}   /* iOS Safari zooms into smaller inputs 
 .netbar input{min-height:var(--tap);width:8.5em;border-radius:8px;border:1px solid var(--line2);background:#00000060;color:var(--ink);padding:0 8px;text-transform:uppercase}
 .netbar .spin{display:inline-block;animation:nbspin 1.2s linear infinite}
 @keyframes nbspin{to{transform:rotate(360deg)}}
+
+/* ---------- v30.3: decks in the game, saves, the log view, menus, close tokens, safe areas, a slow phone ---------- */
+button.pchip{min-height:var(--tap);color:var(--ink)}
+.pchip small{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+#provBorders .pchip.tg{border-color:var(--gold2)}
+.svrow{display:flex;gap:6px;align-items:stretch}
+.svrow .arow{flex:1;min-width:0}
+.svrow .arow small{display:block;overflow-wrap:anywhere}
+.svrow .svdel{width:52px;height:auto;min-height:52px;border-radius:12px;background:var(--panel2);border:1px solid var(--line2);border-bottom-width:3px;flex:none}
+.arow:disabled{opacity:.5}
+.cardimg{flex:none;padding:0;border:0;background:none;min-width:var(--tap);min-height:var(--tap)}
+.cardimg img{display:block}
+.deckrow .deckmini{width:38px;height:56px}
+.loglist li.lt{position:sticky;top:-10px;z-index:1;background:#2a211b;color:var(--gold2);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;padding:6px 4px;border-bottom:1px solid var(--line2)}
+.seg.logf{overflow-x:auto;scrollbar-width:none;margin-bottom:6px;position:sticky;top:-10px;z-index:2}
+.seg.logf::-webkit-scrollbar{display:none}
+.seg.logf button{flex:1 0 auto;min-width:44px;padding:0 10px;font-size:12.5px}
+.menu .sec:first-child{margin-top:0}
+.menu .arow small{display:block}
+#whichList .arow{min-height:56px}
+.tok{contain:layout style}
+.mapctl button{backdrop-filter:none;background:#1b1512f0}
+@media (orientation:landscape){.sheet.pop{max-height:calc(100% - var(--sat) - 8px)}.sheet.side{top:var(--sat)}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}

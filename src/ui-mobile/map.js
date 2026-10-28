@@ -1,8 +1,12 @@
 // M18 / v30: the phone map (from the approved mockup): one finger pans, two fingers pinch-zoom about their midpoint, the buttons zoom
 // and fit; a zoom changes the map's pixel size (not a CSS scale), so the 44 px tokens stay 44 px and stay easy to tap. A minimap shows
 // where the view is. A drag of more than 8 px is a pan, not a tap (the token's click is swallowed).
-export function createMapView({ wrap, inner, mini, frame, aspect }) {
+// v30.3: onZoom(W) runs when the map's pixel width changes (the page spreads tokens that would touch); pointer moves are applied once
+// per frame (requestAnimationFrame), which keeps panning smooth on a slow phone; a drag never turns into a tap, on a token or not.
+export function createMapView({ wrap, inner, mini, frame, aspect, onZoom = null }) {
   const V = { W: 0, x: 0, y: 0, moved: false };
+  let lastW = 0, raf = 0;
+  const later = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; apply(); }); };
   const rect = () => wrap.getBoundingClientRect();
   const fitMin = () => { const r = rect(); return Math.min(r.width, r.height / aspect); };
   const maxW = () => Math.max(2600, fitMin() * 4);
@@ -17,6 +21,7 @@ export function createMapView({ wrap, inner, mini, frame, aspect }) {
     const mw = mini.clientWidth || 100, mh = mini.clientHeight || 56;
     frame.style.left = Math.max(0, -V.x / V.W * mw) + 'px'; frame.style.top = Math.max(0, -V.y / (V.W * aspect) * mh) + 'px';
     frame.style.width = Math.min(mw, r.width / V.W * mw) + 'px'; frame.style.height = Math.min(mh, r.height / (V.W * aspect) * mh) + 'px';
+    if (onZoom && V.W !== lastW) { lastW = V.W; onZoom(V.W); }
   }
   /** Centre the view on (fx, fy) (0..1 of the map) at `zoom` times the size that covers the whole frame. */
   function focus(fx, fy, zoom = 1) {
@@ -24,9 +29,9 @@ export function createMapView({ wrap, inner, mini, frame, aspect }) {
     V.W = Math.min(maxW(), Math.max(fitMin(), Math.max(r.width, r.height / aspect) * zoom));
     V.x = r.width / 2 - fx * V.W; V.y = r.height / 2 - fy * V.W * aspect; apply();
   }
-  function zoomAt(k, cx, cy) {
+  function zoomAt(k, cx, cy, defer = false) {
     const nW = Math.min(maxW(), Math.max(fitMin(), V.W * k)); const kk = nW / V.W;
-    V.x = cx - (cx - V.x) * kk; V.y = cy - (cy - V.y) * kk; V.W = nW; apply();
+    V.x = cx - (cx - V.x) * kk; V.y = cy - (cy - V.y) * kk; V.W = nW; if (defer) later(); else apply();
   }
   const zoomBy = k => { const r = rect(); zoomAt(k, r.width / 2, r.height / 2); };
   const fit = () => { V.W = fitMin(); apply(); };
@@ -40,17 +45,17 @@ export function createMapView({ wrap, inner, mini, frame, aspect }) {
     if (!pts.has(e.pointerId)) return; const prev = pts.get(e.pointerId); const now = { x: e.clientX, y: e.clientY }; pts.set(e.pointerId, now);
     if (pts.size === 1) {
       if (start && Math.hypot(now.x - start.x, now.y - start.y) > 8) V.moved = true;
-      if (V.moved) { V.x += now.x - prev.x; V.y += now.y - prev.y; apply(); }
+      if (V.moved) { V.x += now.x - prev.x; V.y += now.y - prev.y; later(); }
       return;
     }
     V.moved = true;
     const [a, b] = [...pts.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y);
-    if (last) { const r = rect(); zoomAt(d / last, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top); }
+    if (last) { const r = rect(); zoomAt(d / last, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top, true); }
     last = d;
   });
   const up = e => { pts.delete(e.pointerId); last = null; };
   wrap.addEventListener('pointerup', up); wrap.addEventListener('pointercancel', up);
-  wrap.addEventListener('click', e => { if (V.moved && e.target.closest('.tok')) { e.stopPropagation(); e.preventDefault(); } V.moved = false; }, true);
+  wrap.addEventListener('click', e => { if (V.moved) { e.stopPropagation(); e.preventDefault(); } V.moved = false; }, true);
   wrap.addEventListener('wheel', e => { e.preventDefault(); const r = rect(); zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top); }, { passive: false });
   mini.addEventListener('click', e => { const r = mini.getBoundingClientRect(); focus((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, Math.max(1, V.W / Math.max(rect().width, rect().height / aspect))); });
   /** Keep a point (0..1) in view when a sheet covers the bottom part (`cover` px). */

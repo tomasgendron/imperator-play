@@ -46,6 +46,10 @@ const prov = id => data.provincesById[id]?.name ?? id;
 const pn = id => G.nameOf(st(), id);
 const col = id => G.colorClass(st(), id);   // 'p1' | 'p2' | 'p3' | 'none'
 const cvar = id => (col(id) === 'none' ? 'var(--native)' : `var(--${col(id)})`);
+/** v30.3 (a slow phone): write a part of the screen only when its HTML changed; returns true when it was written (re-wire then). */
+const htmlCache = new WeakMap();
+function setHTML(el, html) { if (!el) return false; if (htmlCache.get(el) === html) return false; el.innerHTML = html; htmlCache.set(el, html); return true; }
+const perf = { renders: 0, ms: [] };
 let toastT;
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2600); }
 
@@ -98,14 +102,16 @@ async function boot() {
   $('#mapImg').src = img('map'); $('#minimap').style.backgroundImage = `url("${img('map')}")`;
   $('#dieImg').src = img('dice.d10');
   const sp = data.map.map.tokenSpace;
-  MV = createMapView({ wrap: $('#mapwrap'), inner: $('#mapinner'), mini: $('#minimap'), frame: $('#mmv'), aspect: sp.h / sp.w });
+  MV = createMapView({ wrap: $('#mapwrap'), inner: $('#mapinner'), mini: $('#minimap'), frame: $('#mmv'), aspect: sp.h / sp.w, onZoom: W => spreadTokens(W) });
+  $('#mapwrap').addEventListener('click', mapTap);
+  $('#mapwrap').addEventListener('pointerup', e => { lastUp = { x: e.clientX, y: e.clientY, t: e.timeStamp }; }, true);
   $('#zIn').onclick = () => MV.zoomBy(1.35); $('#zOut').onclick = () => MV.zoomBy(1 / 1.35); $('#zFit').onclick = () => MV.fit();
   addEventListener('resize', () => requestAnimationFrame(() => MV.refit()));
   $('#scrim').onclick = () => { if (!sheetSticky) closeSheet(); };
   $('#bLog').onclick = () => openLog();
   $('#bMenu').onclick = () => openMenu();
   $('#dieChip').onclick = () => openLog();
-  $('#importFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadFrom(await f.text()); };
+  $('#importFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadFrom(await f.text(), $('#svErr')); };
   const q = new URLSearchParams(location.search);
   if (q.get('join')) { playWhere = 'join'; joinCode = normCode(q.get('join')); }
   joinWas = normCode(q.get('was') || '');   // M14: the host resumed under a new code (the old one was taken)
@@ -164,7 +170,7 @@ function renderStart() {
   if ($('#mStart')) $('#mStart').onclick = startGame;
   if (playWhere === 'join') wireJoin(el);
   $('#mResume').onclick = () => { const t = autosaveText(); if (t) loadFrom(t); };
-  $('#mLoad').onclick = () => $('#importFile').click();
+  $('#mLoad').onclick = () => openSaves('load');
   wireViewLinks(el);
 }
 // v30.2: Join (by the host's link, ?join=CODE[&was=OLD][&net=local], or by typing the code): the same hello, lobby and seat token as the
@@ -199,10 +205,25 @@ function openGeneralPick(i) {
     <p class="note">Every perk in detail: tap a player's card during the game.</p></div>`);
   $$('#sheet [data-g]').forEach(b => b.onclick = () => { seats[i].general = b.dataset.g; SND.play('card_flip'); closeSheet(true); renderStart(); });
 }
-function openDeck(key) {
-  const d = G.deckCatalog(data).find(x => x.key === key);
-  openSheet('deck', `<div class="sh-head"><h2>${esc(d.title)}<small>${d.total} cards · what the deck holds (never the order)</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
-    <div class="sh-body">${d.cards.map(c => `<div class="cardrow"><img src="${attr(img(c.art))}" alt=""><div class="t"><b>${esc(c.name)} ×${c.copies}</b>${c.battle ? `<span class="pchip" style="min-height:22px;font-size:11px">${G.BATTLE_LABEL}</span> ` : ''}${esc(c.text)}</div></div>`).join('')}</div>`);
+/** A deck's cards (art, name, copies, text): from the card data only, never the order of a deck or anyone's hand. v30.3: also in the game
+ *  (Menu → The decks), with a Back to the deck list, a Battle Cards filter and a tap on a card to see it big. */
+function openDeck(key, back = false, only = '') {
+  const d = G.deckCatalog(data).find(x => x.key === key); if (!d) return;
+  const hasBattle = d.cards.some(c => c.battle); const list = only === 'battle' ? d.cards.filter(c => c.battle) : d.cards;
+  openSheet('deck', `<div class="sh-head">${back ? '<button class="iconbtn" id="dkBack" aria-label="Back to the decks">◀</button>' : ''}<h2>${esc(d.title)}<small>${d.total} cards of ${d.cards.length} kinds · what the deck holds (never its order)</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body" id="deckBox" data-deck="${attr(key)}">${hasBattle ? `<div class="seg" style="margin-bottom:8px">${[['', 'All cards'], ['battle', G.BATTLE_LABEL]].map(([k, t]) => `<button data-only="${k}" class="${only === k ? 'on' : ''}" aria-pressed="${only === k}">${esc(t)}</button>`).join('')}</div>` : ''}
+    ${list.map(c => `<div class="cardrow"><button class="cardimg" data-big="${attr(c.art)}" aria-label="See ${attr(c.name)} big"><img src="${attr(img(c.art))}" alt="" loading="lazy" decoding="async"></button><div class="t"><b>${esc(c.name)} ×${c.copies}</b>${c.battle ? `<span class="pchip" style="min-height:22px;font-size:11px">${G.BATTLE_LABEL}</span> ` : ''}${esc(c.text)}</div></div>`).join('')}</div>`);
+  if ($('#dkBack')) $('#dkBack').onclick = () => openDecks();
+  $$('#sheet [data-only]').forEach(b => b.onclick = () => openDeck(key, back, b.dataset.only));
+  $$('#sheet [data-big]').forEach(b => b.onclick = () => { const c = d.cards.find(x => x.art === b.dataset.big); if (c) openPop('cardbig', `<div class="sh-head"><h2>${esc(c.name)}<small>${esc(d.title)} · ×${c.copies}</small></h2></div><div class="sh-body"><div class="pophero"><img class="bigcard" src="${attr(img(c.art))}" alt=""></div><p class="note" style="text-align:center">${esc(c.text)}</p></div><div class="sh-foot"><button class="btn gold wide" data-popok>Close</button></div>`, { sticky: true }); });
+}
+/** v30.3: the decks during a game: each deck's draw pile and discard pile (counts only: both are face down or public anyway). */
+function openDecks() {
+  const s = C.S ? st() : null;
+  openSheet('decks', `<div class="sh-head"><h2>The decks<small>Tap a deck to see every card in it</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body"><div class="alist" id="decksList">${G.deckCatalog(data).map(d => `<button class="arow deckrow" data-dk="${attr(d.key)}"><span class="deckmini" style="background-image:url('${attr(img(s && !G.deckCount(s, d.key) ? 'deck.empty' : 'deck.' + d.key))}')"></span><span class="t"><b>${esc(d.title)}</b><small>${d.total} cards${s ? ` · draw pile <b data-left="${attr(d.key)}">${G.deckCount(s, d.key)}</b> · discards ${s.discards?.[d.key]?.length ?? 0}` : ''}</small></span><span class="go">›</span></button>`).join('')}</div>
+    <p class="note">A pile that runs out is reshuffled from its discards.</p></div>`);
+  $$('#sheet [data-dk]').forEach(b => b.onclick = () => openDeck(b.dataset.dk, true));
 }
 function startGame() {
   const r = checkSetup(data, engineSeats(), startMode); if (!r.ok) { SND.play('error_denied'); renderStart(); return; }
@@ -210,10 +231,55 @@ function startGame() {
   catch (e) { $('#mErr').textContent = e.message; return; }
   SND.play('deck_shuffle'); enterGame(true);
 }
-function loadFrom(text) {
-  let ns; try { ns = G.readSave(text, data); } catch (e) { if (document.body.dataset.screen === 'setup') $('#mErr').textContent = e.message; else toast(e.message); return false; }
-  clearTimeout(C.aiTimer); C.S = ns; enterGame(false); toast('Game loaded'); return true;
+function loadFrom(text, errEl = null) {
+  let ns; try { ns = G.readSave(text, data); } catch (e) { SND.play('error_denied'); if (errEl) errEl.textContent = e.message; else if (document.body.dataset.screen === 'setup') $('#mErr').textContent = e.message; else toast(e.message); return false; }
+  clearTimeout(C.aiTimer); if (C.NET) NETG.leave(); C.S = ns; enterGame(false); toast('Game loaded'); return true;
 }
+// ------------------------------------------------------------------ v30.3: saves on the phone (localStorage), as on the desktop's Save / Load
+// Three slots on this phone: slot 1 is the same key as the desktop's "Save in this browser" (imperator.save.slot1), so a game saved in
+// one view loads in the other; slots 2 and 3 are the phone's own. The autosave (after every move) is Resume. A file can still be exported
+// and imported. A save holds the whole game, hidden hands included. A guest has nothing to save: the host keeps the online game.
+const SLOTS = [1, 2, 3];
+const slotKey = n => 'imperator.save.slot' + n;
+const readSaveObj = k => { try { const t = localStorage.getItem(k); return t ? JSON.parse(t) : null; } catch { return null; } };
+function saveLine(o) {
+  if (!o?.snapshot) return null;
+  const at = o.meta?.savedAt ? new Date(o.meta.savedAt).toLocaleString('en-US', { timeZone: 'America/Edmonton', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' MT' : 'no date';
+  const s = o.snapshot; const over = s.phase === 'finished' ? ' · game over' : '';
+  return `${at} · turn ${s.turn?.number ?? 0}${over} · ${(s.players ?? []).map(p => p.name).join(', ')}${o.online?.room ? ` · online room ${o.online.room.code ?? ''} (plays on this phone)` : ''}${o.meta?.appVersion ? ' · ' + String(o.meta.appVersion).split(' · ')[0] : ''}`;
+}
+function openSaves(mode, armed = null) {
+  const saving = mode === 'save'; const live = !!C.S && inGame() && st().phase !== 'finished';
+  if (saving && (!C.S || isGuest())) { toast(isGuest() ? 'The host keeps the online game: nothing to save here.' : 'No game to save yet'); return; }
+  const auto = readSaveObj('imperator.autosave');
+  const row = (k, title, o, i) => { const info = saveLine(o); const arm = armed === k;
+    const on = saving || !!info; const sub = arm ? (saving ? 'Tap again to overwrite this save' : 'Tap again: the game on screen is replaced') : info ?? 'empty';
+    return `<div class="rowwrap svrow"><button class="arow${arm ? ' on' : ''}" data-sv="${attr(k)}" ${on ? '' : 'disabled'}><span class="ic">${i}</span><span class="t"><b>${esc(title)}</b><small>${esc(sub)}</small></span><span class="go">›</span></button>${!saving && info && k !== 'imperator.autosave' ? `<button class="iconbtn svdel" data-del="${attr(k)}" aria-label="Delete ${attr(title)}">${armed === 'del:' + k ? '✔' : '🗑'}</button>` : ''}</div>`; };
+  const rows = [...(saving ? [] : [row('imperator.autosave', 'Autosave (Resume)', auto, '↺')]), ...SLOTS.map(n => row(slotKey(n), `Slot ${n}${n === 1 ? ' · shared with the desktop view' : ''}`, readSaveObj(slotKey(n)), '💾'))];
+  openSheet('saves', `<div class="sh-head"><h2>${saving ? 'Save the game' : 'Load a game'}<small>${saving ? 'on this phone (this browser) or as a file' : 'from this phone, or a file you saved'}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body" id="savesBox" data-mode="${mode}"><div class="alist">${rows.join('')}
+      <button class="arow" id="svFile"><span class="ic">${saving ? '⬇' : '📂'}</span><span class="t"><b>${saving ? 'Export a file (.json)' : 'Import a file…'}</b><small>${saving ? 'keep it, or open it on another device' : 'a save exported from Imperator'}</small></span><span class="go">›</span></button></div>
+      <div class="serr" id="svErr" role="alert"></div>
+      <p class="note">${saving ? 'A save holds everything, hidden hands included: keep it for yourself mid-game. The game also autosaves after every move (Resume).' : live ? 'Loading replaces the game on screen; it is autosaved, so save it in a slot first if you want to keep it.' : 'Slot 1 is the same save as the desktop view’s “Save in this browser”.'}</p></div>`);
+  $$('#sheet [data-sv]').forEach(b => b.onclick = () => {
+    const k = b.dataset.sv; const o = readSaveObj(k);
+    if (saving) {
+      if (o && armed !== k) { SND.play('button_click'); openSaves(mode, k); return; }
+      try { localStorage.setItem(k, JSON.stringify(makeSaveNow('slot'))); } catch (e) { SND.play('error_denied'); $('#svErr').textContent = `Could not save on this phone: ${e.message}. Export a file instead.`; return; }
+      SND.play('card_play'); toast(`Saved in ${k === slotKey(1) ? 'slot 1' : 'slot ' + k.slice(-1)}`); openSaves(mode); return;
+    }
+    if (!o) return;
+    if (live && armed !== k) { SND.play('button_click'); openSaves(mode, k); return; }
+    if (loadFrom(JSON.stringify(o), $('#svErr'))) closeSheet(true);
+  });
+  $$('#sheet [data-del]').forEach(b => b.onclick = () => { const k = b.dataset.del; if (armed !== 'del:' + k) { SND.play('button_click'); openSaves(mode, 'del:' + k); return; } try { localStorage.removeItem(k); } catch { /* */ } toast('Save deleted'); openSaves(mode); if (document.body.dataset.screen === 'setup') renderStartKeepSheet(); });
+  $('#svFile').onclick = () => {
+    if (!saving) { $('#importFile').click(); return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(makeSaveNow('file'))], { type: 'application/json' })); a.download = G.saveFileName(st()); document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); toast('Save file exported');
+  };
+}
+/** The start screen's Resume line after a delete, without closing the open sheet. */
+function renderStartKeepSheet() { const r = $('#mResume'); if (!r) return; const t = autosaveText(); r.disabled = !t; }
 function enterGame(fresh) {
   document.body.dataset.screen = 'game'; $('#start').hidden = true; $('#app').hidden = false; closeSheet(true);
   C.viewer = isGuest() ? C.NET.me : null; C.aiPaused = false; C.busy = false; selected = null; document.body.dataset.netLost = ''; overShown = false; lastRoll = null; askSeen = null;
@@ -237,7 +303,9 @@ function render() {
   document.body.dataset.humanTurn = legal.length ? '1' : '';
   $('#topInfo').textContent = `${s.phase === 'setup' ? 'Setup' : s.phase === 'finished' ? 'Game over' : `Turn ${s.turn.number}`} · ${C.uiLabel.split(' · ')[0]}`;
   $('#dieVal').textContent = lastRoll ? lastRoll.value : '–';
+  const t0 = performance.now();
   renderPlayers(s); renderSteps(s, legal); renderTokens(s, legal); renderActs(s, legal); renderLogPeek(s);
+  perf.renders++; perf.ms.push(performance.now() - t0); if (perf.ms.length > 400) perf.ms.shift();
   if (sheetKind === 'ask' && (!topFrame(s) || !legal.length || document.body.dataset.askFrame !== topFrame(s).id || s.battle)) closeSheet(true);
   if (['assassin', 'cardTargets', 'ally'].includes(sheetKind) && (!legal.length || topFrame(s))) closeSheet(true);
   if (sheetKind === 'province' && selected) openProvince(selected, true);
@@ -274,29 +342,28 @@ function renderNetBar() {
 function renderPlayers(s) {
   const act = s.phase === 'turn' ? s.turn.activePlayerId : whoActs(s);
   $('#players').classList.toggle('n2', s.players.length === 2);
-  $('#players').innerHTML = s.players.map(p => { const g = p.general ? data.generalsById[p.general.id] : null; const on = p.id === act;
+  if (!setHTML($('#players'), s.players.map(p => { const g = p.general ? data.generalsById[p.general.id] : null; const on = p.id === act;
     return `<button class="pl${on ? ' active' : ''}${p.out ? ' out' : ''}" style="--c:var(--${col(p.id)})" data-pid="${p.id}" aria-label="${attr(p.name)}${g ? ', ' + attr(g.name) : ''}: open the General">
     <span class="tag ${on ? '' : p.controller === 'ai' ? 'ai' : ''}" ${!on && p.controller !== 'ai' ? 'hidden' : ''}>${on ? '▶ TURN' : 'AI'}</span>
     <span class="r1"><span class="av" style="background-image:url('${attr(img(g ? 'general.' + g.id : 'back.game'))}');background-position:center 15%"></span><span class="nm">${esc(p.name)}<small>${esc(g?.name ?? 'no general yet')}</small>${g ? `<small class="cap" data-caption="${g.id}">${esc(G.generalCaption(data, g.id))}</small>` : ''}</span></span>
     <span class="r2"><span title="Gold">💰${p.gold}</span><span title="Prestige">⭐${p.prestige}<small style="color:var(--muted)">/${data.rules.winPrestige}</small></span><span title="Cards">🂠${G.handCount(p)}</span><span title="Troops">⚔${totalTroops(s, p.id)}</span></span>
-    <span class="pbar"><b style="width:${Math.min(100, p.prestige / data.rules.winPrestige * 100)}%"></b></span></button>`; }).join('');
+    <span class="pbar"><b style="width:${Math.min(100, p.prestige / data.rules.winPrestige * 100)}%"></b></span></button>`; }).join(''))) return;
   $$('#players .pl').forEach(b => b.onclick = () => openPlayer(b.dataset.pid));
 }
 function renderSteps(s, legal) {
   const act = s.phase === 'turn' ? s.turn.activePlayerId : whoActs(s); const si = G.stepIndex(s);
   const el = $('#steps'); el.style.setProperty('--pc', `var(--${col(act)})`);
   const names = { resources: 'Resources', gameRoll: 'Game', revoltRoll: 'Revolt', actions: 'Actions' };
-  el.innerHTML = s.phase === 'setup' ? '<span class="step cur"><i>0</i>Setup</span>' : s.phase === 'finished' ? `<span class="step cur"><i>★</i>${esc(pn(s.winner))} wins</span>`
-    : G.STEP_CHIPS.map(([k], i) => `<span class="step ${i < si ? 'done' : i === si ? 'cur' : ''}"><i>${i < si ? '✓' : i + 1}</i>${names[k]}${k === 'actions' && i === si ? ` ${s.turn.actionsUsed}/2` : ''}</span>`).join('<span class="step-sep">›</span>');
+  setHTML(el, s.phase === 'setup' ? '<span class="step cur"><i>0</i>Setup</span>' : s.phase === 'finished' ? `<span class="step cur"><i>★</i>${esc(pn(s.winner))} wins</span>`
+    : G.STEP_CHIPS.map(([k], i) => `<span class="step ${i < si ? 'done' : i === si ? 'cur' : ''}"><i>${i < si ? '✓' : i + 1}</i>${names[k]}${k === 'actions' && i === si ? ` ${s.turn.actionsUsed}/2` : ''}</span>`).join('<span class="step-sep">›</span>'));
   const f = topFrame(s); const w = whoActs(s); let p;
   if (s.phase === 'finished') p = `<b>${esc(pn(s.winner))} wins the game.</b> Menu → New game to play again.`;
   else if (!legal.length) p = G.isHuman(s, w) ? `Waiting for <b>${esc(pn(w))}</b>…` : `<b>${esc(pn(w))}</b> (AI) is thinking…${C.aiPaused ? ' (AI paused: Menu → Resume AI)' : ''}`;
   else if (!f) p = `<b>Your turn, ${esc(pn(w))}.</b> Attack, Ally or Move, buy or build, play a card, or tap a province.`;
   else p = `<b>${esc(pn(w))}: ${esc(G.frameTitle(s, data))}.</b> ${esc(G.describePrompt(s, data).replace(/^.*?: /, ''))}`;
-  $('#prompt').innerHTML = p;
+  setHTML($('#prompt'), p);
   const h = G.handFor(s, data, C.viewer);
-  $('#handmini').innerHTML = h.owner && h.cards.length ? `<span>Hand</span>${h.cards.slice(0, 4).map(c => `<button data-card="${c.uid}" style="background-image:url('${attr(img(c.art))}')" aria-label="${attr(c.name)}"></button>`).join('')}` : '';
-  $$('#handmini [data-card]').forEach(b => b.onclick = () => openCards());
+  if (setHTML($('#handmini'), h.owner && h.cards.length ? `<span>Hand</span>${h.cards.slice(0, 4).map(c => `<button data-card="${c.uid}" style="background-image:url('${attr(img(c.art))}')" aria-label="${attr(c.name)}"></button>`).join('')}` : '')) $$('#handmini [data-card]').forEach(b => b.onclick = () => openCards());
 }
 const pickFrames = ['chooseProvince', 'setupStartProvince', 'placeTroops', 'resourceBuild', 'placeSurvivors'];
 function pickSet(s, legal) {
@@ -305,23 +372,78 @@ function pickSet(s, legal) {
   return new Set(legal.map(G.mainProvince).filter(Boolean));
 }
 function renderTokens(s, legal) {
-  const sp = data.map.map.tokenSpace; const picks = pickSet(s, legal); const gensAt = {};
+  const sp = data.map.map.tokenSpace; const picks = pickSet(s, legal); const gensAt = {}; const tg = reachFrom(selected, legal);
   for (const pl of s.players) if (pl.general?.at && !pl.out) gensAt[pl.general.at] = pl.general.id;
-  $('#tokens').innerHTML = data.provinces.map(def => {
+  setHTML($('#tokens'), data.provinces.map(def => {
     const id = def.id, p = s.provinces[id]; let cls = 'tok', val;
     if (id === 'roma' && !p.owner) { cls += ' roma'; val = p.troops; }
     else if (!p.owner) { cls += ' nat'; val = p.native.present ?? '?'; }
     else { val = p.troops; if (p.status === 'allied') cls += ' ally'; if (isUnderGarrisoned(s, data, id)) cls += ' low'; }
-    if (selected === id) cls += ' sel'; if (picks.has(id)) cls += ' pick';
+    if (selected === id) cls += ' sel'; if (picks.has(id)) cls += ' pick'; if (tg.has(id)) cls += ' tgt';
+    const nd = nudge[id];
     const nat = p.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
     const g = gensAt[id];
-    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${p.number ? `<span class="nn">${p.number}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${g ? `<span class="gen" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%"></span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}</span></button>`;
-  }).join('');
-  $$('#tokens .tok').forEach(t => t.onclick = () => tokenTap(t.dataset.id));
+    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${p.number ? `<span class="nn">${p.number}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${g ? `<span class="gen" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%"></span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}</span></button>`;
+  }).join(''));
 }
 function tokenTap(id) {
-  SND.play('province_select'); selected = id; openProvince(id);
-  $$('#tokens .tok').forEach(t => t.classList.toggle('sel', t.dataset.id === id));
+  SND.play('province_select'); selected = id; htmlCache.delete($('#tokens')); openProvince(id);
+  const tg = reachFrom(id, mineNow());
+  $$('#tokens .tok').forEach(t => { t.classList.toggle('sel', t.dataset.id === id); t.classList.toggle('tgt', tg.has(t.dataset.id)); });
+}
+/** v30.3: the provinces this seat may attack, ally with or move to from `id` now (they glow while its sheet is open). */
+function reachFrom(id, legal) {
+  const out = new Set(); if (!id || !legal.length || topFrame(st())) return out;
+  for (const t of ['ATTACK', 'ALLY', 'MOVE']) for (const to of Object.keys(G.builderTree(legal, t)[id] ?? {})) out.add(to);
+  return out;
+}
+// ------------------------------------------------------------------ v30.3: close tokens (Macedonia and Greece are 63/1000 of the map
+// apart: 25 px at fit, 42 px at the opening zoom, so two 44 px tokens would overlap). 1) spreadTokens pushes touching tokens apart at
+// every zoom (a few px along the line between them, never more than 30 px), so each one is a whole 44 px target. 2) mapTap reads the
+// finger's point, not just the element under it: a tap that is about as close to two tokens (or lands between them) opens a small
+// "Which province?" sheet instead of guessing; a tap on the map next to a single token opens that one.
+const TOK_GAP = 6, TAP_R = 34, TAP_TIE = 10;
+let nudge = {};
+function spreadTokens(W) {
+  if (!data) return; const sp = data.map.map.tokenSpace; const k = W / sp.w;
+  const T = data.provinces.map(d => ({ id: d.id, x: d.token.x * k, y: d.token.y * k, r: d.id === 'roma' ? 24 : 22, dx: 0, dy: 0 }));
+  for (let it = 0; it < 8; it++) {
+    let moved = false;
+    for (let i = 0; i < T.length; i++) for (let j = i + 1; j < T.length; j++) {
+      const a = T[i], b = T[j]; let vx = (b.x + b.dx) - (a.x + a.dx), vy = (b.y + b.dy) - (a.y + a.dy); let d = Math.hypot(vx, vy);
+      const need = a.r + b.r + TOK_GAP; if (d >= need) continue;
+      if (d < 0.01) { vx = 1; vy = 0; d = 1; }
+      const push = (need - d) / 2; a.dx -= vx / d * push; a.dy -= vy / d * push; b.dx += vx / d * push; b.dy += vy / d * push; moved = true;
+    }
+    if (!moved) break;
+  }
+  const cap = v => Math.max(-30, Math.min(30, Math.round(v)));
+  nudge = {}; for (const t of T) if (Math.abs(t.dx) >= 0.5 || Math.abs(t.dy) >= 0.5) nudge[t.id] = [cap(t.dx), cap(t.dy)];
+  $$('#tokens .tok').forEach(el => { const n = nudge[el.dataset.id]; el.style.translate = n ? `${n[0]}px ${n[1]}px` : ''; });
+}
+function tapCandidates(x, y) {
+  return $$('#tokens .tok').map(el => { const r = el.getBoundingClientRect(); return { id: el.dataset.id, d: Math.hypot(r.left + r.width / 2 - x, r.top + r.height / 2 - y) }; })
+    .filter(c => c.d <= TAP_R).sort((a, b) => a.d - b.d);
+}
+let lastUp = null;
+function mapTap(e) {
+  if (e.defaultPrevented || e.target.closest('.mapctl, .minimap')) return;
+  const tok = e.target.closest('.tok');
+  if (!e.detail && tok) { tokenTap(tok.dataset.id); return; }   // a keyboard or scripted click: the element itself
+  // the finger's own point (pointerup): a browser may move a touch's click onto the nearest button (Chrome's touch adjustment)
+  const p = lastUp && Math.abs(e.timeStamp - lastUp.t) < 1000 ? lastUp : { x: e.clientX, y: e.clientY }; lastUp = null;
+  const c = tapCandidates(p.x, p.y);
+  if (!c.length) return;
+  if (c.length > 1 && c[1].d - c[0].d < TAP_TIE) { openWhich(c.filter(x => x.d - c[0].d < TAP_TIE).slice(0, 3).map(x => x.id)); return; }
+  tokenTap(c[0].id);
+}
+function openWhich(ids) {
+  SND.play('button_click'); const s = st();
+  openSheet('which', `<div class="sh-head"><h2>Which province?<small>Your tap was between ${ids.map(prov).map(esc).join(' and ')}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body"><div class="alist" id="whichList">${ids.map(id => { const p = s.provinces[id]; return `<button class="arow" data-which="${attr(id)}"><span class="ic"><span class="sw" style="--c:${p.owner ? cvar(p.owner) : id === 'roma' ? 'var(--roma)' : 'var(--native)'};width:18px;height:18px"></span></span><span class="t"><b>${esc(prov(id))}</b><small>${p.owner ? `${esc(pn(p.owner))} · ${p.troops} troops` : `natives ${p.native.present ?? '?'}`}${p.number ? ` · number ${p.number}` : ''}</small></span><span class="go">›</span></button>`; }).join('')}</div>
+    <p class="note">These two are close together on the map. Zoom in (＋ or pinch) to tap them directly.</p></div>`, { half: true });
+  $$('#sheet [data-which]').forEach(b => b.onclick = () => { closeSheet(true); tokenTap(b.dataset.which); });
+  ids.forEach(flashToken);
 }
 // ------------------------------------------------------------------ the thumb bar: every enabled button opens or plays legal moves only
 const ICON = { ATTACK: '⚔', ALLY: '🤝', MOVE: '➜', BUY_TROOP: '🛒', BUY_GAME_CARD: '🂠', BUY_CATAPULT: '🏹', BUILD_ROAD: '🛣', BUILD_WALL: '🧱', USE_SAVED_RESOURCE: '🏛', PLAY_CARD: '🂠', PREVIEW_TARGET: '🔎', END_TURN: '✓', SELL_CARD: '💰', MOVE_GENERAL: '⚑', ROLL: '🎲', DRAW_CARD: '🂠' };
@@ -347,13 +469,13 @@ function barModel(s, legal) {
 let bar = [];
 function renderActs(s, legal) {
   bar = barModel(s, legal);
-  $('#acts').innerHTML = bar.map((b, i) => `<button class="act${i === 7 ? ' gold' : ''}${b.due ? ' due' : ''}" id="act-${b.k}" data-i="${i}" ${b.on && !C.busy ? '' : 'disabled'} aria-label="${attr(b.t)}"><span class="ic">${b.ic}</span>${esc(b.t)}${b.badge ? `<span class="badge">${b.badge}</span>` : ''}</button>`).join('');
+  if (!setHTML($('#acts'), bar.map((b, i) => `<button class="act${i === 7 ? ' gold' : ''}${b.due ? ' due' : ''}" id="act-${b.k}" data-i="${i}" ${b.on && !C.busy ? '' : 'disabled'} aria-label="${attr(b.t)}"><span class="ic">${b.ic}</span>${esc(b.t)}${b.badge ? `<span class="badge">${b.badge}</span>` : ''}</button>`).join(''))) return;
   $$('#acts .act').forEach(el => el.onclick = () => { const b = bar[+el.dataset.i]; if (!b?.on || C.busy) { SND.play('error_denied'); return; } SND.play('button_click'); b.go(); });
 }
-function freezeControls() { $$('#acts .act, #sheet .arow, #sheet .btn.gold, #pop #bCtl .btn, #pop .bccheck, #pop .arow, #gvActs .gvbtn').forEach(b => { b.disabled = true; }); }
+function freezeControls() { htmlCache.delete($('#acts')); $$('#acts .act, #sheet .arow, #sheet .btn.gold, #pop #bCtl .btn, #pop .bccheck, #pop .arow, #gvActs .gvbtn').forEach(b => { b.disabled = true; }); }
 function renderLogPeek(s) {
   const l = G.logFor(s, data, 1, C.viewer)[0];
-  $('#logLast').innerHTML = l ? `<span class="sw" style="--c:${l.cls === 'sys' ? 'var(--muted)' : `var(--${l.cls})`};margin-right:6px"></span>${esc(l.text)}` : 'The game log';
+  setHTML($('#logLast'), l ? `<span class="sw" style="--c:${l.cls === 'sys' ? 'var(--muted)' : `var(--${l.cls})`};margin-right:6px"></span>${esc(l.text)}` : 'The game log');
 }
 
 // ------------------------------------------------------------------ bottom sheets
@@ -370,7 +492,7 @@ function openSheet(kind, html, { half = false, side = false, sticky = false } = 
 function closeSheet(quiet = false) {
   const was = sheetKind; sheetKind = null; sheetSticky = false;
   $('#sheet').classList.remove('on'); $('#scrim').classList.remove('on', 'light'); document.body.dataset.sheet = '';
-  if (was === 'province') { selected = null; $$('#tokens .tok.sel').forEach(t => t.classList.remove('sel')); }
+  if (was === 'province') { selected = null; htmlCache.delete($('#tokens')); $$('#tokens .tok.sel, #tokens .tok.tgt').forEach(t => t.classList.remove('sel', 'tgt')); }
   if (!quiet && was && closeHook) { const h = closeHook; closeHook = null; h(); }
 }
 let closeHook = null;
@@ -434,19 +556,21 @@ function openProvince(id, refresh = false) {
   const here = G.forProvince(legal, id).filter(d => d.type !== 'END_TURN');
   const owner = p.owner ? pn(p.owner) : null;
   const nb = [...def.land.map(x => [x, 'land']), ...def.sea.map(x => [x, 'sea'])];
-  const gens = s.players.filter(pl => pl.general?.at === id).map(pl => data.generalsById[pl.general.id].name);
+  const gens = s.players.filter(pl => pl.general?.at === id).map(pl => data.generalsById[pl.general.id].name); const reach = reachFrom(id, legal);
   const html = `<div class="sh-head"><span class="sw" style="--c:${p.owner ? cvar(p.owner) : id === 'roma' ? 'var(--roma)' : 'var(--native)'};width:16px;height:16px"></span><h2>${esc(def.name)}<small>${owner ? `${esc(owner)}'s province` : id === 'roma' ? 'Roma · no holder' : 'Unowned · natives'} · number ${p.number ?? '–'} · reward ${esc(p.reward ?? '–')}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body" id="provBody" data-id="${id}">
       <div class="stats"><div class="stat"><small>Troops</small><b>${p.owner || id === 'roma' ? p.troops : '–'}</b></div><div class="stat"><small>Natives</small><b>${p.native.count === null ? (id === 'roma' ? '–' : '?') : `${p.native.present}/${p.native.count}`}</b></div><div class="stat"><small>Min garrison</small><b class="${under ? 'warn' : 'ok'}">${m ? m.min : '–'}${p.owner ? (under ? ' ✗' : ' ✓') : ''}</b></div></div>
       <div class="chips" style="margin-bottom:4px"><span class="pchip">🧱 ${p.walls?.length ? 'Wall facing ' + p.walls.map(prov).map(esc).join(', ') : 'No wall'}</span><span class="pchip">🛣 ${p.road ? 'Road' : 'No road'}</span><span class="pchip">⚑ ${gens.length ? esc(gens.join(', ')) + ' here' : 'No general'}</span><span class="pchip">${esc(p.status)}</span></div>
       <div class="sec">Borders (⚓ by sea)</div>
-      <div class="chips">${nb.map(([x, k]) => { const o = s.provinces[x].owner; return `<span class="pchip"><span class="sw" style="--c:${o ? cvar(o) : x === 'roma' ? 'var(--roma)' : 'var(--native)'}"></span>${esc(prov(x))}${k === 'sea' ? ' ⚓' : ''}</span>`; }).join('')}</div>
+      <div class="chips" id="provBorders">${nb.map(([x, k]) => { const o = s.provinces[x].owner; const t = reach.has(x); return `<button class="pchip${t ? ' tg' : ''}" data-goprov="${attr(x)}" aria-label="Open ${attr(prov(x))}"><span class="sw" style="--c:${o ? cvar(o) : x === 'roma' ? 'var(--roma)' : 'var(--native)'}"></span>${esc(prov(x))}${k === 'sea' ? ' ⚓' : ''}<small>${o || x === 'roma' ? s.provinces[x].troops : s.provinces[x].native.present ?? '?'}</small></button>`; }).join('')}</div>
+      ${reach.size ? `<p class="note" style="margin:6px 2px 0">Gold ring = you can attack, ally with or move there from ${esc(def.name)} now (it glows on the map).</p>` : ''}
       <div class="sec">${here.length ? `What you can do here (${here.length})` : 'Nothing to do here right now'}</div>
       ${here.length ? rowsHtml(here) : `<p class="note">${legal.length ? 'Your possible moves are on the action bar.' : C.busy ? 'Wait a moment…' : 'It is not your move.'}</p>`}
     </div>`;
   if (refresh && sheetKind === 'province') { $('#sheet').innerHTML = '<div class="handle"><i></i></div>' + html; $$('#sheet [data-close]').forEach(b => b.onclick = () => closeSheet()); }
   else openSheet('province', html, { half: true });
   wireRows($('#sheet'), here);
+  $$('#provBorders [data-goprov]').forEach(b => b.onclick = () => tokenTap(b.dataset.goprov));
   const [fx, fy] = [def.token.x / data.map.map.tokenSpace.w, def.token.y / data.map.map.tokenSpace.h];
   if (!refresh) requestAnimationFrame(() => MV.reveal(fx, fy, matchMedia('(orientation: portrait)').matches ? $('#sheet').offsetHeight - $('#acts').offsetHeight - 50 : 0));
 }
@@ -470,22 +594,54 @@ function autoAsk(s, legal) {
   const key = f.id + '|' + C.viewer; if (askSeen === key) return; askSeen = key;
   if (!sheetKind || sheetKind === 'ask') setTimeout(() => { if (topFrame(st())?.id === f.id && !C.busy) openAsk(true); }, 0);
 }
-function openLog(refresh = false) {
-  const lines = G.logFor(st(), data, 150, C.viewer);
-  const html = `<div class="sh-head"><h2>Game log<small>newest first · what everyone may see</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
-    <div class="sh-body"><ul class="loglist" id="log">${lines.map(l => `<li class="${l.cls}"><span class="sw" style="--c:${l.cls === 'sys' ? 'var(--muted)' : `var(--${l.cls})`}"></span><span>${esc(l.text)}${l.rule ? ` <small style="width:auto">${esc(l.rule)}</small>` : ''}</span></li>`).join('')}</ul></div>`;
-  if (refresh) { const b = $('#sheet .sh-body'); if (b) b.innerHTML = html.slice(html.indexOf('<ul')).replace(/<\/div>$/, ''); return; }
-  openSheet('log', html, { side: true });
+// v30.3: the log view: grouped by turn (newest first), filters (All, Battles, Cards, Rolls, a seat's own lines) and "Show older". The lines
+// are G.logFor's (the desktop's log: public, plus this seat's own private Horn line); the turn and kind come from the same events.
+const LOG_KINDS = [['all', 'All'], ['battle', '⚔ Battles'], ['card', '🂠 Cards'], ['roll', '🎲 Rolls'], ['mine', '👤 Mine']];
+const logKind = t => (/battle|attack|retreat|conquer|decree|fled|horn|survivor/i.test(t) ? 'battle' : /card|displeased|assassin|bribe|resource|sell/i.test(t) ? 'card' : /dice|roll|revolt/i.test(t) ? 'roll' : 'other');
+let logFilter = 'all', logLimit = 150;
+function logRows(s, limit) {
+  const lines = G.logFor(s, data, limit, C.viewer);
+  const raw = s.log.slice(-limit * 2).filter(e => e.type !== 'actionSpent' && !(e.type === 'hornSkipped' && !(C.viewer && e.privTo?.includes(C.viewer) && e.priv))).reverse().slice(0, limit);
+  return lines.map((l, i) => ({ ...l, turn: raw[i]?.turn ?? 0, kind: logKind(raw[i]?.type ?? ''), actor: raw[i]?.actor ?? null }));
 }
+function openLog(refresh = false) {
+  const s = st(); const all = logRows(s, logLimit); const me = C.viewer;
+  const rows = all.filter(l => logFilter === 'all' || (logFilter === 'mine' ? l.actor && l.actor === me : l.kind === logFilter));
+  let lastT = null; const out = [];
+  for (const l of rows) {
+    if (l.turn !== lastT) { lastT = l.turn; out.push(`<li class="lt" data-turn="${l.turn}"><b>${l.turn ? `Turn ${l.turn}` : 'Setup'}</b></li>`); }
+    out.push(`<li class="${l.cls}" data-kind="${l.kind}"><span class="sw" style="--c:${l.cls === 'sys' ? 'var(--muted)' : `var(--${l.cls})`}"></span><span>${esc(l.text)}${l.rule ? ` <small style="width:auto">${esc(l.rule)}</small>` : ''}</span></li>`);
+  }
+  const more = s.log.length > logLimit * 2 || all.length >= logLimit;
+  const body = `<div class="seg logf" id="logFilter" role="group" aria-label="Show">${LOG_KINDS.filter(([k]) => k !== 'mine' || me).map(([k, t]) => `<button data-lf="${k}" class="${logFilter === k ? 'on' : ''}" aria-pressed="${logFilter === k}">${t}</button>`).join('')}</div>
+    <ul class="loglist" id="log">${out.join('') || '<li class="sys"><span>Nothing of this kind yet.</span></li>'}</ul>${more ? '<button class="btn wide" id="logMore" style="margin-top:8px;width:100%">Show older lines</button>' : ''}`;
+  const html = `<div class="sh-head"><h2>Game log<small>newest first · what everyone may see</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body" id="logBody">${body}</div>`;
+  if (refresh) { const b = $('#logBody'); if (b) { const top = b.scrollTop; b.innerHTML = body; b.scrollTop = top; wireLog(); } return; }
+  openSheet('log', html, { side: true }); wireLog();
+}
+function wireLog() {
+  $$('#logFilter [data-lf]').forEach(b => b.onclick = () => { logFilter = b.dataset.lf; SND.play('button_click'); openLog(true); $('#logBody').scrollTop = 0; });
+  const m = $('#logMore'); if (m) m.onclick = () => { logLimit += 150; openLog(true); };
+}
+const SPEEDS = [['1.6', 'Slow'], ['1', 'Normal'], ['0.35', 'Fast'], ['0.05', 'Instant']];
 function openMenu() {
-  const items = isGuest() ? [['sound', SND.isOn() ? '🔇 Sound off' : '🔊 Sound on'], ['leave', '🚪 Leave the online game']]   // v30.2: a guest has nothing to save, load or pause
-    : [['save', '💾 Save to a file'], ['load', '📂 Load a file'], ...(C.S && st().phase !== 'finished' ? [['pause', C.aiPaused ? '▶ Resume the AI' : '⏸ Pause the AI']] : []), ['sound', SND.isOn() ? '🔇 Sound off' : '🔊 Sound on'], ['new', '⟲ New game (this game stays in Resume)'], ['desktop', '🖥 Use desktop view'], ['auto', '↺ Automatic view']];
+  // v30.3: grouped (Game, Settings, View); a guest (v30.2) has nothing to save, load or pause: the host keeps the game
+  const sec = (t, items) => `<div class="sec">${t}</div><div class="alist">${items.map(([k, t2, sub]) => `<button class="arow" data-m="${k}"><span class="t"><b>${t2}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span></button>`).join('')}</div>`;
+  const game = isGuest() ? [['decks', '🂠 The decks', 'every card in each deck · cards left']]
+    : [['save', '💾 Save…', 'on this phone (3 slots) or as a file'], ['load', '📂 Load…', 'a saved game, the autosave or a file'], ['decks', '🂠 The decks', 'every card in each deck · cards left'], ...(C.S && st().phase !== 'finished' ? [['pause', C.aiPaused ? '▶ Resume the AI' : '⏸ Pause the AI', '']] : [])];
+  const speed = `<div class="seg" id="mnSpeed" role="group" aria-label="AI and animation speed">${SPEEDS.map(([v, t]) => `<button data-speed="${v}" class="${String(C.speed) === v ? 'on' : ''}" aria-pressed="${String(C.speed) === v}">${t}</button>`).join('')}</div>`;
   openSheet('menu', `<div class="sh-head"><h2>Menu<small>${esc(C.uiLabel)}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
-    <div class="sh-body menu"><div class="alist">${items.map(([k, t]) => `<button class="arow" data-m="${k}"><span class="t"><b>${t}</b></span></button>`).join('')}</div><p class="note">${isGuest() ? `Online game, room ${esc(C.NET.code)}: the host keeps the game. Reloading this page puts you back in your seat.` : 'The game is saved after every move: switching views or reloading keeps it (Resume).'}</p></div>`);
+    <div class="sh-body menu">${sec('Game', game)}
+      ${sec('Settings', [['sound', SND.isOn() ? '🔇 Sound off' : '🔊 Sound on', '']])}<div class="note" style="margin:8px 2px 4px">AI and animation speed</div>${speed}
+      ${isGuest() ? sec('Online', [['leave', '🚪 Leave the online game', `room ${C.NET.code}`]]) : `${sec('View', [['desktop', '🖥 Use desktop view', ''], ['auto', '↺ Automatic view', 'phone → mobile, computer → desktop']])}${sec('New', [['new', '⟲ New game', 'this game stays in Resume']])}`}
+      <p class="note">${isGuest() ? `Online game, room ${esc(C.NET.code)}: the host keeps the game. Reloading this page puts you back in your seat.` : 'The game is saved after every move: switching views or reloading keeps it (Resume).'}</p></div>`);
+  $$('#sheet [data-speed]').forEach(b => b.onclick = () => { C.speed = Number(b.dataset.speed) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } SND.play('button_click'); $$('#sheet [data-speed]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); });
   $$('#sheet [data-m]').forEach(b => b.onclick = () => {
     const k = b.dataset.m; closeSheet(true);
-    if (k === 'save' && C.S) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(makeSaveNow('file'))], { type: 'application/json' })); a.download = G.saveFileName(st()); document.body.append(a); a.click(); setTimeout(() => a.remove(), 500); toast('Save file exported'); }
-    else if (k === 'load') $('#importFile').click();
+    if (k === 'save') openSaves('save');
+    else if (k === 'load') openSaves('load');
+    else if (k === 'decks') openDecks();
     else if (k === 'pause') { C.aiPaused = !C.aiPaused; render(); schedule(); }
     else if (k === 'sound') SND.toggle();
     else if (k === 'new') toStart();
@@ -926,7 +1082,8 @@ async function playEvents(events, before = null) {
 window.__imperator = {
   state: () => (C.S ? st() : null), busy: () => C.busy || C.autoRoll, viewer: () => C.viewer, legal: () => (C.S ? mineNow() : []),
   suggest: () => (C.S && !isGuest() ? G.aiMove(C.S) : null), play: a => C.apply(a), sounds: () => SND.played.slice(-80), label: () => C.uiLabel, ui: 'mobile',
-  map: () => ({ ...MV.V }), steps: () => C.S?.steps.length ?? null,
+  mapFocus: (fx, fy, z) => MV.focus(fx, fy, z), rerender: () => render(), perfReset: () => { perf.renders = 0; perf.ms = []; },
+  map: () => ({ ...MV.V }), nudge: () => ({ ...nudge }), perf: () => { const a = [...perf.ms].sort((x, y) => x - y); return { renders: perf.renders, n: a.length, avg: a.reduce((t, x) => t + x, 0) / (a.length || 1), p95: a[Math.floor(a.length * 0.95)] ?? 0, max: a[a.length - 1] ?? 0 }; }, steps: () => C.S?.steps.length ?? null,
   popup: () => popKind, sheet: () => sheetKind, gate: pid => (C.S ? gateFor(pid) : null), battleOpen: () => popKind === 'battle',
   setSpeed: v => { C.speed = v; },
   // v30.2 (the desktop's online hooks, guest side): the link state; a dropped link (as if the network went away); a page that fails

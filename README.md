@@ -14,6 +14,6 @@ If the page looks broken right after an update, reload it with Ctrl+Shift+R (Cmd
 ## Credits
 The art and sounds were made by Vidi and Grok Bot (the sounds are synthesised, no samples).
 
-Build: v30.3 · Oct 28 2026 1:53 PM MT (M18.3).
+Build: v30.4 · Oct 28 2026 9:34 PM MT (M18.4).
 
 See LICENSE: free to play and to share the link; all other rights reserved.

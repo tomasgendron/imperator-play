@@ -416,3 +416,31 @@ button.pchip{min-height:var(--tap);color:var(--ink)}
 .mapctl button{backdrop-filter:none;background:#1b1512f0}
 @media (orientation:landscape){.sheet.pop{max-height:calc(100% - var(--sat) - 8px)}.sheet.side{top:var(--sat)}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+/* v30.4: a phone hosts (the Host tab's room box, the seat rows, the host's strip and chip dots) */
+#hostBox .hcode,#roomBox .hcode{display:flex;align-items:baseline;gap:10px;margin:4px 2px 2px}
+#hostBox .hcode span,#roomBox .hcode span{color:var(--ink2);font-size:12px}
+#hostBox .hcode b,#roomBox .hcode b{font-size:26px;letter-spacing:.14em;color:var(--gold2);font-family:ui-monospace,Menlo,Consolas,monospace}
+#hostBox input[readonly],#roomBox input[readonly]{font-size:13px}
+.hbtns{display:flex;gap:8px;margin-top:8px}
+.hbtns .btn{flex:1;min-height:var(--tap)}
+#hostBox .jstat{margin-top:8px;font-size:13px;color:var(--ink2);min-height:18px;line-height:1.35}
+#hostBox .jstat.ok{color:#9fe0a0}
+#hostBox .jstat.bad{color:#f0a35e}
+#hostBox .jstat .btn.sm{min-height:var(--tap);padding:0 12px;margin-left:4px}
+#hostBox .hwarn{margin:8px 0 0;color:var(--ink)}
+#hWake{margin-top:4px}
+#hWake:empty{display:none}
+.seat .t .rname{display:flex;align-items:center;gap:6px;min-height:var(--tap);font-size:15px;font-weight:700;padding:0 4px}
+.seat .t .rname small{font-size:11px;font-weight:700}
+.seat .t .rname small.ok{color:#9fe0a0}
+.seat .t .rname small.bad{color:#f0a35e}
+.seat .t .rname .muted{color:var(--ink2);font-weight:600;font-size:13px}
+.seat .ctl.you{display:flex;align-items:center;justify-content:center;color:var(--gold2)}
+.pl .ndot{position:absolute;bottom:4px;right:5px;font-size:10px;line-height:1}
+.pl .ndot.ok{color:#7fd88a}
+.pl .ndot.bad{color:#f0a35e}
+.netbar.host-away{background:#3a2a10}
+.netbar .nbroom{min-height:var(--tap);min-width:var(--tap);padding:0 10px;border-radius:10px;border:1px solid var(--line2);background:var(--panel2);color:var(--ink);font-size:12.5px}
+.netbar .nbseat{display:inline-flex;align-items:center;gap:5px}
+.netbar .nbwarn{color:#f0a35e;font-weight:700}

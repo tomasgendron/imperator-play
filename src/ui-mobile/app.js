@@ -2,17 +2,19 @@
 // (src/ui/core/controller.js: apply, the AI timing, the autosave) and the same helpers (src/ui/game/model.js: legal moves, hands, log,
 // steps), so every button here is one of the engine's legal moves for this seat, exactly as on the desktop. Only the screen differs:
 // portrait = players on top, the map in the middle, a thumb bar of actions at the bottom; landscape = players left, actions right.
-// v30 plays on this phone (hot-seat and AI). v30.2: a phone JOINS online games (./guest.js, the desktop's guest wiring on src/net/*);
-// hosting from a phone comes later (the Host tab says so).
+// v30 plays on this phone (hot-seat and AI). v30.2: a phone JOINS online games (./guest.js, the desktop's guest wiring on src/net/*).
+// v30.4: a phone HOSTS online games (./host.js, the desktop's host wiring on the same src/net/* and controller; wake lock and a
+// background warning are the phone's own).
 import { loadGameData } from '../ui/loadData.js';
 import { resolveAsset } from '../ui/assets.js';
-import { setupChoices, checkSetup } from '../ui/consoleModel.js';
+import { setupChoices, checkSetup, current } from '../ui/consoleModel.js';
 import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, isUnderGarrisoned } from '../engine/index.js';
 import * as G from '../ui/game/model.js';
 import { createSound } from '../ui/game/sound.js';
 import { createController } from '../ui/core/controller.js';
 import { createMapView } from './map.js';
 import { createGuest, NAME_KEY, normCode, HOST_AWAY_MS, PEND_RETRY_MS, whyText } from './guest.js';
+import { createHost, onlineSave, joinLink } from './host.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -26,7 +28,7 @@ const C = createController({
   applied: ({ fromAi }) => { if (!fromAi && ['ask', 'list', 'moves', 'cards', 'assassin', 'cardTargets', 'ally', 'drawcall'].includes(sheetKind)) closeSheet(true); },
   thinking: pid => $$('#players .pl').forEach(el => el.classList.toggle('thinking', el.dataset.pid === pid)),
   toast: m => toast(m), sound: id => SND.play(id), showGameOver: () => showGameOver(), displeasedAlert: f => displeasedAlert(f),
-  guestSend: a => NETG.send(a), guestDrain: () => NETG.drain(), netPush: () => {}, hostDrain: () => {},   // v30.2: a phone is only ever a guest
+  guestSend: a => NETG.send(a), guestDrain: () => NETG.drain(), netPush: () => NETH.push(), hostDrain: () => NETH.drain(),   // v30.2 guest, v30.4 host
 });
 const { st, mineNow, human, schedule, autosave, makeSaveNow, spd, sleep } = C;
 const inGame = () => !!C.S && document.body.dataset.screen === 'game';
@@ -39,8 +41,18 @@ const NETG = createGuest({
   lost: msg => { SND.play('error_denied'); openSheet('netlost', `<div class="sh-head"><h2>Disconnected</h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div><div class="sh-body" id="netLostBox"><p>${esc(msg)}</p></div><div class="sh-foot"><button class="btn gold wide" data-close>OK</button><button class="btn wide" id="nlLeave">Back to the start</button></div>`); $('#nlLeave').onclick = () => { closeSheet(true); toStart(); }; },
 });
 const isGuest = () => C.NET?.role === 'guest';
-/** The seat this screen shows: online, always this phone's own seat (the host sends only its view); else the hot-seat viewer. */
-const meNow = s => (isGuest() ? C.NET.me : G.viewerFor(s, C.viewer));
+const isHost = () => C.NET?.role === 'host';
+// v30.4: the host side (./host.js): the room, the guests' moves, the wake lock and the background warning
+const NETH = createHost({
+  C, data: () => data, st: () => st(), full: () => C.full(), current, inGame, render: () => render(), autosave: () => autosave(), schedule: () => schedule(),
+  toast: m => toast(m), closePops: () => { if (popDone) closePop(); }, popupWaiting: () => !!popDone,
+  lobby: () => { if (playWhere === 'host' && document.body.dataset.screen === 'setup') renderHostBox(); },
+  cancelled: () => playWhere !== 'host' || document.body.dataset.screen !== 'setup',
+  away: ms => hostBack(ms), wake: () => { if (inGame()) renderNetBar(); else { const e = $('#hWake'); if (e) e.innerHTML = wakeText(); } },
+});
+/** The seat this screen shows: online, always this phone's own seat (a guest gets only its view; a host plays only its own seat);
+ *  else the hot-seat viewer. */
+const meNow = s => (C.NET?.me ? C.NET.me : G.viewerFor(s, C.viewer));
 const img = (id, o = {}) => { const r = resolveAsset(assets, id, o); return r.path ?? r.fallback ?? r.placeholder; };
 const prov = id => data.provincesById[id]?.name ?? id;
 const pn = id => G.nameOf(st(), id);
@@ -115,7 +127,7 @@ async function boot() {
   const q = new URLSearchParams(location.search);
   if (q.get('join')) { playWhere = 'join'; joinCode = normCode(q.get('join')); }
   joinWas = normCode(q.get('was') || '');   // M14: the host resumed under a new code (the old one was taken)
-  addEventListener('pagehide', () => { try { C.NET?.client?.leave(); } catch { /* */ } });   // as the desktop: the host frees the link at once
+  addEventListener('pagehide', e => { try { if (isHost()) { if (C.S) autosave(); if (!e.persisted) NETH.leave(); } else C.NET?.client?.leave(); } catch { /* */ } });   // as the desktop: the host frees the link at once
   renderStart();
   document.body.dataset.ready = '1';
 }
@@ -125,23 +137,31 @@ const SEAT_NAMES = ['Vidi', 'Marcus (AI)', 'Livia (AI)'];
 let seats = [{ name: 'Vidi', controller: 'human', general: 'random' }, { name: 'Marcus (AI)', controller: 'ai', general: 'random' }];
 let startMode = 'random', playWhere = 'local', advOpen = false;
 let seed = 'g' + Math.floor(Math.random() * 1e6);
-const engineSeats = () => seats.map(x => ({ name: x.name.trim(), controller: x.controller, general: x.general }));
+const engineSeats = () => seats.map((x, i) => (x.controller === 'remote' ? { name: NETH.remoteName(i) || `Guest ${i + 1}`, controller: 'human', general: x.general } : { name: x.name.trim(), controller: x.controller, general: x.general }));
+/** v30.4: the host's seats -> the room (lobby only): this phone's seat is 'local', the Online seats 'remote', the rest 'ai'. */
+const syncRoom = () => NETH.configure(seats.map((x, i) => ({ kind: x.controller === 'remote' ? 'remote' : x.controller === 'ai' ? 'ai' : 'local', name: x.name.trim() || `Player ${i + 1}` })));
+/** v30.4: the Host tab's seats: seat 1 is this phone (the host), every other seat is Online or AI (at least one Online). */
+let localCtl = null;   // the hot-seat controllers before the Host tab, given back when the host leaves it (an AI seat stays AI)
+function hostSeats(on) {
+  if (on) { if (!localCtl) localCtl = seats.map(x => x.controller); seats[0].controller = 'human'; seats.forEach((x, i) => { if (i && x.controller === 'human') x.controller = 'remote'; }); if (!seats.some(x => x.controller === 'remote')) seats[1].controller = 'remote'; }
+  else { seats.forEach((x, i) => { if (x.controller === 'remote') x.controller = localCtl?.[i] && localCtl[i] !== 'remote' ? localCtl[i] : 'human'; }); if (localCtl?.[0] && seats[0]) seats[0].controller = localCtl[0]; localCtl = null; }
+}
 const autosaveText = () => { try { return localStorage.getItem('imperator.autosave'); } catch { return null; } };
 function renderStart() {
   document.body.dataset.screen = 'setup'; $('#app').hidden = true; const el = $('#start'); el.hidden = false; closeSheet(true);
   const gen = x => (x.general === 'random' ? null : data.generalsById[x.general]);
   const seatRow = (x, i) => { const g = gen(x);
     return `<div class="seat" data-seat="${i}" style="--c:var(--p${i + 1})"><button class="gc${g ? '' : ' rnd'}" data-gen="${i}" ${g ? `style="background-image:url('${attr(img('general.' + g.id))}')"` : ''} aria-label="Choose seat ${i + 1}'s general">${g ? '' : '?'}</button>
-      <div class="t"><input name="name${i}" value="${attr(x.name)}" aria-label="Seat ${i + 1} name" autocomplete="off"><span class="gpick" data-gen="${i}">${g ? `${esc(g.name)} · ${esc(G.generalCaption(data, g.id))}` : 'Random free general'} ▾</span></div>
-      <button class="ctl" data-ctl="${i}" aria-label="Seat ${i + 1}: played by">${x.controller === 'ai' ? '🤖 AI' : '👤 Human'} ▾</button></div>`; };
-  const online = playWhere !== 'local';
+      <div class="t">${x.controller === 'remote' ? `<span class="rname" data-rname="${i}">${remoteLabel(i)}</span>` : `<input name="name${i}" value="${attr(x.name)}" aria-label="Seat ${i + 1} name" autocomplete="off">`}<span class="gpick" data-gen="${i}">${g ? `${esc(g.name)} · ${esc(G.generalCaption(data, g.id))}` : 'Random free general'} ▾</span></div>
+      ${playWhere === 'host' && i === 0 ? '<span class="ctl you" data-ctl-you="0">📱 You (host)</span>' : `<button class="ctl" data-ctl="${i}" aria-label="Seat ${i + 1}: played by">${x.controller === 'ai' ? '🤖 AI' : x.controller === 'remote' ? '🌐 Online' : '👤 Human'} ▾</button>`}</div>`; };
+  const online = playWhere === 'join';   // v30.4: the Host tab has the seats and the starts (the host chooses them)
   const r = checkSetup(data, engineSeats(), startMode); const errs = r.ok ? '' : r.errors.map(e => (e.seat !== null ? `Seat ${e.seat + 1}: ` : '') + e.message).join('\n');
   const auto = autosaveText(); let autoInfo = '';
   try { const o = auto && JSON.parse(auto); if (o?.snapshot) autoInfo = ` (turn ${o.snapshot.turn?.number ?? 0})`; } catch { /* */ }
   el.innerHTML = `<div class="hero"><span class="ver" id="mVer">${esc(C.uiLabel.split(' · ')[0])} · mobile</span><h1>IMPERATOR</h1><p>2 or 3 players · win with ${data.rules.winPrestige} Prestige</p></div>
   <div class="form">
     <div class="seg" role="group" aria-label="Where the players are">${[['local', '📱 This phone'], ['host', '🌐 Host'], ['join', '🔗 Join']].map(([k, t]) => `<button data-where="${k}" class="${playWhere === k ? 'on' : ''}" aria-pressed="${playWhere === k}">${t}</button>`).join('')}</div>
-    ${playWhere === 'host' ? `<div class="grp" id="hostOff"><h3>Host an online game</h3><p class="note" style="margin:0">Hosting from a phone is not available yet (it comes after v30.4). To play online, open Imperator on a computer, choose <b>Host</b> there and send the code or the link; then tap <b>🔗 Join</b> here.</p></div>` : ''}
+    ${playWhere === 'host' ? `<div class="grp" id="hostBox">${hostBoxHtml()}</div>` : ''}
     ${playWhere === 'join' ? joinBoxHtml() : ''}
     ${online ? '' : `<div class="grp" id="seatsGrp"><h3>Players <span class="seg" style="padding:2px;border-radius:11px">${[2, 3].map(n => `<button data-n="${n}" class="${seats.length === n ? 'on' : ''}" style="min-width:52px" aria-pressed="${seats.length === n}">${n}</button>`).join('')}</span></h3>
       ${seats.map(seatRow).join('')}</div>
@@ -155,11 +175,16 @@ function renderStart() {
     <div class="serr" id="mErr">${esc(errs)}</div>
     ${viewLinks()}
   </div>
-  <div class="sfoot">${playWhere === 'join' ? `<button class="btn gold big" id="mJoinGo" ${joinBusy ? 'disabled' : ''}>Join ▶</button>` : `<button class="btn gold big" id="mStart" ${r.ok && !online ? '' : 'disabled'}>Start game ▶</button>`}<div class="row"><button class="btn wide" id="mResume" ${auto ? '' : 'disabled'}>↺ Resume${esc(autoInfo)}</button><button class="btn wide" id="mLoad">📂 Load…</button></div></div>`;
-  $$('[data-where]', el).forEach(b => b.onclick = () => { if (b.dataset.where === playWhere) return; if (playWhere === 'join') { NETG.leave(); joinBusy = false; joinLobby = null; joinMsg = null; } playWhere = b.dataset.where; SND.play('button_click'); renderStart(); });
-  $$('[data-n]', el).forEach(b => b.onclick = () => { const n = +b.dataset.n; while (seats.length < n) seats.push({ name: SEAT_NAMES[seats.length], controller: 'ai', general: 'random' }); seats.length = n; renderStart(); });
-  $$('[data-ctl]', el).forEach(b => b.onclick = () => { const x = seats[+b.dataset.ctl]; x.controller = x.controller === 'ai' ? 'human' : 'ai'; SND.play('button_click'); renderStart(); });
-  $$('input[name^=name]', el).forEach(inp => inp.oninput = () => { seats[+inp.name.slice(4)].name = inp.value; const rr = checkSetup(data, engineSeats(), startMode); $('#mErr').textContent = rr.ok ? '' : rr.errors.map(e => (e.seat !== null ? `Seat ${e.seat + 1}: ` : '') + e.message).join('\n'); if ($('#mStart')) $('#mStart').disabled = !rr.ok || playWhere !== 'local'; });
+  <div class="sfoot">${playWhere === 'join' ? `<button class="btn gold big" id="mJoinGo" ${joinBusy ? 'disabled' : ''}>Join ▶</button>` : `<button class="btn gold big" id="mStart" ${r.ok && !online && (playWhere !== 'host' || NETH.readiness(seats).ok) ? '' : 'disabled'}>Start game ▶</button>`}<div class="row"><button class="btn wide" id="mResume" ${auto ? '' : 'disabled'}>${onlineSave(auto) ? '🌐 Resume online' : '↺ Resume'}${esc(autoInfo)}</button><button class="btn wide" id="mLoad">📂 Load…</button></div></div>`;
+  $$('[data-where]', el).forEach(b => b.onclick = () => { if (b.dataset.where === playWhere) return; if (playWhere === 'join') { NETG.leave(); joinBusy = false; joinLobby = null; joinMsg = null; }
+    if (playWhere === 'host') { NETH.leave(); hostErr = null; hostSeats(false); }
+    playWhere = b.dataset.where; if (playWhere === 'host') { hostSeats(true); hostOpen(); } SND.play('button_click'); renderStart(); });
+  $$('[data-n]', el).forEach(b => b.onclick = () => { const n = +b.dataset.n; while (seats.length < n) seats.push({ name: SEAT_NAMES[seats.length], controller: 'ai', general: 'random' }); seats.length = n; if (playWhere === 'host') { hostSeats(true); syncRoom(); } renderStart(); });
+  $$('[data-ctl]', el).forEach(b => b.onclick = () => { const i = +b.dataset.ctl; const x = seats[i];
+    if (playWhere === 'host') { const next = x.controller === 'remote' ? 'ai' : 'remote'; if (next === 'ai' && seats.filter(y => y.controller === 'remote').length < 2) { SND.play('error_denied'); toast('An online game needs at least one Online seat.'); return; } x.controller = next; syncRoom(); }
+    else x.controller = x.controller === 'ai' ? 'human' : 'ai';
+    SND.play('button_click'); renderStart(); });
+  $$('input[name^=name]', el).forEach(inp => inp.oninput = () => { seats[+inp.name.slice(4)].name = inp.value; const rr = checkSetup(data, engineSeats(), startMode); $('#mErr').textContent = rr.ok ? '' : rr.errors.map(e => (e.seat !== null ? `Seat ${e.seat + 1}: ` : '') + e.message).join('\n'); if ($('#mStart')) $('#mStart').disabled = !rr.ok || playWhere === 'join' || (playWhere === 'host' && !NETH.readiness(seats).ok); if (playWhere === 'host') syncRoom(); });
   $$('[data-gen]', el).forEach(b => b.onclick = () => openGeneralPick(+b.dataset.gen));
   $$('[data-mode]', el).forEach(b => b.onclick = () => { startMode = b.dataset.mode; renderStart(); });
   $$('[data-deck]', el).forEach(b => b.onclick = () => openDeck(b.dataset.deck));
@@ -169,9 +194,50 @@ function renderStart() {
   const so = $('#mSound'); if (so) so.onclick = () => { SND.toggle(); renderStart(); };
   if ($('#mStart')) $('#mStart').onclick = startGame;
   if (playWhere === 'join') wireJoin(el);
+  if (playWhere === 'host') wireHostBox(el);
   $('#mResume').onclick = () => { const t = autosaveText(); if (t) loadFrom(t); };
   $('#mLoad').onclick = () => openSaves('load');
   wireViewLinks(el);
+}
+// v30.4: Host (the desktop's Host on this phone): the room opens when the tab is chosen; the code and the link go to the guests (a
+// desktop or a phone: the link opens index.html, which sends a phone on to mobile.html); each Online seat waits for its guest, and
+// Start game is enabled when every Online seat has one. The host chooses the generals and the start mode, as on the desktop.
+let hostErr = null, hostBusy = false;
+function hostOpen() {
+  if (C.NET || hostBusy) return; hostBusy = true; hostErr = null;
+  NETH.open().then(n => { hostBusy = false; if (n) syncRoom(); renderHostBox(); })
+    .catch(e => { hostBusy = false; hostErr = e.message ?? String(e); renderHostBox(); });
+}
+const remoteLabel = i => { const r = isHost() ? C.NET.room.seats[i] : null; const nm = NETH.remoteName(i);
+  return r?.token ? `${esc(nm || `Guest ${i + 1}`)} <small class="${r.connected ? 'ok' : 'bad'}">${r.connected ? '● online' : '○ away'}</small>` : `<span class="muted">waiting for a player…</span>`; };
+function wakeText() {
+  const w = NETH.wake();
+  return w === 'on' ? '🔆 The screen stays on while you host.' : w === 'unsupported' ? '⚠ This browser cannot keep the screen on: turn Auto-Lock off (or keep tapping) while you host.'
+    : w === 'denied' ? '⚠ The screen could not be kept on (low battery mode?): keep it awake while you host.' : '';
+}
+function hostBoxHtml() {
+  const n = isHost() ? C.NET : null; const rd = NETH.readiness(seats);
+  const stat = hostErr ? `<div class="jstat bad" id="hStat" role="alert">Could not open a room: ${esc(hostErr)} <button class="btn sm" id="hRetry">Try again</button></div>`
+    : !n ? '<div class="jstat" id="hStat" role="status"><span class="spin">⟳</span> Opening a room…</div>'
+    : `<div class="jstat${rd.ok ? ' ok' : ''}" id="hStat" role="status">${esc(rd.why)}</div>`;
+  return `<h3>Host an online game</h3>
+    ${n ? `<div class="hcode"><span>Room code</span><b id="hCode">${esc(n.code)}</b></div>
+    <label class="fld">Join link<input type="text" id="hLink" value="${attr(joinLink(n.code))}" readonly aria-label="Join link"></label>
+    <div class="row hbtns"><button class="btn" id="hCopy">📋 Copy link</button>${navigator.share ? '<button class="btn" id="hShare">📤 Share…</button>' : ''}</div>` : ''}
+    ${stat}
+    <p class="note hwarn" id="hWarn">📱 This phone runs the game for everyone. Keep Imperator open with the screen on until the game ends: switching apps or locking the screen pauses the game and drops the guests (they come back by themselves when you return).</p>
+    <div class="note" id="hWake">${wakeText()}</div>`;
+}
+function renderHostBox() {
+  const b = $('#hostBox'); if (!b) return;
+  b.innerHTML = hostBoxHtml(); wireHostBox($('#start'));
+  $$('[data-rname]').forEach(e => { e.innerHTML = remoteLabel(+e.dataset.rname); });
+  const r = checkSetup(data, engineSeats(), startMode); const st0 = $('#mStart'); if (st0) st0.disabled = !r.ok || !NETH.readiness(seats).ok;
+}
+function wireHostBox(el) {
+  const rt = $('#hRetry', el); if (rt) rt.onclick = () => { hostErr = null; renderHostBox(); hostOpen(); };
+  const cp = $('#hCopy', el); if (cp) cp.onclick = async () => { const v = $('#hLink').value; try { await navigator.clipboard.writeText(v); toast('Link copied: send it to the other players'); } catch { $('#hLink').select(); toast('Select the link and copy it'); } };
+  const sh = $('#hShare', el); if (sh) sh.onclick = async () => { try { await navigator.share({ title: 'Imperator', text: `Join my Imperator game: room ${C.NET.code}`, url: $('#hLink').value }); } catch { /* cancelled */ } };
 }
 // v30.2: Join (by the host's link, ?join=CODE[&was=OLD][&net=local], or by typing the code): the same hello, lobby and seat token as the
 // desktop's Join; the host picks the generals and the starts and starts the game, and this phone then enters it as that seat.
@@ -227,13 +293,66 @@ function openDecks() {
 }
 function startGame() {
   const r = checkSetup(data, engineSeats(), startMode); if (!r.ok) { SND.play('error_denied'); renderStart(); return; }
-  try { C.S = G.newSession(data, { seed: (seed.trim() || 'game'), mode: startMode, seats: engineSeats() }); }
+  const host = playWhere === 'host';
+  if (host && !NETH.readiness(seats).ok) { SND.play('error_denied'); toast(NETH.readiness(seats).why); renderStart(); return; }
+  // v30.4 (as the desktop's seedNow): an online game's seed has the room's secret salt, so a guest cannot replay the dice
+  try { C.S = G.newSession(data, { seed: (seed.trim() || 'game') + (host ? '#' + C.NET.salt : ''), mode: startMode, seats: engineSeats() }); }
   catch (e) { $('#mErr').textContent = e.message; return; }
+  if (host) NETH.started(0);
   SND.play('deck_shuffle'); enterGame(true);
+  if (host) NETH.push();
 }
-function loadFrom(text, errEl = null) {
+function loadFrom(text, errEl = null, { local = false } = {}) {
+  const on = !local && onlineSave(text);
+  if (on) { askResume(on); return true; }   // v30.4 (the desktop's M14): a hosted online game: reopen the room, or play it here
   let ns; try { ns = G.readSave(text, data); } catch (e) { SND.play('error_denied'); if (errEl) errEl.textContent = e.message; else if (document.body.dataset.screen === 'setup') $('#mErr').textContent = e.message; else toast(e.message); return false; }
-  clearTimeout(C.aiTimer); if (C.NET) NETG.leave(); C.S = ns; enterGame(false); toast('Game loaded'); return true;
+  clearTimeout(C.aiTimer); leaveNet(); C.S = ns; enterGame(false); toast('Game loaded'); return true;
+}
+/** Leave whatever online game this page is in (a guest's link or a hosted room). */
+function leaveNet() { if (isHost()) NETH.leave(); else if (C.NET) NETG.leave(); joinBusy = false; joinLobby = null; joinMsg = null; hostErr = null; if (playWhere === 'host') { hostSeats(false); playWhere = 'local'; } }
+// v30.4: resume a hosted online game on this phone (the desktop's resumeOnline): the same room code when it is free (the guests' links
+// and seats still work: they rejoin by themselves or by opening the link again), else a new code and a link that says so (?was=OLD).
+function askResume(on) {
+  const t = on.snapshot?.turn?.number ?? 0;
+  openSheet('resumeask', `<div class="sh-head"><h2>An online game<small>room ${esc(on.online.code)} · turn ${t}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body" id="resumeAsk"><p>This save is an online game this phone hosted (room <b>${esc(on.online.code)}</b>, turn ${t}, ${esc((on.snapshot?.players ?? []).map(p => p.name).join(', '))}).</p>
+      <p class="note">Resume online: the room opens again and the other players rejoin their seats with the same code or link.</p><div class="serr" id="raErr" role="alert"></div></div>
+    <div class="sh-foot"><button class="btn gold wide" id="raOnline">🌐 Resume online</button><button class="btn wide" id="raLocal">Play it on this phone</button></div>`);
+  $('#raLocal').onclick = () => { closeSheet(true); loadFrom(on, null, { local: true }); };
+  $('#raOnline').onclick = async () => {
+    const b = $('#raOnline'); b.disabled = true; b.textContent = 'Opening the room…';
+    try {
+      clearTimeout(C.aiTimer); if (C.NET) leaveNet();
+      const r = await NETH.resume(on, o => G.readSave(o, data));
+      playWhere = 'local'; closeSheet(true); enterGame(false); NETH.push();
+      roomSheet(r.same ? 'The room is open again with the same code: the other players rejoin by themselves, or by opening the same link.'
+        : `Room ${r.old} was taken, so the game has a new code. Send the other players this new link: their seats are kept.`, r.same ? null : r.old);
+    } catch (e) { SND.play('error_denied'); const x = $('#raErr'); if (x) x.textContent = e.message; b.disabled = false; b.textContent = '🌐 Resume online'; }
+  };
+}
+/** v30.4: the room's code and link during a hosted game (Menu → Room and link, after a resume). */
+function roomSheet(msg = '', was = null) {
+  if (!isHost()) return;
+  const link = joinLink(C.NET.code, was);
+  openSheet('room', `<div class="sh-head"><h2>Room ${esc(C.NET.code)}<small>send the code or the link to the other players</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body" id="roomBox">${msg ? `<p>${esc(msg)}</p>` : ''}<div class="hcode"><span>Room code</span><b id="rmCode">${esc(C.NET.code)}</b></div>
+      <label class="fld">Join link<input type="text" id="rmLink" value="${attr(link)}" readonly aria-label="Join link"></label>
+      <div class="row hbtns"><button class="btn" id="rmCopy">📋 Copy link</button>${navigator.share ? '<button class="btn" id="rmShare">📤 Share…</button>' : ''}</div>
+      <p class="note">${wakeText() || 'Keep Imperator open with the screen on while you host.'}</p></div>
+    <div class="sh-foot"><button class="btn gold wide" data-close>OK</button></div>`);
+  $('#rmCopy').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch { $('#rmLink').select(); toast('Select the link and copy it'); } };
+  const sh = $('#rmShare'); if (sh) sh.onclick = async () => { try { await navigator.share({ title: 'Imperator', text: `Join my Imperator game: room ${C.NET.code}`, url: link }); } catch { /* */ } };
+}
+/** v30.4: the host came back after the page was in the background (another app, a locked screen): say what happened. The guests'
+ *  pages reconnect by themselves (their GuestClient retries) and the host has just sent each one the whole view again. */
+function hostBack(ms) {
+  if (!isHost() || !inGame()) return;
+  SND.play('error_denied');
+  const away = C.NET.room.seats.filter(x => x.kind === 'remote' && !x.connected).map(x => x.name || `Guest ${x.i + 1}`);
+  openSheet('hostback', `<div class="sh-head"><h2>⚠ You were away for ${Math.round(ms / 1000)} s<small>room ${esc(C.NET.code)}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body" id="hostBackBox"><p>While Imperator was in the background or the screen was locked, the game was paused for everyone and the other players' links may have dropped.</p>
+      <p>They reconnect to their seats by themselves now${away.length ? ` (not back yet: ${esc(away.join(', '))})` : ''}. Keep this page open, with the screen on, until the game ends.</p></div>
+    <div class="sh-foot"><button class="btn gold wide" data-close>OK</button></div>`);
 }
 // ------------------------------------------------------------------ v30.3: saves on the phone (localStorage), as on the desktop's Save / Load
 // Three slots on this phone: slot 1 is the same key as the desktop's "Save in this browser" (imperator.save.slot1), so a game saved in
@@ -246,7 +365,7 @@ function saveLine(o) {
   if (!o?.snapshot) return null;
   const at = o.meta?.savedAt ? new Date(o.meta.savedAt).toLocaleString('en-US', { timeZone: 'America/Edmonton', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' MT' : 'no date';
   const s = o.snapshot; const over = s.phase === 'finished' ? ' · game over' : '';
-  return `${at} · turn ${s.turn?.number ?? 0}${over} · ${(s.players ?? []).map(p => p.name).join(', ')}${o.online?.room ? ` · online room ${o.online.room.code ?? ''} (plays on this phone)` : ''}${o.meta?.appVersion ? ' · ' + String(o.meta.appVersion).split(' · ')[0] : ''}`;
+  return `${at} · turn ${s.turn?.number ?? 0}${over} · ${(s.players ?? []).map(p => p.name).join(', ')}${o.online?.room ? ` · 🌐 online room ${o.online.code ?? o.online.room.code ?? ''}` : ''}${o.meta?.appVersion ? ' · ' + String(o.meta.appVersion).split(' · ')[0] : ''}`;
 }
 function openSaves(mode, armed = null) {
   const saving = mode === 'save'; const live = !!C.S && inGame() && st().phase !== 'finished';
@@ -270,7 +389,7 @@ function openSaves(mode, armed = null) {
     }
     if (!o) return;
     if (live && armed !== k) { SND.play('button_click'); openSaves(mode, k); return; }
-    if (loadFrom(JSON.stringify(o), $('#svErr'))) closeSheet(true);
+    if (loadFrom(JSON.stringify(o), $('#svErr')) && sheetKind === 'saves') closeSheet(true);
   });
   $$('#sheet [data-del]').forEach(b => b.onclick = () => { const k = b.dataset.del; if (armed !== 'del:' + k) { SND.play('button_click'); openSaves(mode, 'del:' + k); return; } try { localStorage.removeItem(k); } catch { /* */ } toast('Save deleted'); openSaves(mode); if (document.body.dataset.screen === 'setup') renderStartKeepSheet(); });
   $('#svFile').onclick = () => {
@@ -282,13 +401,13 @@ function openSaves(mode, armed = null) {
 function renderStartKeepSheet() { const r = $('#mResume'); if (!r) return; const t = autosaveText(); r.disabled = !t; }
 function enterGame(fresh) {
   document.body.dataset.screen = 'game'; $('#start').hidden = true; $('#app').hidden = false; closeSheet(true);
-  C.viewer = isGuest() ? C.NET.me : null; C.aiPaused = false; C.busy = false; selected = null; document.body.dataset.netLost = ''; overShown = false; lastRoll = null; askSeen = null;
+  C.viewer = C.NET?.me ?? null; C.aiPaused = false; C.busy = false; selected = null; document.body.dataset.netLost = ''; overShown = false; lastRoll = null; askSeen = null;
   if (popKind) closePop(); $('#cardPlays').innerHTML = ''; battleOff = null;   // nothing of the last game stays on screen
   requestAnimationFrame(() => { MV.start(0.45, 0.5); });
   $('#maphint').hidden = !fresh; if (fresh) setTimeout(() => { $('#maphint').hidden = true; }, 4000);
   autosave(); render(); schedule();
 }
-function toStart() { clearTimeout(C.aiTimer); if (C.NET) { NETG.leave(); joinBusy = false; joinLobby = null; joinMsg = null; } C.S = null; renderStart(); renderNetBar(); }
+function toStart() { clearTimeout(C.aiTimer); if (C.NET) leaveNet(); C.S = null; renderStart(); renderNetBar(); }
 
 // ------------------------------------------------------------------ the game screen
 let selected = null, overShown = false, lastRoll = null, askSeen = null;
@@ -301,7 +420,7 @@ function render() {
   document.body.dataset.frame = topFrame(s)?.kind ?? (s.phase === 'turn' ? 'free' : s.phase);
   document.body.dataset.viewer = C.viewer ?? '';
   document.body.dataset.humanTurn = legal.length ? '1' : '';
-  $('#topInfo').textContent = `${s.phase === 'setup' ? 'Setup' : s.phase === 'finished' ? 'Game over' : `Turn ${s.turn.number}`} · ${C.uiLabel.split(' · ')[0]}`;
+  $('#topInfo').textContent = `${s.phase === 'setup' ? 'Setup' : s.phase === 'finished' ? 'Game over' : `Turn ${s.turn.number}`} · ${isHost() ? '🌐 ' + C.NET.code : C.uiLabel.split(' · ')[0]}`;
   $('#dieVal').textContent = lastRoll ? lastRoll.value : '–';
   const t0 = performance.now();
   renderPlayers(s); renderSteps(s, legal); renderTokens(s, legal); renderActs(s, legal); renderLogPeek(s);
@@ -318,10 +437,29 @@ function render() {
   autoAsk(s, legal);
   if (!C.busy && C.viewer && news[C.viewer]?.length) setTimeout(showNews, 0);
 }
+/** v30.4: the host's strip (the desktop's host banner and seat badges): the room code (tap: the code and the link), the guests who are
+ *  away with a "→ AI" button, a guest's seat the AI plays with "← back" when that guest is connected again, and the screen-on warning. */
+function renderHostBar(el) {
+  const s = C.full(); const items = [];
+  s.players.forEach((p, i) => { const k = NETH.seatState(i);
+    if (k === 'away' && s.phase !== 'finished') items.push(`<span class="nbseat away">○ <b>${esc(p.name)}</b> is away <button type="button" class="btn sm" data-toai="${i}" aria-label="Give ${attr(p.name)}'s seat to the AI">→ AI</button></span>`);
+    else if (k === 'ai-online' && s.phase !== 'finished') items.push(`<span class="nbseat">🤖 <b>${esc(p.name)}</b> (AI) is back <button type="button" class="btn sm gold" data-back="${i}" aria-label="Give ${attr(p.name)} their seat back">← back</button></span>`);
+    else if (k === 'ai-away') items.push(`<span class="nbseat">🤖 <b>${esc(p.name)}</b>: AI</span>`); });
+  const w = NETH.wake(); const warn = w === 'unsupported' || w === 'denied' ? '<span class="nbwarn">⚠ keep the screen on</span>' : '';
+  const status = items.some(x => x.includes('away')) ? 'host-away' : 'host';
+  document.body.dataset.netStatus = status;
+  // shown only when there is something to do or to know (the code and the link are in the Menu and the top bar's 🌐 chip)
+  const html = items.length || warn ? `<button type="button" class="nbroom" id="nbRoom" aria-label="Room ${attr(C.NET.code)}: the code and the link">🌐 <b>${esc(C.NET.code)}</b></button>${items.join('')}${warn}` : '';
+  el.hidden = !html; el.className = 'netbar ' + status; if (!setHTML(el, html) || !html) return;
+  $('#nbRoom').onclick = () => roomSheet();
+  $$('[data-toai]', el).forEach(b => b.onclick = () => { const i = +b.dataset.toai; const nm = C.full().players[i]?.name; if (window.confirm(`Give ${nm}'s seat to the AI? (You can give it back when ${nm} is connected again.)`)) NETH.toAI(i); });
+  $$('[data-back]', el).forEach(b => b.onclick = () => NETH.back(+b.dataset.back));
+}
 /** v30.2: the online strip under the top bar (the desktop's renderNetBanner, guest side): reconnecting | lost | hostAway | waiting | ai |
  *  ended; hidden while connected. body[data-net-status] is for tests. */
 function renderNetBar() {
   const el = $('#netBar'); if (!el) return;
+  if (isHost() && inGame()) { renderHostBar(el); return; }
   if (!isGuest() || !inGame()) { el.hidden = true; el.innerHTML = ''; document.body.dataset.netStatus = ''; return; }
   const n = C.NET, c = n.client, status = NETG.status(), i = n.info ?? {};
   document.body.dataset.netStatus = status;
@@ -339,12 +477,18 @@ function renderNetBar() {
   if ($('#nbNow')) $('#nbNow').onclick = () => { const v = normCode($('#nbCode')?.value || ''); c.retryNow(v.length >= 4 ? v : null); };
   if ($('#nbLeave')) $('#nbLeave').onclick = () => toStart();
 }
+/** v30.4: a host's player chips show each guest's link: ● online, ○ away (and 'you' for this phone). */
+function netDot(s, p) {
+  if (!isHost()) return '';
+  const k = NETH.seatState(s.players.indexOf(p));
+  return k === 'online' ? '<span class="ndot ok" data-net="online" title="online">●</span>' : k === 'away' ? '<span class="ndot bad" data-net="away" title="away">○</span>' : k === 'you' ? '<span class="ndot you" data-net="you" title="this phone">📱</span>' : '';
+}
 function renderPlayers(s) {
   const act = s.phase === 'turn' ? s.turn.activePlayerId : whoActs(s);
   $('#players').classList.toggle('n2', s.players.length === 2);
   if (!setHTML($('#players'), s.players.map(p => { const g = p.general ? data.generalsById[p.general.id] : null; const on = p.id === act;
     return `<button class="pl${on ? ' active' : ''}${p.out ? ' out' : ''}" style="--c:var(--${col(p.id)})" data-pid="${p.id}" aria-label="${attr(p.name)}${g ? ', ' + attr(g.name) : ''}: open the General">
-    <span class="tag ${on ? '' : p.controller === 'ai' ? 'ai' : ''}" ${!on && p.controller !== 'ai' ? 'hidden' : ''}>${on ? '▶ TURN' : 'AI'}</span>
+    <span class="tag ${on ? '' : p.controller === 'ai' ? 'ai' : ''}" ${!on && p.controller !== 'ai' ? 'hidden' : ''}>${on ? '▶ TURN' : 'AI'}</span>${netDot(s, p)}
     <span class="r1"><span class="av" style="background-image:url('${attr(img(g ? 'general.' + g.id : 'back.game'))}');background-position:center 15%"></span><span class="nm">${esc(p.name)}<small>${esc(g?.name ?? 'no general yet')}</small>${g ? `<small class="cap" data-caption="${g.id}">${esc(G.generalCaption(data, g.id))}</small>` : ''}</span></span>
     <span class="r2"><span title="Gold">💰${p.gold}</span><span title="Prestige">⭐${p.prestige}<small style="color:var(--muted)">/${data.rules.winPrestige}</small></span><span title="Cards">🂠${G.handCount(p)}</span><span title="Troops">⚔${totalTroops(s, p.id)}</span></span>
     <span class="pbar"><b style="width:${Math.min(100, p.prestige / data.rules.winPrestige * 100)}%"></b></span></button>`; }).join(''))) return;
@@ -634,8 +778,9 @@ function openMenu() {
   openSheet('menu', `<div class="sh-head"><h2>Menu<small>${esc(C.uiLabel)}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body menu">${sec('Game', game)}
       ${sec('Settings', [['sound', SND.isOn() ? '🔇 Sound off' : '🔊 Sound on', '']])}<div class="note" style="margin:8px 2px 4px">AI and animation speed</div>${speed}
-      ${isGuest() ? sec('Online', [['leave', '🚪 Leave the online game', `room ${C.NET.code}`]]) : `${sec('View', [['desktop', '🖥 Use desktop view', ''], ['auto', '↺ Automatic view', 'phone → mobile, computer → desktop']])}${sec('New', [['new', '⟲ New game', 'this game stays in Resume']])}`}
-      <p class="note">${isGuest() ? `Online game, room ${esc(C.NET.code)}: the host keeps the game. Reloading this page puts you back in your seat.` : 'The game is saved after every move: switching views or reloading keeps it (Resume).'}</p></div>`);
+      ${isHost() ? sec('Online', [['room', '🌐 Room and link', `room ${C.NET.code} · send it to the other players`]]) : ''}
+      ${isGuest() ? sec('Online', [['leave', '🚪 Leave the online game', `room ${C.NET.code}`]]) : `${sec('View', [['desktop', '🖥 Use desktop view', ''], ['auto', '↺ Automatic view', 'phone → mobile, computer → desktop']])}${sec('New', [['new', isHost() ? '⟲ End hosting, new game' : '⟲ New game', isHost() ? 'the other players are told; Resume reopens the room' : 'this game stays in Resume']])}`}
+      <p class="note">${isGuest() ? `Online game, room ${esc(C.NET.code)}: the host keeps the game. Reloading this page puts you back in your seat.` : isHost() ? `This phone hosts room ${esc(C.NET.code)}: the game is saved after every move, with the room, so Resume (or a save) reopens it for the same players.` : 'The game is saved after every move: switching views or reloading keeps it (Resume).'}</p></div>`);
   $$('#sheet [data-speed]').forEach(b => b.onclick = () => { C.speed = Number(b.dataset.speed) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } SND.play('button_click'); $$('#sheet [data-speed]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); });
   $$('#sheet [data-m]').forEach(b => b.onclick = () => {
     const k = b.dataset.m; closeSheet(true);
@@ -644,9 +789,10 @@ function openMenu() {
     else if (k === 'decks') openDecks();
     else if (k === 'pause') { C.aiPaused = !C.aiPaused; render(); schedule(); }
     else if (k === 'sound') SND.toggle();
-    else if (k === 'new') toStart();
+    else if (k === 'room') roomSheet();
+    else if (k === 'new') { if (isHost() && st().phase !== 'finished' && !window.confirm('Stop hosting this online game? The other players are told the host left; Resume (or a save) reopens the room.')) return; toStart(); }
     else if (k === 'leave') { if (window.confirm('Leave this online game? Your seat is kept: open the join link again to come back.')) toStart(); }
-    else if (k === 'desktop' || k === 'auto') { autosave(); goView(k); }
+    else if (k === 'desktop' || k === 'auto') { if (isHost() && !window.confirm('Switch views? The other players are told the host left; the desktop view can resume the online game from its autosave.')) return; autosave(); goView(k); }
   });
 }
 function displeasedAlert(f) {
@@ -1090,7 +1236,11 @@ window.__imperator = {
   // to apply its next update (v26.1: it must ask the host for the whole view)
   net: () => (isGuest() ? { role: 'guest', code: C.NET.code, me: C.NET.me, pending: !!C.NET.pending, seats: C.NET.client.lobby?.seats ?? [], queued: C.NET.q.length, status: C.NET.client.status,
     hostAway: !!C.NET.client.hostAway, ai: !!C.NET.client.ai, lost: C.NET.lost ?? null, statuses: C.NET.statuses ?? [], reconnects: C.NET.client.reconnects ?? 0, seat: C.NET.client.seat,
-    seq: C.NET.client.seq, shown: C.NET.shown ?? null, resyncs: C.NET.client.resyncs, resynced: C.NET.resynced ?? 0, broke: C.NET.broke ?? 0 } : null),
+    seq: C.NET.client.seq, shown: C.NET.shown ?? null, resyncs: C.NET.client.resyncs, resynced: C.NET.resynced ?? 0, broke: C.NET.broke ?? 0 }
+    // v30.4 (the desktop's host hooks): the room, its seats, the guests' moves waiting, the wake lock
+    : isHost() ? { role: 'host', code: C.NET.code, me: C.NET.me, salt: C.NET.salt, inbox: C.NET.inbox.length, started: C.NET.room.started, ready: C.NET.room.ready(), wake: NETH.wake(),
+      seats: C.NET.room.seats.map(x => ({ i: x.i, kind: x.kind, name: x.name, taken: !!x.token, connected: !!x.connected, peer: !!x.peer })), seq: C.NET.room.last?.seq ?? null, resyncs: C.NET.room.resyncs ?? 0 } : null),
+  hostQuiet: on => { if (isHost()) C.NET.quiet = !!on; },
   netDrop: () => { const c = isGuest() && C.NET.client; if (c) { try { c.transport.close(); } catch { /* */ } c.linkLost('LINK_LOST'); } },
   netBreak: () => { if (isGuest()) C.NET.throwOnce = true; },
   keyOf: a => { const d = C.S && G.findDesc(mineNow(), a); return d ? G.descKey(d) : null; },

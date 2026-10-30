@@ -18,15 +18,24 @@ export const RETRY_MS = [500, 1000, 2000, 3000, 5000, 8000, ...Array(28).fill(10
 export const HELLO_MS = 8000;
 /** v26.1: a resync asked for and not answered in this time may be asked for again (a lost request must not stop it for good). */
 export const RESYNC_RETRY_MS = 4000;
-export const FINAL_BYES = ['BUILD_MISMATCH', 'FULL', 'STARTED', 'SEAT_REMOVED', 'REPLACED', 'GAME_OVER'];
+export const FINAL_BYES = ['BUILD_MISMATCH', 'FULL', 'STARTED', 'SEAT_REMOVED', 'REPLACED', 'GAME_OVER', 'BAD_CLAIM', 'SEAT_IN_USE', 'NO_ANSWER'];
+/** v30.5: a first join whose link opened but that got no welcome (nor a refusal) in this time ends with bye NO_ANSWER: the page says so
+ *  (never a silent "Connecting…"). */
+export const JOIN_MS = 12000;
+/** v30.5: why a join ended, in words (the page shows it under Join). */
+export const JOIN_END_TEXT = {
+  NO_ANSWER: 'The host\'s page did not answer (timeout). Check that the host has Imperator open and in front, then tap Join again.',
+  NO_ROOM: 'Room not found: check the code. If it is right, the host\'s page is closed or asleep (host offline): ask the host to open it.',
+  NETWORK: 'Could not reach the online service: check the internet connection and try again.',
+};
 
 export class GuestClient {
   /** hooks: {onWelcome(c), onLobby(c, lobby), onUpdate(c, update), onReject(c, reject), onBye(c, reason), onHostGone(c),
    *          onStatus(c, status, info)}   status: 'connected' | 'reconnecting' {attempt, of, inMs, why} | 'hostAway' | 'lost'
    *  makeTransport: () => transport (or a Promise of one), used for every reconnect attempt; without it a lost link ends the
    *  session (onHostGone), as in M11. */
-  constructor({ transport, makeTransport = null, build, name, token = null, data, hooks = {}, retryMs = RETRY_MS, now = () => Date.now(), timers = globalThis }) {
-    Object.assign(this, { makeTransport, build, name, token, data, hooks, retryMs, now, timers });
+  constructor({ transport, makeTransport = null, build, name, token = null, tokens = [], claim = null, joinMs = JOIN_MS, data, hooks = {}, retryMs = RETRY_MS, now = () => Date.now(), timers = globalThis }) {
+    Object.assign(this, { makeTransport, build, name, token, tokens: (tokens ?? []).filter(t => t && t !== token), claim, joinMs, data, hooks, retryMs, now, timers });
     this.seat = null; this.playerId = null; this.lobby = null; this.session = null; this.legal = []; this.seq = null; this.ended = null; this.ai = false; this.log = []; this.logTo = null; this.resyncAsked = false; this.resyncAt = 0; this.resyncs = []; this.applied = null;
     this.status = 'connecting'; this.hostAway = false; this.lastHeard = now(); this.attempt = 0; this.timer = null; this.reconnects = 0;
     this.bind(transport);
@@ -40,10 +49,13 @@ export class GuestClient {
   async join(code) {
     const r = await this.transport.open({ role: 'guest', code });
     this.code = r.code; this.lastHeard = this.now();
+    if (this.ended) { try { this.transport.close(); } catch { /* */ } return r; }   // left while the link was opening
     this.hello();
+    this.timers.clearTimeout(this.timer);
+    if (this.joinMs) this.timer = this.timers.setTimeout(() => { if (this.status === 'connecting' && !this.ended) { this.ended = 'NO_ANSWER'; try { this.transport.close(); } catch { /* */ } this.hooks.onBye?.(this, 'NO_ANSWER'); } }, this.joinMs);
     return r;
   }
-  hello() { this.transport.send(HOST, msg('hello', { proto: PROTO, build: this.build, name: this.name, ...(this.token ? { token: this.token } : {}) })); }
+  hello() { this.transport.send(HOST, msg('hello', { proto: PROTO, build: this.build, name: this.name, ...(this.token ? { token: this.token } : {}), ...(this.tokens?.length ? { tokens: this.tokens } : {}), ...(this.claim ? { claim: this.claim } : {}) })); }
   /** The link is gone (or the host said HOST_LEFT): reconnect with the token, or (no factory / no seat yet) end as in M11. */
   linkLost(why) {
     if (this.ended) return;
@@ -103,7 +115,7 @@ export class GuestClient {
       case 'welcome': {
         const again = this.status === 'reconnecting' || this.status === 'lost';
         if (again && m.token !== this.token) { this.notOurs(this.transport, 'NOT_OUR_ROOM'); break; }   // another game under this code
-        this.seat = m.seat; this.token = m.token; this.name = m.name ?? this.name; this.code = m.code ?? this.code;
+        this.seat = m.seat; this.token = m.token; this.tokens = []; this.claim = null; this.name = m.name ?? this.name; this.code = m.code ?? this.code;
         this.timers.clearTimeout(this.timer); this.attempt = 0;
         if (again) this.reconnects++;
         this.setStatus('connected', { rejoined: again });

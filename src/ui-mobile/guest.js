@@ -3,7 +3,8 @@
 // (GuestClient: hello with the seat token, reconnect with retries, host-away, heartbeat resync), src/net/transport.js (PeerJS, or the
 // BroadcastChannel loopback with ?net=local) and the controller (src/ui/core/controller.js: C.NET, apply -> view.guestSend, mineNow
 // = the legal moves the host sent). The desktop page is not changed and never loads this file.
-import { GuestClient, HOST_AWAY_MS } from '../net/guest.js';
+import { GuestClient, HOST_AWAY_MS, JOIN_END_TEXT } from '../net/guest.js';
+import { rememberSeat, forgetSeat, seatFor, tokensFor, parseJoin } from '../net/seats.js';
 import { createPeerTransport, createBroadcastTransport } from '../net/transport.js';
 import { normCode } from '../net/protocol.js';
 
@@ -39,45 +40,63 @@ export function createGuest(page) {
     try { n.client.leave(); } catch (e) { console.warn('leave', e); }
     document.body.dataset.online = ''; document.body.dataset.netStatus = ''; page.banner();
   }
-  async function join(codeIn, nameIn, was = '') {
-    const code = normCode(codeIn); const name = String(nameIn ?? '').trim().slice(0, 20);
+  /** v30.5: Join always ends in words: "Connecting…", then the game (or the lobby), or why not (room not found / host offline, no
+   *  answer, already started and not your seat, a rejoin code that does not work, network). Every saved seat token goes in the hello
+   *  (the host resumed under a new code: a typed new code still finds the seat); `claim`: the host's one-time rejoin code. */
+  async function join(codeIn, nameIn, was = '', claim = null) {
+    const p = parseJoin(codeIn); const code = p.code; claim = claim || p.claim; was = was || p.was;
+    const name = String(nameIn ?? '').trim().slice(0, 20);
     if (code.length < 4) { page.say('Type the room code the host sent you (6 letters/digits).', true); return false; }
     if (!name) { page.say('Type your name first.', true); return false; }
+    const cur = C.NET;
+    if (cur?.role === 'guest' && cur.code === code && (cur.client?.status ?? 'connecting') === 'connecting' && !cur.client?.ended && Date.now() - cur.at < 4000) { page.say(`Connecting to room ${code}… (one moment)`); return false; }
     try { localStorage.setItem(NAME_KEY, name); } catch { /* */ }
-    leave(); page.say('Connecting…'); page.busyJoin(true);
-    let saved = null; try { saved = JSON.parse(localStorage.getItem(SEAT_TOKEN_KEY) || 'null'); } catch { /* */ }
-    const mine = saved && (saved.code === code || (was && saved.code === was));   // M14: ?was=OLD: the same game under a new code
+    leave(); page.say(`Connecting to room ${code}…`); page.busyJoin(true);
+    let store = null; try { store = localStorage; } catch { /* */ }
+    const own = seatFor(store, code) ?? (was ? seatFor(store, was) : null);   // this room's seat (or, with ?was=, the same game's old code)
+    const token = own?.token ?? null; const tokens = tokensFor(store, code, was).filter(x => x !== token);
     let t; try { t = await makeTransport(); } catch (e) { page.say(e.message, true); page.busyJoin(false); return false; }
-    const n = { role: 'guest', code, transport: t, me: null, q: [], pending: false, shown: null, healOff: 0 };
+    const n = { role: 'guest', code, transport: t, me: null, q: [], pending: false, shown: null, healOff: 0, at: Date.now() };
     const mineNet = () => C.NET === n;
-    n.client = new GuestClient({ transport: t, makeTransport, build: C.uiLabel, name, token: mine ? saved.token : null, data: page.data(), hooks: {
+    const end = (m) => { page.busyJoin(false); if (mineNet()) leave(); if (m) page.say(m, true); };
+    n.client = new GuestClient({ transport: t, makeTransport, build: C.uiLabel, name, token, tokens, claim: claim || null, data: page.data(), hooks: {
       onWelcome: (c, m) => { n.code = c.code; if (mineNet()) pendDone(); else n.pending = false;
-        try { localStorage.setItem(SEAT_TOKEN_KEY, JSON.stringify({ code: c.code, token: m.token, seat: m.seat, at: Date.now() })); } catch { /* */ }
+        rememberSeat(store, c.code, { token: m.token, seat: m.seat, name: m.name, was: was || null });
         if (!page.inGame()) page.say(`Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}). Waiting for the host to start…`); },
       onLobby: (c, m) => { if (mineNet()) page.lobby(m); if (C.S && mineNet() && page.inGame()) page.render(); },
-      onUpdate: (c, u) => { if (!mineNet()) return; n.me = u.you.playerId; n.q.push(u); if (!page.inGame()) enter(); else drain(); },
+      onUpdate: (c, u) => { if (!mineNet()) return; n.me = u.you.playerId; n.q.push(u);
+        if (u.state?.phase === 'finished') forgetSeat(store, n.code);
+        if (!page.inGame()) enter(); else drain(); },
       onReject: (c, m) => { if (!mineNet()) return;
         if (!page.inGame()) { page.say(m.message, true); return; }
         pendDone(); if (m.code !== 'STALE') { page.sound('error_denied'); page.toast(m.message); } page.render(); },
       onBye: (c, r) => { if (!mineNet()) return;
         if (r === 'HOST_LEFT' && !c.ended) return;   // M14: not final: the host may resume; the client reconnects (onStatus)
-        if (r === 'BUILD_MISMATCH' || r === 'FULL' || r === 'STARTED') { page.busyJoin(false); leave(); return; }
+        if (['BUILD_MISMATCH', 'FULL', 'STARTED', 'BAD_CLAIM', 'SEAT_IN_USE'].includes(r)) { end(null); return; }   // the refusal's words are shown (onReject)
+        if (r === 'NO_ANSWER') { end(JOIN_END_TEXT.NO_ANSWER); return; }
+        if (r === 'GAME_OVER') forgetSeat(store, n.code);
         if (r === 'GAME_OVER' && page.inGame()) { n.lost = 'The game is over; the host closed the room.'; page.banner(); return; }
-        lost(r === 'SEAT_REMOVED' ? 'The host removed your seat.' : r === 'REPLACED' ? 'You joined this game from another tab; this tab is disconnected.' : 'The host ended the connection.'); },
+        lost(r === 'SEAT_REMOVED' ? 'The host removed your seat.' : r === 'REPLACED' ? 'You joined this game from another tab; this tab is disconnected.' : r === 'GAME_OVER' ? 'The game is over; the host closed the room.' : 'The host ended the connection.'); },
       onHostGone: () => { if (mineNet()) lost('Lost the connection to the host.'); },
       onStatus: (c, status, info) => { if (!mineNet()) return;
         n.status = status; n.info = info; (n.statuses ??= []).push(status + (info.why ? ':' + info.why : ''));
         if (status === 'reconnecting' || status === 'lost') pendDone();
         if (status === 'connected' && info.rejoined) { if (page.inGame()) page.toast('Reconnected: you are back in your seat'); else page.say(`Reconnected to room ${c.code}.`); }
         if (!page.inGame() && status === 'reconnecting') page.say(`Lost the host (${whyText(info.why)}). Reconnecting… (try ${info.attempt} of ${info.of})`, true);
-        if (!page.inGame() && status === 'lost') { page.say('Could not reach the host. Tap Join to try again.', true); page.busyJoin(false); leave(); return; }
+        if (!page.inGame() && status === 'lost') { end('Could not reach the host. Tap Join to try again.'); return; }
         page.banner(); if (page.inGame()) page.render(); },
     } });
     C.NET = n; document.body.dataset.online = 'guest';
     n.ping = setInterval(() => { n.client.tick(); try { heal(); } catch (e) { console.warn('heal', e); } }, 2000);
-    try { await n.client.join(code); } catch (e) { if (mineNet()) leave(); page.say(e.message, true); page.busyJoin(false); return false; }
+    try { await n.client.join(code); } catch (e) {
+      const why = e?.code === 'NO_ROOM' || e?.code === 'NETWORK' ? JOIN_END_TEXT[e.code] : (e?.message || String(e));
+      if (mineNet()) end(why); else page.busyJoin(false);
+      return false;
+    }
     return true;
   }
+  /** v30.5: the player leaves this online game for good (the seat is forgotten on this device). */
+  function forget(code) { let store = null; try { store = localStorage; } catch { /* */ } forgetSeat(store, code); }
   function lost(msg) {
     const n = C.NET; if (!n) return;
     if (!C.S || !page.inGame()) { page.say(msg, true); page.busyJoin(false); C.NET = null; clearInterval(n.ping); try { n.transport.close(); } catch { /* */ } return; }
@@ -86,7 +105,8 @@ export function createGuest(page) {
   function enter() {
     const u = C.NET.q.shift(); if (!u) return;
     C.S = { data: page.data(), seed: 'room ' + C.NET.code, steps: [{ state: u.state, events: [], action: null, error: null, legal: u.legal, seq: u.seq }] }; C.NET.shown = u.seq;
-    page.busyJoin(false); page.sound('deck_shuffle'); page.enter();
+    page.busyJoin(false); page.sound('deck_shuffle');
+    try { page.enter(); } catch (e) { console.error('enter', e); page.say(`Joined, but the game screen did not open (${e.message}). Tap Join to try again.`, true); return; }
     if (C.NET.q.length) drain();
   }
   /** The host's updates in order, each animated like a local move (several waiting at once: only the last is animated). v26.1: a throw
@@ -156,5 +176,5 @@ export function createGuest(page) {
     const c = n.client;
     return n.lost ? 'ended' : c.status === 'connected' && c.hostAway ? 'hostAway' : c.status === 'connected' && c.ai ? 'ai' : c.status === 'connected' && n.pending && n.slow ? 'waiting' : c.status;
   }
-  return { join, leave, send, drain, heal, notDue, status, pendDone };
+  return { join, leave, forget, send, drain, heal, notDue, status, pendDone };
 }

@@ -8,7 +8,8 @@ import { topFrame, whoActs, minGarrison, isUnderGarrisoned, totalTroops, provinc
 import * as G from './model.js';
 import { createSound } from './sound.js';
 import { HostRoom, PING_MS } from '../../net/host.js';
-import { GuestClient, HOST_AWAY_MS } from '../../net/guest.js';
+import { GuestClient, HOST_AWAY_MS, JOIN_END_TEXT } from '../../net/guest.js';
+import { rememberSeat, forgetSeat, seatFor, tokensFor, latestSeat, parseJoin } from '../../net/seats.js';
 import { createPeerTransport, createBroadcastTransport } from '../../net/transport.js';
 import { roomCode, normCode } from '../../net/protocol.js';
 import { createController } from '../core/controller.js';
@@ -89,8 +90,34 @@ async function boot() {
   const jc = new URLSearchParams(location.search).get('join');
   if (jc) { playWhere = 'join'; $('#joinCode').value = normCode(jc); }
   joinWas = normCode(new URLSearchParams(location.search).get('was') || '');   // M14: the host resumed under a new code (the old one was taken)
+  joinClaim = normCode(new URLSearchParams(location.search).get('claim') || '') || null;   // v30.5: the host's one-time rejoin code
+  wireGuard();
   renderSetup();
   document.body.dataset.ready = '1';
+  // v30.5: a join link for a room this browser has a seat in (or ?was= its old code) goes straight back to the seat
+  if (jc && (seatFor(lsx(), jc) || (joinWas && seatFor(lsx(), joinWas))) && $('#joinName').value.trim()) joinGame();
+}
+// v30.5 (Q181): leave-protection while a game runs: the back button stays on the game and asks (Stay / Leave); an online game also
+// warns on close/reload (beforeunload). The setup screen and the lobby are never guarded. Leaving keeps the saved seat (Rejoin).
+const lsx = () => { try { return localStorage; } catch { return null; } };
+let joinClaim = null, guarded = false, unguarding = false;
+const running = () => !!C.S && document.body.dataset.screen === 'game' && G.stateOf(C.S).phase !== 'finished';
+function guard() { if (guarded || !running()) return; try { history.pushState({ imperatorGuard: 1 }, ''); guarded = true; } catch { /* */ } }
+function unguard() { if (!guarded) return; guarded = false; if (history.state?.imperatorGuard) { unguarding = true; try { history.back(); } catch { unguarding = false; } } }
+const leaveText = () => (C.NET?.role === 'host' ? 'Leave this game? You host it: leaving ends the game for your guests (it stays in your autosave; Resume online reopens the room).'
+  : C.NET ? 'Leave this game? You can rejoin from the start screen.' : 'Leave this game? You can resume it from the start screen (it stays in the autosave).');
+function wireGuard() {
+  addEventListener('popstate', () => {
+    if (unguarding) { unguarding = false; return; }
+    if (!guarded) return;
+    guarded = false;
+    if (!running()) return;
+    guard();
+    if (modalDone || mustAck()) { if (window.confirm(leaveText())) toSetup(); return; }   // a game popup is open: the browser's own question
+    openModal(`<div class="ask" id="leaveBox"><h2>Leave this game?</h2><p id="leaveText">${esc(leaveText())}</p><div class="btnrow"><button class="btn gold" id="leaveStay" data-close>Stay</button> <button class="btn" id="leaveGo">Leave</button></div></div>`);
+    $('#leaveGo').onclick = () => { closeModal(); toSetup(); };
+  });
+  addEventListener('beforeunload', e => { if (running() && C.NET) { e.preventDefault(); e.returnValue = ''; } });
 }
 
 // ------------------------------------------------------------------ setup screen (M4 setup flow)
@@ -317,7 +344,7 @@ function enterGame() {
   $('#ovOver').classList.remove('on'); clearBattle(); setTab('table');
   document.body.dataset.online = C.NET ? C.NET.role : '';
   if (C.NET?.role === 'host') netPush();
-  autosave(); render(); schedule();
+  autosave(); render(); schedule(); guard();
 }
 
 // ------------------------------------------------------------------ M11: online play (host and join by room code; src/net/*)
@@ -360,6 +387,7 @@ function renderOnline() {
   const card = $('.setupcard'); card.classList.toggle('joining', playWhere === 'join'); card.classList.toggle('hosting', playWhere === 'host');
   $('#hostBox').hidden = playWhere !== 'host'; $('#joinBox').hidden = playWhere !== 'join';
   $('#startGame').hidden = playWhere === 'join';
+  renderRejoin();
   document.body.dataset.joining = playWhere === 'join' ? '1' : '';   // M14: no Save / Load in the top bar while joining (a guest has nothing to save)
   if (playWhere === 'host') {
     seats.forEach((x, i) => { if (x.controller === 'remote') x.name = remoteName(i) || `Online ${i + 1}`; });
@@ -367,6 +395,17 @@ function renderOnline() {
     $('#hostCode').textContent = code ?? '…'; $('#hostLink').value = code ? joinLink(code) : ''; $('#hostCopy').disabled = !code;
     syncRoom();
   }
+}
+/** v30.5: the setup screen's small "Rejoin game CODE" (a seat this browser holds in an online game: 48 h, until that game is over). */
+function renderRejoin() {
+  let b = $('#joinRejoin'); const e = playWhere === 'host' ? null : latestSeat(lsx());
+  const live = e && C.NET?.role === 'guest' && C.NET.code === e.code && C.NET.client?.status === 'connected';
+  if (!e || live) { if (b) b.hidden = true; return; }
+  if (!b) { b = document.createElement('button'); b.type = 'button'; b.id = 'joinRejoin'; b.className = 'btn sm gold'; $('#playWhere').after(b); }
+  b.hidden = false; b.dataset.code = e.code; b.textContent = `↩ Rejoin game ${e.code}`; b.title = `Your seat${e.name ? ` (${e.name})` : ''} in room ${e.code} is saved in this browser`;
+  b.style.marginLeft = '8px';
+  b.onclick = () => { const code = b.dataset.code; const x = seatFor(lsx(), code); if (playWhere !== 'join') setPlayWhere('join');
+    $('#joinCode').value = code; joinWas = ''; joinClaim = null; if (!$('#joinName').value.trim()) $('#joinName').value = x?.name || 'Guest'; joinGame(); };
 }
 const syncRoom = () => { if (C.NET?.role === 'host' && document.body.dataset.screen === 'setup') C.NET.room.configure(seats.map(x => ({ kind: x.controller === 'remote' ? 'remote' : x.controller === 'ai' ? 'ai' : 'local', name: x.name.trim() || 'Host' }))); };
 /** Can the host start? Every Online seat needs its player (connected), and exactly one seat is the host's own. */
@@ -396,6 +435,9 @@ function hostNet(t, code, salt) {
   C.NET.room = new HostRoom({ transport: t, build: C.uiLabel, code, seats: [], data, hooks: {
     onSeat: () => queueMicrotask(() => { if (!C.NET) return; if (document.body.dataset.screen === 'setup') renderSetup(); else if (C.S) { render(); autosave(); } }),
     onAct: (i, action, reply, fresh) => { C.NET.inbox.push({ i, action, reply, fresh }); if (!C.busy) hostDrain(); else nudgeHost(i); },
+    // v30.5: a new device took a seat with the host's one-time rejoin code (an AI seat goes back to its player at once)
+    onClaimed: (room, i, info) => queueMicrotask(() => { if (C.NET?.room !== room || !C.S) return; if (info?.wasAI) seatBack(i);
+      toast(`${st().players[i]?.name ?? 'A player'} took their seat on a new device`); if ($('#reseatBox')) closeModal(); render(); }),
   } });
   C.NET.ping = setInterval(() => { if (!C.NET?.quiet) C.NET?.room?.tick(); }, PING_MS);   // quiet: tests only (a host that stops answering)
   return C.NET;
@@ -466,6 +508,18 @@ function seatBack(i) {
   C.NET.room.update({ seq: C.S.steps.length, state: full(), events: [], by: null });
   toast(`${nm} plays their seat again`); autosave(); render(); schedule();
 }
+/** v30.5 (the host's reseat tool): "Let a new device take this seat": a one-time rejoin link and code for seat i (offline, or with the
+ *  AI after its player left). Single use, for this seat of this room; a newer one replaces it; dead when used or when the game ends. */
+function reseat(i) {
+  if (C.NET?.role !== 'host' || !C.S) return;
+  const nm = st().players[i]?.name ?? `Seat ${i + 1}`; const c = C.NET.room.claim(i);
+  if (!c) { toast(`${nm} is connected: nothing to hand over`); return; }
+  const link = joinLink(C.NET.code) + '&claim=' + c;
+  openModal(`<div class="ask" id="reseatBox"><h2>Let a new device take ${esc(nm)}'s seat</h2><p>Send this one-time link to ${esc(nm)}: it opens their seat on any phone or computer, once. Or they type the room code <b>${esc(C.NET.code)}</b> with the rejoin code <b class="roomcode" id="reseatCode">${esc(c)}</b>.</p>
+    <p><input id="reseatLink" readonly size="60" value="${attr(link)}"> <button class="btn sm" id="reseatCopy">Copy link</button></p><p class="small">It works once and only for this seat; a newer link replaces it. Their old device is no longer in the seat.</p><button class="btn gold" data-close>OK</button></div>`);
+  $('#reseatCopy').onclick = () => navigator.clipboard?.writeText(link).then(() => toast('Link copied'), () => $('#reseatLink').select());
+}
+const reseatBtn = i => (C.NET?.role === 'host' && st().phase !== 'finished' && C.NET.room.claimable(i) ? `<button type="button" class="btn sm toai" data-reseat="${i}" title="Let a new device take this seat (a one-time rejoin link)">📲 new device</button>` : '');
 function netBadge(pid) {
   if (!C.NET || !C.S) return '';
   const i = st().players.findIndex(p => p.id === pid);
@@ -474,12 +528,12 @@ function netBadge(pid) {
   if (seat?.kind === 'ai' && (seat.token || seat.returnable)) {   // M14: a guest's seat the AI plays for now
     const on = C.NET.role === 'host' ? !!(seat.connected && seat.peer) : !!seat.guestConnected;
     return `<span class="netst ${on ? 'on' : 'away'}" title="The AI plays this seat for now; its player is ${on ? 'connected' : 'not connected'}">AI · ${on ? 'player online' : 'player away'}</span>`
-      + (C.NET.role === 'host' && st().phase !== 'finished' && on ? `<button type="button" class="btn sm toai back" data-seatback="${i}" title="Give the seat back to its player">← back</button>` : '');
+      + (C.NET.role === 'host' && st().phase !== 'finished' && on ? `<button type="button" class="btn sm toai back" data-seatback="${i}" title="Give the seat back to its player">← back</button>` : '') + reseatBtn(i);
   }
   if (!seat || seat.kind !== 'remote') return seat?.kind === 'local' ? '<span class="netst host" title="The host plays this seat">host</span>' : '';
   const on = seat.connected;
   return `<span class="netst ${on ? 'on' : 'away'}" title="${on ? 'Connected' : 'Not connected (or not answering)'}">● ${on ? 'online' : 'away'}</span>`
-    + (C.NET.role === 'host' && st().phase !== 'finished' ? `<button type="button" class="btn sm toai" data-toai="${i}" title="Let the AI play this seat (you can give it back later)">→ AI</button>` : '');
+    + (C.NET.role === 'host' && st().phase !== 'finished' ? `<button type="button" class="btn sm toai" data-toai="${i}" title="Let the AI play this seat (you can give it back later)">→ AI</button>` : '') + reseatBtn(i);
 }
 function netLeave() {
   if (!C.NET) return;
@@ -491,28 +545,32 @@ function netLeave() {
 
 // guest side
 async function joinGame() {
-  const code = normCode($('#joinCode').value); const name = $('#joinName').value.trim().slice(0, 20);
+  // v30.5: a pasted link or "CODE-CLAIM" is read; every saved seat token goes in the hello (a typed new code after the host resumed)
+  const p = parseJoin($('#joinCode').value); if (p.claim) joinClaim = p.claim; if (p.was) joinWas = p.was;
+  const code = p.code; $('#joinCode').value = code; const name = $('#joinName').value.trim().slice(0, 20);
   const say = (m, bad = false) => { $('#joinStatus').textContent = m; $('#joinStatus').classList.toggle('bad', bad); };
   if (code.length < 4) { say('Type the room code the host sent you (6 letters/digits).', true); return; }
   if (!name) { say('Type your name first.', true); $('#joinName').focus(); return; }
   try { localStorage.setItem('imperator.online.name', name); } catch { /* */ }
   netLeave(); say('Connecting…'); $('#joinGo').disabled = true;
-  let saved = null; try { saved = JSON.parse(localStorage.getItem(SEAT_TOKEN_KEY) || 'null'); } catch { /* */ }
-  const mine = saved && (saved.code === code || (joinWas && saved.code === joinWas));   // M14: ?was=OLD: the same game under a new code
+  const store = lsx(); const own = seatFor(store, code) ?? (joinWas ? seatFor(store, joinWas) : null);   // M14: ?was=OLD: the same game under a new code
+  const token = own?.token ?? null; const tokens = tokensFor(store, code, joinWas).filter(x => x !== token); const claim = joinClaim; const was = joinWas;
   let t; try { t = await makeTransport(); } catch (e) { say(e.message, true); $('#joinGo').disabled = false; return; }
   const n = { role: 'guest', code, transport: t, me: null, q: [], pending: false, shown: null, healOff: 0 };
   const inGame = () => C.S && document.body.dataset.screen === 'game';
-  n.client = new GuestClient({ transport: t, makeTransport, build: C.uiLabel, name, token: mine ? saved.token : null, data, hooks: {
-    onWelcome: (c, m) => { n.code = c.code; if (C.NET === n) pendDone(); else n.pending = false; try { localStorage.setItem(SEAT_TOKEN_KEY, JSON.stringify({ code: c.code, token: m.token, seat: m.seat, at: Date.now() })); } catch { /* */ }
+  n.client = new GuestClient({ transport: t, makeTransport, build: C.uiLabel, name, token, tokens, claim, data, hooks: {
+    onWelcome: (c, m) => { n.code = c.code; if (C.NET === n) pendDone(); else n.pending = false; rememberSeat(store, c.code, { token: m.token, seat: m.seat, name: m.name, was: was || null }); if (claim) joinClaim = null;
       if (!inGame()) say(`Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}, ${SEAT_COLOR_NAMES[m.seat]}). Waiting for the host to start…`); },
     onLobby: (c, m) => { if (C.NET === n) renderGuestLobby(m); if (C.S && C.NET === n) render(); },
-    onUpdate: (c, u) => { if (C.NET !== n) return; n.me = u.you.playerId; n.q.push(u); if (!inGame()) { guestEnter(); } else guestDrain(); },
+    onUpdate: (c, u) => { if (C.NET !== n) return; n.me = u.you.playerId; n.q.push(u); if (u.state?.phase === 'finished') forgetSeat(store, n.code); if (!inGame()) { guestEnter(); } else guestDrain(); },
     onReject: (c, m) => { if (C.NET !== n) return;
       if (!inGame()) { say(m.message, true); return; }
       pendDone(); if (m.code !== 'STALE') { SND.play('error_denied'); toast(m.message); } render(); },
     onBye: (c, r) => { if (C.NET !== n) return;
       if (r === 'HOST_LEFT' && !c.ended) return;   // M14: not final: the host may resume the game; the client reconnects (onStatus)
-      if (r === 'BUILD_MISMATCH' || r === 'FULL' || r === 'STARTED') { $('#joinGo').disabled = false; netLeave(); return; }
+      if (['BUILD_MISMATCH', 'FULL', 'STARTED', 'BAD_CLAIM', 'SEAT_IN_USE'].includes(r)) { $('#joinGo').disabled = false; netLeave(); return; }
+      if (r === 'NO_ANSWER') { $('#joinGo').disabled = false; netLeave(); say(JOIN_END_TEXT.NO_ANSWER, true); return; }   // v30.5: never a silent "Connecting…"
+      if (r === 'GAME_OVER') forgetSeat(store, n.code);
       if (r === 'GAME_OVER' && inGame()) { n.lost = 'The game is over; the host closed the room.'; renderNetBanner(); return; }
       netLost(r === 'SEAT_REMOVED' ? 'The host removed your seat.' : r === 'REPLACED' ? 'You joined this game from another tab; this tab is disconnected.' : 'The host ended the connection.'); },
     onHostGone: () => { if (C.NET === n) netLost('Lost the connection to the host.'); },
@@ -526,7 +584,7 @@ async function joinGame() {
   } });
   C.NET = n;
   n.ping = setInterval(() => { n.client.tick(); try { guestHeal(); } catch (e) { console.warn('heal', e); } }, 2000);
-  try { await n.client.join(code); } catch (e) { if (C.NET === n) netLeave(); say(e.message, true); $('#joinGo').disabled = false; return; }
+  try { await n.client.join(code); } catch (e) { if (C.NET === n) netLeave(); say(JOIN_END_TEXT[e?.code] ?? e.message, true); $('#joinGo').disabled = false; return; }
 }
 const whyText = w => ({ LINK_LOST: 'the link dropped', HOST_LEFT: 'the host left the game', NO_ROOM: 'the room is not open', NETWORK: 'network error', TIMEOUT: 'no answer', RETRY: 'retrying' })[w] ?? String(w ?? 'no link').toLowerCase().replace(/_/g, ' ');
 /** M14: the online strip in the game: for the host, the room code and its link; for a guest, the link to the host (reconnecting,
@@ -557,7 +615,7 @@ function renderNetBanner() {
   if ($('#nbCode') && typed) { $('#nbCode').value = typed; if (focused) $('#nbCode').focus(); }
   if ($('#nbCode')) $('#nbCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('#nbNow')?.click(); });
   if ($('#nbNow')) $('#nbNow').onclick = () => { const v = normCode($('#nbCode')?.value || ''); c.retryNow(v.length >= 4 ? v : null); };
-  if ($('#nbLeave')) $('#nbLeave').onclick = () => { if (window.confirm('Leave this online game?')) toSetup(); };
+  if ($('#nbLeave')) $('#nbLeave').onclick = () => { if (!running() || window.confirm(leaveText())) toSetup(); };
 }
 function renderGuestLobby(m) {
   const rows = (m.seats ?? []).map(x => `<li><span class="sw" style="background:${SEAT_COLORS[x.i]}"></span> <b>${esc(x.kind === 'remote' ? x.name || 'waiting for a player…' : x.name)}</b> <span class="small">${x.kind === 'local' ? '(host)' : x.kind === 'ai' ? '(AI)' : x.taken ? (x.connected ? '(online)' : '(away)') : ''}${C.NET?.client?.seat === x.i ? ' ← you' : ''}</span></li>`).join('');
@@ -1270,6 +1328,7 @@ function renderPlayers() {
   }).join('');
   $$('#players [data-toai]').forEach(b => b.onclick = () => seatToAI(+b.dataset.toai));
   $$('#players [data-seatback]').forEach(b => b.onclick = () => seatBack(+b.dataset.seatback));
+  $$('#players [data-reseat]').forEach(b => b.onclick = () => reseat(+b.dataset.reseat));
   renderNetBanner();
   $$('.player .gcard').forEach(g => g.onclick = () => {
     const p = G.playerById(s, g.closest('.player').dataset.pid); if (!p.general) return;
@@ -1746,14 +1805,14 @@ function showGameOver() {
   $('#ovLook').onclick = () => ov.classList.remove('on');
   if ($('#ovExport')) $('#ovExport').onclick = () => download(G.saveFileName(s), JSON.stringify(G.makeSave(C.S, { appVersion: C.uiLabel, kind: 'final' })));
 }
-function toSetup() { if (C.NET) { netLeave(); playWhere = 'local'; } clearTimeout(C.aiTimer); $('#toast').classList.remove('on'); C.S = null; document.body.dataset.over = ''; ['#ovOver', '#ovAsk', '#ovModal'].forEach(x => $(x).classList.remove('on')); renderSetup(); }
+function toSetup() { unguard(); if (C.NET) { netLeave(); playWhere = 'local'; } clearTimeout(C.aiTimer); $('#toast').classList.remove('on'); C.S = null; document.body.dataset.over = ''; ['#ovOver', '#ovAsk', '#ovModal'].forEach(x => $(x).classList.remove('on')); renderSetup(); }
 
 // ------------------------------------------------------------------ static wiring
 function wireStatic() {
   $('#bSound').onclick = () => SND.toggle();
   $('#speed').onchange = e => { C.speed = Number(e.target.value) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } };
   $('#bSave').onclick = saveMenu; $('#bLoad').onclick = loadMenu; $('#setupLoad').onclick = loadMenu;
-  $('#bNew').onclick = () => { if (!C.S || C.S && st().phase === 'finished' || window.confirm(C.NET?.role === 'guest' ? 'Leave this online game?' : C.NET ? 'Leave this online game? Your guests are disconnected (it stays in your autosave).' : 'Leave this game? It stays in the autosave.')) toSetup(); };
+  $('#bNew').onclick = () => { if (!C.S || C.S && st().phase === 'finished' || window.confirm(leaveText())) toSetup(); };   // v30.5 (Q181): the same question as the back button
   $$('#playWhere .segb').forEach(b => b.onclick = () => setPlayWhere(b.dataset.where));
   $('#hostCopy').onclick = () => { const t = $('#hostLink').value; navigator.clipboard?.writeText(t).then(() => toast('Link copied'), () => { $('#hostLink').select(); }); };
   $('#joinGo').onclick = joinGame;

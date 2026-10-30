@@ -418,9 +418,9 @@ button.pchip{min-height:var(--tap);color:var(--ink)}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 
 /* v30.4: a phone hosts (the Host tab's room box, the seat rows, the host's strip and chip dots) */
-#hostBox .hcode,#roomBox .hcode{display:flex;align-items:baseline;gap:10px;margin:4px 2px 2px}
-#hostBox .hcode span,#roomBox .hcode span{color:var(--ink2);font-size:12px}
-#hostBox .hcode b,#roomBox .hcode b{font-size:26px;letter-spacing:.14em;color:var(--gold2);font-family:ui-monospace,Menlo,Consolas,monospace}
+#hostBox .hcode,#roomBox .hcode,#reseatBox .hcode{display:flex;align-items:baseline;gap:10px;margin:4px 2px 2px}
+#hostBox .hcode span,#roomBox .hcode span,#reseatBox .hcode span{color:var(--ink2);font-size:12px}
+#hostBox .hcode b,#roomBox .hcode b,#reseatBox .hcode b{font-size:26px;letter-spacing:.14em;color:var(--gold2);font-family:ui-monospace,Menlo,Consolas,monospace}
 #hostBox input[readonly],#roomBox input[readonly]{font-size:13px}
 .hbtns{display:flex;gap:8px;margin-top:8px}
 .hbtns .btn{flex:1;min-height:var(--tap)}
@@ -444,3 +444,11 @@ button.pchip{min-height:var(--tap);color:var(--ink)}
 .netbar .nbroom{min-height:var(--tap);min-width:var(--tap);padding:0 10px;border-radius:10px;border:1px solid var(--line2);background:var(--panel2);color:var(--ink);font-size:12.5px}
 .netbar .nbseat{display:inline-flex;align-items:center;gap:5px}
 .netbar .nbwarn{color:#f0a35e;font-weight:700}
+
+/* v30.5: the start screen's Rejoin (a saved seat), a Join that is connecting (never disabled), the reseat sheet's link row */
+#rejoinGrp{padding:10px 9px}
+#rejoinGrp .btn{width:100%}
+.linkbtn{background:none;border:0;padding:0 8px;color:var(--gold2);text-decoration:underline;font:inherit;min-height:44px;min-width:44px;display:inline-flex;align-items:center;vertical-align:middle}
+#mJoinGo.busy{opacity:.75}
+#reseatBox .hbtns,#roomBox .hbtns{gap:8px}
+#leaveBox p{margin:4px 2px 8px;line-height:1.4}

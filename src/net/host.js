@@ -8,6 +8,11 @@ import { humanLegal } from '../ui/game/model.js';
 
 export const PING_MS = 5000, AWAY_MS = 15000;
 export const BUILD_MISMATCH = (host, guest) => `This game was started with Imperator ${host}, but your page is ${guest}. Reload the page (Ctrl+F5) so both of you play the same version, then join again.`;
+export const STARTED_MSG = 'This game has already started, and this device has no seat in it. If it is your seat, ask the host for a rejoin link: on the host\'s screen, your seat → "Let a new device take this seat".';
+export const BAD_CLAIM_MSG = 'That rejoin code does not work: it was already used, the host made a newer one, or the game is over. Ask the host for a new rejoin link.';
+export const SEAT_IN_USE_MSG = 'That seat is in use: its player is connected right now. Only the host can hand it to another device.';
+const CLAIM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export const normClaim = c => String(c ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 const cleanName = (s, i) => String(s ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 20) || `Guest ${i + 1}`;
 
 export class HostRoom {
@@ -57,18 +62,54 @@ export class HostRoom {
       this.reject(peer, 'BUILD_MISMATCH', m.proto !== PROTO ? BUILD_MISMATCH(this.build, `an incompatible version (protocol ${m.proto})`) : BUILD_MISMATCH(this.build, m.build ?? 'an unknown version'));
       this.transport.send(peer, msg('bye', { reason: 'BUILD_MISMATCH' })); return;
     }
-    let seat = m.token ? this.seats.find(s => s.token && s.token === m.token) : null;
+    // v30.5: a hello carries every seat token this browser holds (`tokens`, newest first; `token` as before), so a typed new code
+    // (the host resumed under a new room code) still finds the seat; or a one-time claim code the host made for this seat
+    // (the extra `tokens` only find a seat nobody holds right now: another player's seat on a shared browser is never taken by them)
+    const extra = (Array.isArray(m.tokens) ? m.tokens.slice(0, 16) : []).filter(t => typeof t === 'string' && t);
+    let seat = m.token ? this.seats.find(s => s.token && s.token === m.token) ?? null : null;
+    if (!seat && extra.length) seat = this.seats.find(s => s.token && extra.includes(s.token) && !(s.connected && s.peer && s.peer !== peer)) ?? null;
+    if (!seat && typeof m.claim === 'string' && m.claim) return this.claimHello(peer, m);
     if (!seat) {
-      if (this.started) { this.reject(peer, 'STARTED', 'This game has already started; only its players can rejoin it.'); this.transport.send(peer, msg('bye', { reason: 'STARTED' })); return; }
+      if (this.started) { this.reject(peer, 'STARTED', STARTED_MSG); this.transport.send(peer, msg('bye', { reason: 'STARTED' })); return; }
       seat = this.seats.find(s => s.kind === 'remote' && !s.token);
       if (!seat) { this.reject(peer, 'FULL', 'This game has no free seat.'); this.transport.send(peer, msg('bye', { reason: 'FULL' })); return; }
       seat.token = newToken(this.rnd); seat.name = cleanName(m.name, seat.i);
     }
+    this.seatIn(peer, seat);
+  }
+  seatIn(peer, seat) {
     if (seat.peer && seat.peer !== peer) this.transport.send(seat.peer, msg('bye', { reason: 'REPLACED' }));   // the same player from a new tab
     Object.assign(seat, { peer, connected: true, lastSeen: this.now(), sentTo: null });   // sentTo null: its next update has the whole log
     this.transport.send(peer, msg('welcome', { proto: PROTO, build: this.build, code: this.code, seat: seat.i, token: seat.token, name: seat.name }));
     this.changed(seat.i);
     if (this.started && this.last) this.sendUpdate(seat, this.last);   // a rejoin mid-game gets the whole current view at once
+  }
+  /** v30.5, the host's reseat tool ("Let a new device take this seat"): a one-time claim code for seat i, a guest seat that is not
+   *  connected now (away, never taken, or played by the AI after its player left). A new claim for the same seat replaces the old
+   *  one. Returns the code, or null (an occupied, host or plain AI seat). */
+  claimable(i) { const s = this.seats[i]; return !!s && !s.connected && (s.kind === 'remote' || (s.kind === 'ai' && !!s.token)); }
+  claim(i) {
+    if (!this.claimable(i)) return null;
+    this.claims ??= new Map();
+    for (const [k, v] of this.claims) if (v === i) this.claims.delete(k);
+    let c; do { c = Array.from({ length: 6 }, () => CLAIM_CHARS[Math.floor(this.rnd() * CLAIM_CHARS.length)]).join(''); } while (this.claims.has(c));
+    this.claims.set(c, i); return c;
+  }
+  claimOf(i) { for (const [k, v] of this.claims ?? []) if (v === i) return k; return null; }
+  /** Every claim code stops working (the game is over, the room closes). */
+  dropClaims() { this.claims?.clear(); }
+  claimHello(peer, m) {
+    const c = normClaim(m.claim); const i = this.claims?.get(c);
+    const no = (code, text) => { this.reject(peer, code, text); this.transport.send(peer, msg('bye', { reason: code })); };
+    if (i === undefined || this.last?.state?.phase === 'finished') return no('BAD_CLAIM', BAD_CLAIM_MSG);
+    const seat = this.seats[i];
+    if (seat.connected && seat.peer) return no('SEAT_IN_USE', SEAT_IN_USE_MSG);   // an impostor (or a stale link) cannot take a seat in use
+    this.claims.delete(c);   // single use
+    const wasAI = seat.kind === 'ai';
+    seat.token = newToken(this.rnd);   // the old device's token stops working: the seat is this device's now
+    if (!seat.name) seat.name = cleanName(m.name, seat.i);
+    this.seatIn(peer, seat);
+    this.hooks.onClaimed?.(this, seat.i, { wasAI });
   }
   /** The host changed the setup (lobby only): seat kinds and the names of the host's and AI seats. A guest keeps its seat when it is
    *  still Online, otherwise moves to a free Online seat, otherwise is told its seat is gone. Sends the lobby only when it changed. */
@@ -94,7 +135,7 @@ export class HostRoom {
   /** The host pressed Start: `playerIds[i]` is seat i's engine player id. */
   start(playerIds) { this.started = true; this.seats.forEach((s, i) => { s.playerId = playerIds[i]; }); this.sendLobby(); }
   /** After every applied step (and once at the start): {seq, state, events, by}. Every connected guest gets its own view. */
-  update(step) { this.last = step; for (const s of this.seats) if (s.peer) this.sendUpdate(s, step); }
+  update(step) { this.last = step; if (step?.state?.phase === 'finished') this.dropClaims(); for (const s of this.seats) if (s.peer) this.sendUpdate(s, step); }
   /** One seat's update: its viewFor view (no log) + the log entries it has not had yet (all of them after a welcome or a resync). */
   sendUpdate(s, step, { full = false, resync = false } = {}) {
     const pid = s.playerId; const log = step.state.log ?? [];
@@ -141,5 +182,5 @@ export class HostRoom {
     const t = this.last.state?.turn ?? {};
     return { seq: this.last.seq, turn: t.number ?? null, step: t.step ?? null };
   }
-  close(reason = 'HOST_LEFT') { for (const s of this.seats) if (s.peer) this.transport.send(s.peer, msg('bye', { reason })); this.transport.close(); }
+  close(reason = 'HOST_LEFT') { this.dropClaims(); for (const s of this.seats) if (s.peer) this.transport.send(s.peer, msg('bye', { reason })); this.transport.close(); }
 }

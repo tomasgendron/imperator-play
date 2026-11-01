@@ -8,18 +8,20 @@ import { humanLegal } from '../ui/game/model.js';
 
 export const PING_MS = 5000, AWAY_MS = 15000;
 export const BUILD_MISMATCH = (host, guest) => `This game was started with Imperator ${host}, but your page is ${guest}. Reload the page (Ctrl+F5) so both of you play the same version, then join again.`;
-export const STARTED_MSG = 'This game has already started, and this device has no seat in it. If it is your seat, ask the host for a rejoin link: on the host\'s screen, your seat → "Let a new device take this seat".';
-export const BAD_CLAIM_MSG = 'That rejoin code does not work: it was already used, the host made a newer one, or the game is over. Ask the host for a new rejoin link.';
-export const SEAT_IN_USE_MSG = 'That seat is in use: its player is connected right now. Only the host can hand it to another device.';
-const CLAIM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-export const normClaim = c => String(c ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+// v30.5.1 (Vidi): ONE room code is enough to join a game in progress: the joiner takes a free seat (an AI seat, or a human seat whose
+// player is offline); a human seat whose player is online is never taken. The seat token is only a shortcut (her own seat first).
+export const NO_FREE_SEAT_MSG = 'No free seat in this game: ask the host to switch a player to AI, then join again.';
+/** v30.5.1: a join finds no free seat but a guest seat shows online: ping those guests; one that does not answer within this time is a
+ *  dead connection (a page closed without a goodbye, a phone that slept) and its seat counts as free. A live guest is never taken. */
+export const PROBE_MS = 2500;
+export const STARTED_MSG = 'This game has no seat for this device any more.';   // a reconnect whose seat is gone (internal: the client retries)
 const cleanName = (s, i) => String(s ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 20) || `Guest ${i + 1}`;
 
 export class HostRoom {
   /** seats: [{kind: 'local'|'remote'|'ai', name}] (exactly one 'local' = the host). hooks: {onLobby(room), onAct(seatIndex, action, reply(error|null)),
    *  onSeat(room, seatIndex) a seat's connection or kind changed}. */
-  constructor({ transport, build, code, seats, data, hooks = {}, now = () => Date.now(), rnd = Math.random }) {
-    Object.assign(this, { transport, build, code, data, hooks, now, rnd });
+  constructor({ transport, build, code, seats, data, hooks = {}, now = () => Date.now(), rnd = Math.random, timers = globalThis, probeMs = PROBE_MS }) {
+    Object.assign(this, { transport, build, code, data, hooks, now, rnd, timers, probeMs });
     this.seats = seats.map((x, i) => ({ i, kind: x.kind, name: x.kind === 'remote' ? '' : x.name, peer: null, token: null, connected: false, lastSeen: 0, playerId: null }));
     this.started = false; this.last = null; this.pingN = 0;
     transport.onMessage((p, m) => this.receive(p, m));
@@ -42,7 +44,9 @@ export class HostRoom {
     if (seat) { seat.lastSeen = this.now(); if (!seat.connected && m.t !== 'bye') { seat.connected = true; this.changed(seat.i); } }
     if (m.t === 'hello') return this.hello(peer, m);
     if (m.t === 'pong') return;
-    if (m.t === 'resync') { if (seat && this.started && this.last) { this.resyncs = (this.resyncs ?? 0) + 1; this.hooks.onResync?.(seat.i, m.why ?? null); this.sendUpdate(seat, this.last, { full: true, resync: true }); } return; }
+    if (m.t === 'resync') { if (seat && this.started && this.last) { this.resyncs = (this.resyncs ?? 0) + 1; this.hooks.onResync?.(seat.i, m.why ?? null); this.sendUpdate(seat, this.last, { full: true, resync: true }); }
+      else if (seat && this.started) this.hooks.onWantState?.(this, seat.i);   // v30.5.1: nothing cached yet (a resumed game): the page sends it
+      return; }
     if (m.t === 'bye') { if (seat) { seat.connected = false; seat.peer = null; this.changed(seat.i); } return; }
     if (m.t !== 'act') return;
     if (!seat) return this.reject(peer, 'NOT_SEATED', 'You have no seat in this game.', { seq: m.seq });
@@ -63,14 +67,31 @@ export class HostRoom {
       this.transport.send(peer, msg('bye', { reason: 'BUILD_MISMATCH' })); return;
     }
     // v30.5: a hello carries every seat token this browser holds (`tokens`, newest first; `token` as before), so a typed new code
-    // (the host resumed under a new room code) still finds the seat; or a one-time claim code the host made for this seat
+    // (the host resumed under a new room code) still finds the seat
     // (the extra `tokens` only find a seat nobody holds right now: another player's seat on a shared browser is never taken by them)
     const extra = (Array.isArray(m.tokens) ? m.tokens.slice(0, 16) : []).filter(t => typeof t === 'string' && t);
     let seat = m.token ? this.seats.find(s => s.token && s.token === m.token) ?? null : null;
     if (!seat && extra.length) seat = this.seats.find(s => s.token && extra.includes(s.token) && !(s.connected && s.peer && s.peer !== peer)) ?? null;
-    if (!seat && typeof m.claim === 'string' && m.claim) return this.claimHello(peer, m);
+    if (!seat && this.started) {
+      // a reconnect (`back`) whose token no longer finds a seat is another game under this code (or her seat went to another device)
+      if (m.back) { this.reject(peer, 'STARTED', STARTED_MSG); this.transport.send(peer, msg('bye', { reason: 'STARTED' })); return; }
+      if (this.last?.state?.phase === 'finished') { this.reject(peer, 'GAME_OVER', 'This game is over.'); this.transport.send(peer, msg('bye', { reason: 'GAME_OVER' })); return; }
+      const free = this.freeSeats();
+      const take = Number.isInteger(m.pick) ? free.find(x => x.i === m.pick) : free.length === 1 ? free[0] : null;
+      if (take) return this.takeOver(peer, take, m);
+      if (free.length) { this.transport.send(peer, msg('pick', { seats: free.map(x => ({ i: x.i, name: x.name || `Player ${x.i + 1}`, ai: x.kind === 'ai' })) })); return; }   // "Which player are you?"
+      const live = this.seats.filter(s => s.kind === 'remote' && s.connected && s.peer && s.peer !== peer);
+      if (!m.probed && live.length) {
+        const t0 = this.now(); for (const s of live) this.transport.send(s.peer, msg('ping', { n: ++this.pingN, ...this.beat() }));
+        this.timers.setTimeout(() => {
+          for (const s of live) if (s.connected && s.lastSeen < t0) { s.connected = false; this.changed(s.i); }   // no answer: a dead connection
+          this.hello(peer, { ...m, probed: true });
+        }, this.probeMs);
+        return;
+      }
+      this.reject(peer, 'NO_FREE_SEAT', NO_FREE_SEAT_MSG); this.transport.send(peer, msg('bye', { reason: 'NO_FREE_SEAT' })); return;
+    }
     if (!seat) {
-      if (this.started) { this.reject(peer, 'STARTED', STARTED_MSG); this.transport.send(peer, msg('bye', { reason: 'STARTED' })); return; }
       seat = this.seats.find(s => s.kind === 'remote' && !s.token);
       if (!seat) { this.reject(peer, 'FULL', 'This game has no free seat.'); this.transport.send(peer, msg('bye', { reason: 'FULL' })); return; }
       seat.token = newToken(this.rnd); seat.name = cleanName(m.name, seat.i);
@@ -80,36 +101,23 @@ export class HostRoom {
   seatIn(peer, seat) {
     if (seat.peer && seat.peer !== peer) this.transport.send(seat.peer, msg('bye', { reason: 'REPLACED' }));   // the same player from a new tab
     Object.assign(seat, { peer, connected: true, lastSeen: this.now(), sentTo: null });   // sentTo null: its next update has the whole log
-    this.transport.send(peer, msg('welcome', { proto: PROTO, build: this.build, code: this.code, seat: seat.i, token: seat.token, name: seat.name }));
+    this.transport.send(peer, msg('welcome', { proto: PROTO, build: this.build, code: this.code, seat: seat.i, token: seat.token, name: seat.name, started: !!this.started }));
     this.changed(seat.i);
-    if (this.started && this.last) this.sendUpdate(seat, this.last);   // a rejoin mid-game gets the whole current view at once
+    if (this.started && this.last) this.sendUpdate(seat, this.last, { full: true });   // v30.5.1: every join mid-game gets the whole current view at once, explicitly
+    // v30.5.1: a game resumed from a save has no step cached until its next move: ask the page for the current one (it calls update(),
+    // which sends every connected seat its own view), so a join into a game in progress never leaves the guest in the waiting lobby
+    else if (this.started) this.hooks.onWantState?.(this, seat.i);
   }
-  /** v30.5, the host's reseat tool ("Let a new device take this seat"): a one-time claim code for seat i, a guest seat that is not
-   *  connected now (away, never taken, or played by the AI after its player left). A new claim for the same seat replaces the old
-   *  one. Returns the code, or null (an occupied, host or plain AI seat). */
-  claimable(i) { const s = this.seats[i]; return !!s && !s.connected && (s.kind === 'remote' || (s.kind === 'ai' && !!s.token)); }
-  claim(i) {
-    if (!this.claimable(i)) return null;
-    this.claims ??= new Map();
-    for (const [k, v] of this.claims) if (v === i) this.claims.delete(k);
-    let c; do { c = Array.from({ length: 6 }, () => CLAIM_CHARS[Math.floor(this.rnd() * CLAIM_CHARS.length)]).join(''); } while (this.claims.has(c));
-    this.claims.set(c, i); return c;
-  }
-  claimOf(i) { for (const [k, v] of this.claims ?? []) if (v === i) return k; return null; }
-  /** Every claim code stops working (the game is over, the room closes). */
-  dropClaims() { this.claims?.clear(); }
-  claimHello(peer, m) {
-    const c = normClaim(m.claim); const i = this.claims?.get(c);
-    const no = (code, text) => { this.reject(peer, code, text); this.transport.send(peer, msg('bye', { reason: code })); };
-    if (i === undefined || this.last?.state?.phase === 'finished') return no('BAD_CLAIM', BAD_CLAIM_MSG);
-    const seat = this.seats[i];
-    if (seat.connected && seat.peer) return no('SEAT_IN_USE', SEAT_IN_USE_MSG);   // an impostor (or a stale link) cannot take a seat in use
-    this.claims.delete(c);   // single use
+  /** v30.5.1: the seats a joiner may take in a game in progress: an AI seat, or a guest seat whose player is offline. Never the host's
+   *  own seat, never a guest seat whose player is online. */
+  freeSeats() { return this.started ? this.seats.filter(x => x.kind === 'ai' || (x.kind === 'remote' && !x.connected)) : []; }
+  takeOver(peer, seat, m) {
     const wasAI = seat.kind === 'ai';
+    if (seat.peer && seat.peer !== peer) { try { this.transport.send(seat.peer, msg('bye', { reason: 'REPLACED' })); } catch { /* */ } }   // the old device (asleep)
     seat.token = newToken(this.rnd);   // the old device's token stops working: the seat is this device's now
     if (!seat.name) seat.name = cleanName(m.name, seat.i);
     this.seatIn(peer, seat);
-    this.hooks.onClaimed?.(this, seat.i, { wasAI });
+    this.hooks.onClaimed?.(this, seat.i, { wasAI });   // the page: an AI seat goes back to a human player at once
   }
   /** The host changed the setup (lobby only): seat kinds and the names of the host's and AI seats. A guest keeps its seat when it is
    *  still Online, otherwise moves to a free Online seat, otherwise is told its seat is gone. Sends the lobby only when it changed. */
@@ -135,7 +143,7 @@ export class HostRoom {
   /** The host pressed Start: `playerIds[i]` is seat i's engine player id. */
   start(playerIds) { this.started = true; this.seats.forEach((s, i) => { s.playerId = playerIds[i]; }); this.sendLobby(); }
   /** After every applied step (and once at the start): {seq, state, events, by}. Every connected guest gets its own view. */
-  update(step) { this.last = step; if (step?.state?.phase === 'finished') this.dropClaims(); for (const s of this.seats) if (s.peer) this.sendUpdate(s, step); }
+  update(step) { this.last = step; for (const s of this.seats) if (s.peer) this.sendUpdate(s, step); }
   /** One seat's update: its viewFor view (no log) + the log entries it has not had yet (all of them after a welcome or a resync). */
   sendUpdate(s, step, { full = false, resync = false } = {}) {
     const pid = s.playerId; const log = step.state.log ?? [];
@@ -182,5 +190,5 @@ export class HostRoom {
     const t = this.last.state?.turn ?? {};
     return { seq: this.last.seq, turn: t.number ?? null, step: t.step ?? null };
   }
-  close(reason = 'HOST_LEFT') { this.dropClaims(); for (const s of this.seats) if (s.peer) this.transport.send(s.peer, msg('bye', { reason })); this.transport.close(); }
+  close(reason = 'HOST_LEFT') { for (const s of this.seats) if (s.peer) this.transport.send(s.peer, msg('bye', { reason })); this.transport.close(); }
 }

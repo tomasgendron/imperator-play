@@ -41,7 +41,8 @@ export function createHost(page) {
     C.NET = { role: 'host', code, transport: t, me: null, inbox: [], salt };
     C.NET.room = new HostRoom({ transport: t, build: C.uiLabel, code, seats: [], data: page.data(), hooks: {
       onSeat: () => queueMicrotask(() => { if (C.NET?.role !== 'host') return; if (!page.inGame()) page.lobby(C.NET.room); else if (C.S) { page.render(); page.autosave(); } }),
-      // v30.5: a new device took a seat with the host's one-time rejoin code: an AI seat goes back to its player at once
+      // v30.5.1: a device took a free seat with the room code: an AI seat goes back to a player at once
+      onWantState: room => { if (C.NET?.role === 'host' && C.NET.room === room && C.S) push(); },   // v30.5.1: a seat came into a resumed game before any move
       onClaimed: (room, i, info) => queueMicrotask(() => { if (C.NET?.role !== 'host' || C.NET.room !== room || !C.S) return; if (info?.wasAI) back(i); page.claimed?.(i, info); }),
       onAct: (i, action, reply, fresh) => { C.NET.inbox.push({ i, action, reply, fresh }); if (!C.busy) drain(); else nudge(i); },
     } });
@@ -96,9 +97,6 @@ export function createHost(page) {
     if (!C.NET.room.seatBack(i)) { page.toast(`${p.name} is not connected: the seat stays with the AI`); return false; }
     setController(p.id, 'human'); page.toast(`${p.name} plays their seat again`); page.autosave(); page.render(); page.schedule(); return true;
   }
-  /** v30.5 (the host's reseat tool): a one-time rejoin code for seat i (offline, or an AI seat that had a player); null: not now. */
-  const claimable = i => C.NET?.role === 'host' && !!C.S && C.NET.room.claimable(i);
-  const claim = i => (claimable(i) ? C.NET.room.claim(i) : null);
   /** One seat's online state for the player chips and the host strip: you | host | online | away | ai-online | ai-away | null. */
   function seatState(i) {
     if (C.NET?.role !== 'host' || !C.S) return null;
@@ -121,8 +119,8 @@ export function createHost(page) {
     }
     if (!t) throw new Error('Could not reopen the room: ' + (err?.message ?? 'no network'));
     net(t, code, on.salt ?? newSalt());
-    C.NET.room.restore({ ...on.room, code }); C.NET.me = on.me;
-    C.S = ns; wakeOn();
+    C.NET.room.restore({ ...on.room, code, started: true }); C.NET.me = on.me;   // v30.5.1: a resumed game is past the lobby, always
+    C.S = ns; push(); wakeOn();   // v30.5.1: the room holds the whole current state from the start (every join gets it)
     return { code, same: code === on.code, old: on.code };
   }
   function leave() {
@@ -157,5 +155,5 @@ export function createHost(page) {
   }
   document.addEventListener('visibilitychange', visibility);
   addEventListener('pageshow', () => { if (!document.hidden) visibility(); });
-  return { open, configure, readiness, remoteName, started, drain, nudge, push, pushAll, toAI, back, seatState, claimable, claim, resume, leave, wake: () => W.state, visibility, wakeOn, wakeOff };
+  return { open, configure, readiness, remoteName, started, drain, nudge, push, pushAll, toAI, back, seatState, resume, leave, wake: () => W.state, visibility, wakeOn, wakeOff };
 }

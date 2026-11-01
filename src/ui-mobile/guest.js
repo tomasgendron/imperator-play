@@ -24,7 +24,7 @@ function loadPeer() {
     document.head.append(sc);
   });
 }
-export async function makeTransport() { return netMode() === 'local' ? createBroadcastTransport() : createPeerTransport(await loadPeer()); }
+export async function makeTransport() { return netMode() === 'local' ? createBroadcastTransport() : netMode() === 'fakepeer' ? createPeerTransport((await import('../net/fakepeer.js')).FakePeer) : createPeerTransport(await loadPeer()); }   // v30.5.1: fakepeer = the PeerJS path's size rule, between tabs (tests)
 export const whyText = w => ({ LINK_LOST: 'the link dropped', HOST_LEFT: 'the host left the game', NO_ROOM: 'the room is not open', NETWORK: 'network error', TIMEOUT: 'no answer', RETRY: 'retrying' })[w] ?? String(w ?? 'no link').toLowerCase().replace(/_/g, ' ');
 
 /**
@@ -41,8 +41,8 @@ export function createGuest(page) {
     document.body.dataset.online = ''; document.body.dataset.netStatus = ''; page.banner();
   }
   /** v30.5: Join always ends in words: "Connecting…", then the game (or the lobby), or why not (room not found / host offline, no
-   *  answer, already started and not your seat, a rejoin code that does not work, network). Every saved seat token goes in the hello
-   *  (the host resumed under a new code: a typed new code still finds the seat); `claim`: the host's one-time rejoin code. */
+   *  answer, no free seat, network). Every saved seat token goes in the hello
+   *  (the host resumed under a new code: a typed new code still finds the seat); `claim` (v30.5 links) is ignored since v30.5.1. */
   async function join(codeIn, nameIn, was = '', claim = null) {
     const p = parseJoin(codeIn); const code = p.code; claim = claim || p.claim; was = was || p.was;
     const name = String(nameIn ?? '').trim().slice(0, 20);
@@ -51,7 +51,7 @@ export function createGuest(page) {
     const cur = C.NET;
     if (cur?.role === 'guest' && cur.code === code && (cur.client?.status ?? 'connecting') === 'connecting' && !cur.client?.ended && Date.now() - cur.at < 4000) { page.say(`Connecting to room ${code}… (one moment)`); return false; }
     try { localStorage.setItem(NAME_KEY, name); } catch { /* */ }
-    leave(); page.say(`Connecting to room ${code}…`); page.busyJoin(true);
+    leave(); page.pick?.(null); page.say(`Connecting to room ${code}…`); page.busyJoin(true);
     let store = null; try { store = localStorage; } catch { /* */ }
     const own = seatFor(store, code) ?? (was ? seatFor(store, was) : null);   // this room's seat (or, with ?was=, the same game's old code)
     const token = own?.token ?? null; const tokens = tokensFor(store, code, was).filter(x => x !== token);
@@ -60,11 +60,19 @@ export function createGuest(page) {
     const mineNet = () => C.NET === n;
     const end = (m) => { page.busyJoin(false); if (mineNet()) leave(); if (m) page.say(m, true); };
     n.client = new GuestClient({ transport: t, makeTransport, build: C.uiLabel, name, token, tokens, claim: claim || null, data: page.data(), hooks: {
-      onWelcome: (c, m) => { n.code = c.code; if (mineNet()) pendDone(); else n.pending = false;
+      onWelcome: (c, m) => { n.code = c.code; if (mineNet()) { pendDone(); page.pick?.(null); } else n.pending = false;
         rememberSeat(store, c.code, { token: m.token, seat: m.seat, name: m.name, was: was || null });
-        if (!page.inGame()) page.say(`Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}). Waiting for the host to start…`); },
+        if (!page.inGame()) page.say(m.started ? `Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}). Loading the game in progress…` : `Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}). Waiting for the host to start…`); },
+      // v30.5.1: welcomed into a game in progress but no game state came: never sit silently (the client keeps asking too)
+      onNoState: c => { if (!mineNet()) return;
+        if (page.inGame()) { page.toast('Waiting for the game from the host… asking again'); return; }
+        page.busyJoin(false); page.say('The game did not arrive from the host. Asking again… Tap Retry, or check the host is online.', true);
+        page.retry?.(() => { if (!mineNet()) return; page.say('Asking the host for the game again…'); c.retryState(); }); },
+      // v30.5.1: a game in progress with several free seats: "Which player are you?" (the player names; one tap joins that seat)
+      onPick: (c, seats) => { if (!mineNet()) return; page.busyJoin(false); page.say('This game is already running. Which player are you?');
+        page.pick?.(seats, i => { if (!mineNet()) return; page.pick?.(null); page.busyJoin(true); page.say(`Joining as ${seats.find(x => x.i === i)?.name ?? 'that player'}…`); c.pick(i); }); },
       onLobby: (c, m) => { if (mineNet()) page.lobby(m); if (C.S && mineNet() && page.inGame()) page.render(); },
-      onUpdate: (c, u) => { if (!mineNet()) return; n.me = u.you.playerId; n.q.push(u);
+      onUpdate: (c, u) => { if (!mineNet()) return; n.me = u.you.playerId; n.q.push(u); if (c.lastNoState !== false) { c.lastNoState = false; page.retry?.(null); }
         if (u.state?.phase === 'finished') forgetSeat(store, n.code);
         if (!page.inGame()) enter(); else drain(); },
       onReject: (c, m) => { if (!mineNet()) return;
@@ -72,7 +80,7 @@ export function createGuest(page) {
         pendDone(); if (m.code !== 'STALE') { page.sound('error_denied'); page.toast(m.message); } page.render(); },
       onBye: (c, r) => { if (!mineNet()) return;
         if (r === 'HOST_LEFT' && !c.ended) return;   // M14: not final: the host may resume; the client reconnects (onStatus)
-        if (['BUILD_MISMATCH', 'FULL', 'STARTED', 'BAD_CLAIM', 'SEAT_IN_USE'].includes(r)) { end(null); return; }   // the refusal's words are shown (onReject)
+        if (['BUILD_MISMATCH', 'FULL', 'STARTED', 'NO_FREE_SEAT'].includes(r)) { if (r === 'STARTED' || r === 'NO_FREE_SEAT') forgetSeat(store, n.code || code); page.pick?.(null); end(null); return; }   // v30.5.1: a refused saved seat is stale: forget it   // the refusal's words are shown (onReject)
         if (r === 'NO_ANSWER') { end(JOIN_END_TEXT.NO_ANSWER); return; }
         if (r === 'GAME_OVER') forgetSeat(store, n.code);
         if (r === 'GAME_OVER' && page.inGame()) { n.lost = 'The game is over; the host closed the room.'; page.banner(); return; }

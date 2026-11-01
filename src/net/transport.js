@@ -106,7 +106,24 @@ export function createBroadcastTransport(BC = globalThis.BroadcastChannel) {
 
 // STUN only (no TURN account, decision 2026-10-25): Google's and Cloudflare's free public STUN servers.
 export const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }];
-const CHUNK = 16000;   // characters per data-channel message (safe under every browser's SCTP message limit, even as UTF-8)
+// v30.5.1: PeerJS's JSON channel DROPS (a "Message too big" error, nothing sent) any message of util.chunkedMTU = 16300 bytes or more,
+// counted as the UTF-8 of JSON.stringify(frame). A frame's text is a JSON string inside the frame, so its quotes are escaped again
+// and non-ASCII letters take 2-3 bytes: frames are cut by their real size (the old 16000-character chunks were ~19000 bytes, so
+// every long message, such as the whole view a rejoining or new player gets in a game that has run a while, was lost).
+export const MAX_FRAME_BYTES = 15000;
+const ENC = new TextEncoder();
+const frameBytes = f => ENC.encode(JSON.stringify(f)).length;
+/** The data-channel frames for one message text: {k:'m', s} when it fits, else {k:'c', id, i, n, s} parts, each under MAX_FRAME_BYTES. */
+export function peerFrames(s, id, max = MAX_FRAME_BYTES) {
+  if (frameBytes({ k: 'm', s }) <= max) return [{ k: 'm', s }];
+  const parts = []; let i = 0; let size = 12000;
+  while (i < s.length) {
+    let n = Math.min(size, s.length - i);
+    while (n > 1 && frameBytes({ k: 'c', id, i: 99999, n: 99999, s: s.slice(i, i + n) }) > max) n = Math.max(1, Math.floor(n * 0.75));
+    parts.push(s.slice(i, i + n)); i += n; size = Math.max(n, 1000);
+  }
+  return parts.map((x, j) => ({ k: 'c', id, i: j, n: parts.length, s: x }));
+}
 
 /** PeerJS (WebRTC data channels) with the free PeerJS Cloud signalling server (0.peerjs.com). The room code is the host's peer id
  *  (`imperator-<CODE>`). Messages are JSON strings, split into chunks when long. `Peer` is the PeerJS constructor (src/vendor). */
@@ -122,7 +139,7 @@ export function createPeerTransport(Peer, { iceServers = ICE_SERVERS, timeoutMs 
       if (text !== null) { let m; try { m = JSON.parse(text); } catch { return; } ev.emitMsg(who, m); }
     });
     conn.on('close', () => { if (conns.get(who) === conn) { conns.delete(who); ev.emitClose(who); } });
-    conn.on('error', () => { /* close follows */ });
+    conn.on('error', e => { if (e?.type !== 'peer-unavailable') console.warn('data channel', e?.type ?? e?.message ?? e); });   // a close follows a real failure
   };
   const mapErr = e => (e?.type === 'unavailable-id' ? err('ROOM_TAKEN', 'That room code is already in use.')
     : e?.type === 'peer-unavailable' ? err('NO_ROOM', 'No game with that code was found (is the host\'s page still open?).')
@@ -151,10 +168,7 @@ export function createPeerTransport(Peer, { iceServers = ICE_SERVERS, timeoutMs 
     },
     send(to, obj) {
       const c = conns.get(to); if (!c || !c.open) return;
-      const s = JSON.stringify(obj);
-      if (s.length <= CHUNK) { c.send({ k: 'm', s }); return; }
-      const id = ++seq; const n = Math.ceil(s.length / CHUNK);
-      for (let i = 0; i < n; i++) c.send({ k: 'c', id, i, n, s: s.slice(i * CHUNK, (i + 1) * CHUNK) });
+      for (const f of peerFrames(JSON.stringify(obj), ++seq)) c.send(f);
     },
     onMessage: ev.onMessage, onPeer: ev.onPeer, onPeerClose: ev.onPeerClose,
     close() { for (const c of conns.values()) try { c.close(); } catch { /* */ } conns.clear(); try { peer?.destroy(); } catch { /* */ } peer = null; },

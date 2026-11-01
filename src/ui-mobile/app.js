@@ -42,6 +42,9 @@ const NETG = createGuest({
   // v30.5: the Join button is never disabled (a tap while connecting is answered "one moment"; a dead button looked like "Join does nothing")
   busyJoin: on => { joinBusy = on; const b = $('#mJoinGo'); if (b) b.classList.toggle('busy', on); },
   lobby: m => { joinLobby = m; const e = $('#mLobby'); if (e) e.innerHTML = lobbyHtml(m); },
+  // v30.5.1: "Which player are you?" (several free seats in a game in progress); null: gone
+  retry: fn => { joinPick = fn ? { retry: fn } : null; const e = $('#mPick'); if (e) { e.innerHTML = pickHtml(); bindPick(); } },   // v30.5.1: no game state arrived
+  pick: (seats, choose) => { joinPick = seats ? { seats, choose } : null; const e = $('#mPick'); if (e) { e.innerHTML = pickHtml(); bindPick(); } },
   lost: msg => { SND.play('error_denied'); openSheet('netlost', `<div class="sh-head"><h2>Disconnected</h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div><div class="sh-body" id="netLostBox"><p>${esc(msg)}</p></div><div class="sh-foot"><button class="btn gold wide" data-close>OK</button><button class="btn wide" id="nlLeave">Back to the start</button></div>`); $('#nlLeave').onclick = () => { closeSheet(true); toStart(); }; },
 });
 const isGuest = () => C.NET?.role === 'guest';
@@ -52,7 +55,7 @@ const NETH = createHost({
   toast: m => toast(m), closePops: () => { if (popDone) closePop(); }, popupWaiting: () => !!popDone,
   lobby: () => { if (playWhere === 'host' && document.body.dataset.screen === 'setup') renderHostBox(); },
   cancelled: () => playWhere !== 'host' || document.body.dataset.screen !== 'setup',
-  claimed: i => { const nm = C.full().players[i]?.name ?? 'A player'; toast(`${nm} took their seat on a new device`); if (sheetKind === 'reseat') closeSheet(true); render(); },
+  claimed: i => { const nm = C.full().players[i]?.name ?? 'a seat'; toast(`A player joined with the room code and plays ${nm}`); render(); },
   away: ms => hostBack(ms), wake: () => { if (inGame()) renderNetBar(); else { const e = $('#hWake'); if (e) e.innerHTML = wakeText(); } },
 });
 /** The seat this screen shows: online, always this phone's own seat (a guest gets only its view; a host plays only its own seat);
@@ -132,7 +135,7 @@ async function boot() {
   const q = new URLSearchParams(location.search);
   if (q.get('join')) { playWhere = 'join'; joinCode = normCode(q.get('join')); }
   joinWas = normCode(q.get('was') || '');   // M14: the host resumed under a new code (the old one was taken)
-  joinClaim = normCode(q.get('claim') || '') || null;   // v30.5: the host's one-time rejoin code for a seat ("Let a new device take this seat")
+  joinClaim = normCode(q.get('claim') || '') || null;   // v30.5 links' ?claim= (ignored since v30.5.1: one room code)
   addEventListener('pagehide', e => { try { if (isHost()) { if (C.S) autosave(); if (!e.persisted) NETH.leave(); } else C.NET?.client?.leave(); } catch { /* */ } });   // as the desktop: the host frees the link at once
   // v30.5: back from the iPhone's page cache (another app, a swipe away and back): the guest left on pagehide, so it rejoins its seat
   addEventListener('pageshow', e => { if (!e.persisted || !isGuest() || !C.NET.client.ended) return; const code = C.NET.code; NETG.join(code, savedName() || seatFor(lsx(), code)?.name || 'Guest'); });
@@ -266,8 +269,12 @@ function joinBoxHtml() {
     <label class="fld">Room code<input type="text" id="mJoinCode" value="${attr(joinCode)}" maxlength="400" autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="go" placeholder="ABC123" aria-label="Room code"></label>
     <label class="fld">Your name<input type="text" id="mJoinName" value="${attr(joinName)}" maxlength="20" autocomplete="nickname" enterkeyhint="go" aria-label="Your name"></label>
     <div class="jstat${joinMsg?.bad ? ' bad' : ''}" id="mJoinStatus" role="status">${esc(joinMsg?.m ?? '')}</div>
+    <div id="mPick">${pickHtml()}</div>
     <div class="glob" id="mLobby">${joinLobby ? lobbyHtml(joinLobby) : ''}</div></div>`;
 }
+let joinPick = null;
+const pickHtml = () => (joinPick?.retry ? `<div class="pick"><button type="button" class="btn wide" data-retry>Retry</button></div>` : joinPick ? `<div class="pick" role="group" aria-label="Which player are you?">${joinPick.seats.map(x => `<button type="button" class="btn wide" data-pick="${x.i}">${esc(x.name)}${x.ai ? ' <small>(AI now)</small>' : ' <small>(offline)</small>'}</button>`).join('')}</div>` : '');
+function bindPick() { $$('#mPick [data-pick]').forEach(b => b.onclick = () => joinPick?.choose(+b.dataset.pick)); $$('#mPick [data-retry]').forEach(b => b.onclick = () => joinPick?.retry?.()); }
 const NETGsay = m => { joinMsg = { m, bad: true }; const e = $('#mJoinStatus'); if (e) { e.textContent = m; e.classList.add('bad'); } else toast(m); };
 /** v30.5: the start screen's "Rejoin game" (a seat this phone holds in an online game; kept for 48 h, until that game is over, or Forget). */
 function rejoinHtml() {
@@ -299,6 +306,7 @@ function wireJoin(el) {
     joinCode = p.code; ci.value = joinCode; joinName = ni.value; SND.play('button_click'); if (!joinName.trim()) ni.focus();
     NETG.join(joinCode, joinName, joinWas, joinClaim).catch(e => NETGsay(`Join failed: ${e.message}`));
   } catch (e) { console.error('join', e); NETGsay(`Join failed: ${e.message}`); } };
+  bindPick();
 }
 function openGeneralPick(i) {
   const takenBy = id => seats.findIndex((y, j) => j !== i && y.general === id);
@@ -510,7 +518,7 @@ function render() {
 function renderHostBar(el) {
   const s = C.full(); const items = [];
   s.players.forEach((p, i) => { const k = NETH.seatState(i);
-    const rs = s.phase !== 'finished' && NETH.claimable(i) ? ` <button type="button" class="btn sm" data-reseat="${i}" aria-label="Let a new device take ${attr(p.name)}'s seat">📲 New device</button>` : '';   // v30.5
+    const rs = '';   // v30.5.1: no per-seat links: the room code alone lets a player take a free seat
     if (k === 'away' && s.phase !== 'finished') items.push(`<span class="nbseat away">○ <b>${esc(p.name)}</b> is away <button type="button" class="btn sm" data-toai="${i}" aria-label="Give ${attr(p.name)}'s seat to the AI">→ AI</button>${rs}</span>`);
     else if (k === 'ai-away' && rs) items.push(`<span class="nbseat">🤖 <b>${esc(p.name)}</b>: AI${rs}</span>`);
     else if (k === 'ai-online' && s.phase !== 'finished') items.push(`<span class="nbseat">🤖 <b>${esc(p.name)}</b> (AI) is back <button type="button" class="btn sm gold" data-back="${i}" aria-label="Give ${attr(p.name)} their seat back">← back</button></span>`);
@@ -524,23 +532,6 @@ function renderHostBar(el) {
   $('#nbRoom').onclick = () => roomSheet();
   $$('[data-toai]', el).forEach(b => b.onclick = () => { const i = +b.dataset.toai; const nm = C.full().players[i]?.name; if (window.confirm(`Give ${nm}'s seat to the AI? (You can give it back when ${nm} is connected again.)`)) NETH.toAI(i); });
   $$('[data-back]', el).forEach(b => b.onclick = () => NETH.back(+b.dataset.back));
-  $$('[data-reseat]', el).forEach(b => b.onclick = () => reseatSheet(+b.dataset.reseat));
-}
-/** v30.5: "Let a new device take this seat": a one-time rejoin link (and code) for a seat that is offline or with the AI. Single use,
- *  for this seat of this room; a newer one replaces it; it stops working when used or when the game ends. The host stays in charge. */
-function reseatSheet(i) {
-  const c = NETH.claim(i); const nm = C.full().players[i]?.name ?? `Seat ${i + 1}`;
-  if (!c) { toast(`${nm} is connected: nothing to hand over`); return; }
-  const link = joinLink(C.NET.code) + '&claim=' + c;
-  openSheet('reseat', `<div class="sh-head"><h2>A new device for ${esc(nm)}<small>a one-time rejoin link for this seat</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
-    <div class="sh-body" id="reseatBox"><p>Send this link to ${esc(nm)}: it opens their seat on any phone or computer, once. Or they type the room code <b>${esc(C.NET.code)}</b> and the rejoin code.</p>
-      <div class="hcode"><span>Rejoin code</span><b id="reseatCode">${esc(c)}</b></div>
-      <label class="fld">Rejoin link<input type="text" id="reseatLink" value="${attr(link)}" readonly aria-label="Rejoin link"></label>
-      <div class="row hbtns"><button class="btn" id="rsCopy">📋 Copy link</button>${navigator.share ? '<button class="btn" id="rsShare">📤 Share…</button>' : ''}</div>
-      <p class="note">It works once, only for this seat; a newer link replaces it. The seat's old device (if it comes back) is no longer in it.</p></div>
-    <div class="sh-foot"><button class="btn gold wide" data-close>OK</button></div>`);
-  $('#rsCopy').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch { $('#reseatLink').select(); toast('Select the link and copy it'); } };
-  const sh = $('#rsShare'); if (sh) sh.onclick = async () => { try { await navigator.share({ title: 'Imperator', text: `Your seat in my Imperator game (${nm})`, url: link }); } catch { /* */ } };
 }
 /** v30.2: the online strip under the top bar (the desktop's renderNetBanner, guest side): reconnecting | lost | hostAway | waiting | ai |
  *  ended; hidden while connected. body[data-net-status] is for tests. */

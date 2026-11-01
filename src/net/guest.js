@@ -18,10 +18,12 @@ export const RETRY_MS = [500, 1000, 2000, 3000, 5000, 8000, ...Array(28).fill(10
 export const HELLO_MS = 8000;
 /** v26.1: a resync asked for and not answered in this time may be asked for again (a lost request must not stop it for good). */
 export const RESYNC_RETRY_MS = 4000;
-export const FINAL_BYES = ['BUILD_MISMATCH', 'FULL', 'STARTED', 'SEAT_REMOVED', 'REPLACED', 'GAME_OVER', 'BAD_CLAIM', 'SEAT_IN_USE', 'NO_ANSWER'];
+export const FINAL_BYES = ['BUILD_MISMATCH', 'FULL', 'STARTED', 'SEAT_REMOVED', 'REPLACED', 'GAME_OVER', 'NO_FREE_SEAT', 'NO_ANSWER'];
 /** v30.5: a first join whose link opened but that got no welcome (nor a refusal) in this time ends with bye NO_ANSWER: the page says so
  *  (never a silent "Connecting…"). */
 export const JOIN_MS = 12000;
+/** v30.5.1: welcomed into a game in progress and no game state within this time: ask again and tell the page (a visible error + Retry). */
+export const STATE_MS = 5000;
 /** v30.5: why a join ended, in words (the page shows it under Join). */
 export const JOIN_END_TEXT = {
   NO_ANSWER: 'The host\'s page did not answer (timeout). Check that the host has Imperator open and in front, then tap Join again.',
@@ -55,7 +57,15 @@ export class GuestClient {
     if (this.joinMs) this.timer = this.timers.setTimeout(() => { if (this.status === 'connecting' && !this.ended) { this.ended = 'NO_ANSWER'; try { this.transport.close(); } catch { /* */ } this.hooks.onBye?.(this, 'NO_ANSWER'); } }, this.joinMs);
     return r;
   }
-  hello() { this.transport.send(HOST, msg('hello', { proto: PROTO, build: this.build, name: this.name, ...(this.token ? { token: this.token } : {}), ...(this.tokens?.length ? { tokens: this.tokens } : {}), ...(this.claim ? { claim: this.claim } : {}) })); }
+  /** `back`: a reconnect (never takes another free seat); `pick`: the seat she chose ("Which player are you?"). */
+  hello(back = false) { this.transport.send(HOST, msg('hello', { proto: PROTO, build: this.build, name: this.name, ...(this.token ? { token: this.token } : {}), ...(this.tokens?.length ? { tokens: this.tokens } : {}), ...(back ? { back: true } : {}), ...(Number.isInteger(this.pickI) ? { pick: this.pickI } : {}) })); }
+  /** v30.5.1: the joiner chose seat i from the host's list of free seats (onPick). */
+  pick(i) {
+    if (this.ended || this.status !== 'connecting') return;
+    this.pickI = i; this.choices = null; this.hello();
+    this.timers.clearTimeout(this.timer);
+    if (this.joinMs) this.timer = this.timers.setTimeout(() => { if (this.status === 'connecting' && !this.ended) { this.ended = 'NO_ANSWER'; try { this.transport.close(); } catch { /* */ } this.hooks.onBye?.(this, 'NO_ANSWER'); } }, this.joinMs);
+  }
   /** The link is gone (or the host said HOST_LEFT): reconnect with the token, or (no factory / no seat yet) end as in M11. */
   linkLost(why) {
     if (this.ended) return;
@@ -88,7 +98,7 @@ export class GuestClient {
       await t.open({ role: 'guest', code: this.code });
       if (this.ended || t !== this.transport) { try { t.close(); } catch { /* */ } return; }
       this.lastHeard = this.now(); this.resyncAsked = false; this.logTo = null;   // the host answers the hello with a full update
-      this.hello();
+      this.hello(true);
       this.timers.clearTimeout(this.timer);
       this.timer = this.timers.setTimeout(() => { if (t === this.transport && this.status === 'reconnecting' && n === this.attempt) this.notOurs(t, 'NO_ANSWER'); }, HELLO_MS);
     } catch (e) {
@@ -115,13 +125,16 @@ export class GuestClient {
       case 'welcome': {
         const again = this.status === 'reconnecting' || this.status === 'lost';
         if (again && m.token !== this.token) { this.notOurs(this.transport, 'NOT_OUR_ROOM'); break; }   // another game under this code
-        this.seat = m.seat; this.token = m.token; this.tokens = []; this.claim = null; this.name = m.name ?? this.name; this.code = m.code ?? this.code;
+        this.seat = m.seat; this.token = m.token; this.tokens = []; this.claim = null; this.pickI = null; this.choices = null; this.name = m.name ?? this.name; this.code = m.code ?? this.code;
         this.timers.clearTimeout(this.timer); this.attempt = 0;
         if (again) this.reconnects++;
         this.setStatus('connected', { rejoined: again });
-        this.hooks.onWelcome?.(this, m); break;
+        this.hooks.onWelcome?.(this, m);
+        if (m.started) this.watchState(); break;
       }
       case 'lobby': this.lobby = m; this.hooks.onLobby?.(this, m); break;
+      // v30.5.1: a game in progress with several free seats: "Which player are you?" (no answer timeout while she chooses)
+      case 'pick': if (this.status !== 'connecting') break; this.timers.clearTimeout(this.timer); this.pickI = null; this.choices = m.seats ?? []; this.hooks.onPick?.(this, this.choices); break;
       case 'ping': {
         this.transport.send(HOST, msg('pong', { n: m.n }));
         // v26.1 heartbeat: the host's last update is not the one this guest has (dropped, discarded on a gap, never applied): resync.
@@ -148,12 +161,13 @@ export class GuestClient {
         const step = { state: m.state, events: m.anim, action: null, error: null, by: m.by };
         const steps = this.session ? [...this.session.steps, step].slice(-KEEP) : [step];
         this.session = { data: this.data, seed: 'online', steps, online: true };
+        this.timers.clearTimeout(this.stateTimer); this.stateTimer = null; this.noState = false;
         this.hooks.onUpdate?.(this, m); break;
       }
       case 'reject': if (m.code === 'STALE') this.resync('STALE'); this.hooks.onReject?.(this, m); break;
       case 'bye': {
         const r = m.reason ?? 'BYE';
-        if ((this.status === 'reconnecting' || this.status === 'lost') && (r === 'FULL' || r === 'STARTED')) { this.notOurs(this.transport, 'NOT_OUR_ROOM'); break; }
+        if ((this.status === 'reconnecting' || this.status === 'lost') && (r === 'FULL' || r === 'STARTED' || r === 'NO_FREE_SEAT')) { this.notOurs(this.transport, 'NOT_OUR_ROOM'); break; }
         if (r === 'HOST_LEFT' && this.makeTransport && this.token) { this.hooks.onBye?.(this, r); this.linkLost('HOST_LEFT'); break; }
         this.ended = r; this.timers.clearTimeout(this.timer); this.hooks.onBye?.(this, this.ended); break;
       }
@@ -172,5 +186,17 @@ export class GuestClient {
   }
   /** Sends a move for this guest's own seat (the host checks it, rolls any dice and answers with an update or a reject). */
   act(action) { const { dice, ...a } = action ?? {}; this.transport.send(HOST, msg('act', { seq: this.seq, action: a })); }   // eslint-disable-line no-unused-vars
-  leave() { this.timers.clearTimeout(this.timer); if (!this.ended) { this.ended = 'LEFT'; this.transport.send(HOST, msg('bye', {})); } this.transport.close(); }
+  /** v30.5.1: a join into a game in progress must never sit silently: no state within STATE_MS -> resync and onNoState (the page shows
+   *  an error with Retry); it keeps asking every STATE_MS until a state arrives or the guest leaves. */
+  watchState() {
+    this.timers.clearTimeout(this.stateTimer);
+    this.stateTimer = this.timers.setTimeout(() => {
+      this.stateTimer = null;
+      if (this.ended || this.status !== 'connected') return;
+      this.noState = true; this.resyncAsked = false; this.resync('NO_STATE'); this.hooks.onNoState?.(this); this.watchState();
+    }, STATE_MS);
+  }
+  /** v30.5.1: the page's Retry after onNoState: ask the host for the whole game again now. */
+  retryState() { this.resyncAsked = false; this.resync('RETRY'); this.watchState(); }
+  leave() { this.timers.clearTimeout(this.timer); this.timers.clearTimeout(this.stateTimer); if (!this.ended) { this.ended = 'LEFT'; this.transport.send(HOST, msg('bye', {})); } this.transport.close(); }
 }

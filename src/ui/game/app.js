@@ -90,7 +90,7 @@ async function boot() {
   const jc = new URLSearchParams(location.search).get('join');
   if (jc) { playWhere = 'join'; $('#joinCode').value = normCode(jc); }
   joinWas = normCode(new URLSearchParams(location.search).get('was') || '');   // M14: the host resumed under a new code (the old one was taken)
-  joinClaim = normCode(new URLSearchParams(location.search).get('claim') || '') || null;   // v30.5: the host's one-time rejoin code
+  joinClaim = normCode(new URLSearchParams(location.search).get('claim') || '') || null;   // v30.5 links' ?claim= (ignored since v30.5.1: one room code)
   wireGuard();
   renderSetup();
   document.body.dataset.ready = '1';
@@ -363,7 +363,7 @@ function loadPeer() {
     document.head.append(sc);
   });
 }
-async function makeTransport() { return netMode() === 'local' ? createBroadcastTransport() : createPeerTransport(await loadPeer()); }
+async function makeTransport() { return netMode() === 'local' ? createBroadcastTransport() : netMode() === 'fakepeer' ? createPeerTransport((await import('../../net/fakepeer.js')).FakePeer) : createPeerTransport(await loadPeer()); }   // v30.5.1: fakepeer = the PeerJS path's size rule, between tabs (tests)
 const joinLink = (code, was = null) => `${location.origin}${location.pathname}?join=${code}${was ? '&was=' + was : ''}${netMode() ? '&net=' + netMode() : ''}`;
 const SEAT_TOKEN_KEY = 'imperator.online.seat';
 let joinWas = '';   // M14: ?was=OLD in a join link: the host resumed the game under a new code
@@ -435,9 +435,10 @@ function hostNet(t, code, salt) {
   C.NET.room = new HostRoom({ transport: t, build: C.uiLabel, code, seats: [], data, hooks: {
     onSeat: () => queueMicrotask(() => { if (!C.NET) return; if (document.body.dataset.screen === 'setup') renderSetup(); else if (C.S) { render(); autosave(); } }),
     onAct: (i, action, reply, fresh) => { C.NET.inbox.push({ i, action, reply, fresh }); if (!C.busy) hostDrain(); else nudgeHost(i); },
-    // v30.5: a new device took a seat with the host's one-time rejoin code (an AI seat goes back to its player at once)
+    // v30.5.1: a device took a free seat with the room code (an AI seat goes back to a player at once)
+    onWantState: room => { if (C.NET?.room === room && C.S) netPush(); },   // v30.5.1: a seat came into a resumed game before any move
     onClaimed: (room, i, info) => queueMicrotask(() => { if (C.NET?.room !== room || !C.S) return; if (info?.wasAI) seatBack(i);
-      toast(`${st().players[i]?.name ?? 'A player'} took their seat on a new device`); if ($('#reseatBox')) closeModal(); render(); }),
+      toast(`A player joined with the room code and plays ${st().players[i]?.name ?? 'a seat'}`); render(); }),
   } });
   C.NET.ping = setInterval(() => { if (!C.NET?.quiet) C.NET?.room?.tick(); }, PING_MS);   // quiet: tests only (a host that stops answering)
   return C.NET;
@@ -459,8 +460,8 @@ async function resumeOnline(obj) {
   }
   if (!t) { playWhere = 'local'; show('Could not reopen the room: ' + (err?.message ?? 'no network')); renderSetup(); return false; }
   hostNet(t, code, on.salt ?? newSalt());
-  C.NET.room.restore({ ...on.room, code }); C.NET.me = on.me;
-  C.S = ns; closeModal(); enterGame();
+  C.NET.room.restore({ ...on.room, code, started: true }); C.NET.me = on.me;   // v30.5.1: a resumed game is past the lobby, always
+  C.S = ns; netPush(); closeModal(); enterGame();   // v30.5.1: the room holds the whole current state from the start (every join gets it)
   if (code === on.code) toast(`Online game resumed: room ${code}. Your friends' pages reconnect by themselves.`);
   else openModal(`<div class="ask" id="resumedNew"><h2>Resumed under a new code</h2><p>The old room code <b>${esc(on.code)}</b> is taken, so the game is open under <b class="roomcode" id="resumedCode">${esc(code)}</b>.</p>
     <p>Send this link to your friends (their seats are kept; a page still trying the old code can also type the new one):</p><p><input id="resumedLink" readonly size="52" value="${attr(joinLink(code, on.code))}"> <button class="btn sm" id="resumedCopy">Copy link</button></p><button class="btn gold" data-close>OK</button></div>`);
@@ -508,18 +509,7 @@ function seatBack(i) {
   C.NET.room.update({ seq: C.S.steps.length, state: full(), events: [], by: null });
   toast(`${nm} plays their seat again`); autosave(); render(); schedule();
 }
-/** v30.5 (the host's reseat tool): "Let a new device take this seat": a one-time rejoin link and code for seat i (offline, or with the
- *  AI after its player left). Single use, for this seat of this room; a newer one replaces it; dead when used or when the game ends. */
-function reseat(i) {
-  if (C.NET?.role !== 'host' || !C.S) return;
-  const nm = st().players[i]?.name ?? `Seat ${i + 1}`; const c = C.NET.room.claim(i);
-  if (!c) { toast(`${nm} is connected: nothing to hand over`); return; }
-  const link = joinLink(C.NET.code) + '&claim=' + c;
-  openModal(`<div class="ask" id="reseatBox"><h2>Let a new device take ${esc(nm)}'s seat</h2><p>Send this one-time link to ${esc(nm)}: it opens their seat on any phone or computer, once. Or they type the room code <b>${esc(C.NET.code)}</b> with the rejoin code <b class="roomcode" id="reseatCode">${esc(c)}</b>.</p>
-    <p><input id="reseatLink" readonly size="60" value="${attr(link)}"> <button class="btn sm" id="reseatCopy">Copy link</button></p><p class="small">It works once and only for this seat; a newer link replaces it. Their old device is no longer in the seat.</p><button class="btn gold" data-close>OK</button></div>`);
-  $('#reseatCopy').onclick = () => navigator.clipboard?.writeText(link).then(() => toast('Link copied'), () => $('#reseatLink').select());
-}
-const reseatBtn = i => (C.NET?.role === 'host' && st().phase !== 'finished' && C.NET.room.claimable(i) ? `<button type="button" class="btn sm toai" data-reseat="${i}" title="Let a new device take this seat (a one-time rejoin link)">📲 new device</button>` : '');
+const reseatBtn = () => '';   // v30.5.1: no per-seat links any more: the room code alone lets a player take a free seat
 function netBadge(pid) {
   if (!C.NET || !C.S) return '';
   const i = st().players.findIndex(p => p.id === pid);
@@ -544,6 +534,7 @@ function netLeave() {
 }
 
 // guest side
+const joinPickClear = () => document.getElementById('joinPick')?.remove();
 async function joinGame() {
   // v30.5: a pasted link or "CODE-CLAIM" is read; every saved seat token goes in the hello (a typed new code after the host resumed)
   const p = parseJoin($('#joinCode').value); if (p.claim) joinClaim = p.claim; if (p.was) joinWas = p.was;
@@ -552,23 +543,36 @@ async function joinGame() {
   if (code.length < 4) { say('Type the room code the host sent you (6 letters/digits).', true); return; }
   if (!name) { say('Type your name first.', true); $('#joinName').focus(); return; }
   try { localStorage.setItem('imperator.online.name', name); } catch { /* */ }
-  netLeave(); say('Connecting…'); $('#joinGo').disabled = true;
+  netLeave(); joinPickClear(); say('Connecting…'); $('#joinGo').disabled = true;
   const store = lsx(); const own = seatFor(store, code) ?? (joinWas ? seatFor(store, joinWas) : null);   // M14: ?was=OLD: the same game under a new code
   const token = own?.token ?? null; const tokens = tokensFor(store, code, joinWas).filter(x => x !== token); const claim = joinClaim; const was = joinWas;
   let t; try { t = await makeTransport(); } catch (e) { say(e.message, true); $('#joinGo').disabled = false; return; }
   const n = { role: 'guest', code, transport: t, me: null, q: [], pending: false, shown: null, healOff: 0 };
   const inGame = () => C.S && document.body.dataset.screen === 'game';
   n.client = new GuestClient({ transport: t, makeTransport, build: C.uiLabel, name, token, tokens, claim, data, hooks: {
-    onWelcome: (c, m) => { n.code = c.code; if (C.NET === n) pendDone(); else n.pending = false; rememberSeat(store, c.code, { token: m.token, seat: m.seat, name: m.name, was: was || null }); if (claim) joinClaim = null;
-      if (!inGame()) say(`Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}, ${SEAT_COLOR_NAMES[m.seat]}). Waiting for the host to start…`); },
+    onWelcome: (c, m) => { n.code = c.code; if (C.NET === n) { pendDone(); joinPickClear(); } else n.pending = false; rememberSeat(store, c.code, { token: m.token, seat: m.seat, name: m.name, was: was || null }); if (claim) joinClaim = null;
+      if (!inGame()) say(`Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}, ${SEAT_COLOR_NAMES[m.seat]}). ${m.started ? 'Loading the game in progress…' : 'Waiting for the host to start…'}`); },
+    // v30.5.1: welcomed into a game in progress but no game state came: never sit silently (the client keeps asking too)
+    onNoState: c => { if (C.NET !== n) return;
+      if (inGame()) { toast('Waiting for the game from the host… asking again'); return; }
+      $('#joinGo').disabled = false; say('The game did not arrive from the host. Asking again… Press Retry, or check the host is online.', true);
+      const el = document.createElement('div'); el.id = 'joinPick'; el.className = 'joinpick'; el.style.margin = '6px 0';
+      el.innerHTML = '<button type="button" class="btn" data-retry>Retry</button>'; joinPickClear(); $('#joinStatus').after(el);
+      el.querySelector('[data-retry]').onclick = () => { if (C.NET !== n) return; say('Asking the host for the game again…'); c.retryState(); }; },
+    // v30.5.1: a game in progress with several free seats: "Which player are you?" (the player names; one click joins that seat)
+    onPick: (c, seats) => { if (C.NET !== n) return; $('#joinGo').disabled = false; say('This game is already running. Which player are you?');
+      const el = document.createElement('div'); el.id = 'joinPick'; el.className = 'joinpick'; el.style.margin = '6px 0';
+      el.innerHTML = seats.map(x => `<button type="button" class="btn" data-pick="${x.i}">${esc(x.name)} <span class="small">(${x.ai ? 'AI now' : 'offline'})</span></button>`).join(' ');
+      joinPickClear(); $('#joinStatus').after(el);
+      el.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { if (C.NET !== n) return; const i = +b.dataset.pick; joinPickClear(); say(`Joining as ${seats.find(x => x.i === i)?.name ?? 'that player'}…`); c.pick(i); }); },
     onLobby: (c, m) => { if (C.NET === n) renderGuestLobby(m); if (C.S && C.NET === n) render(); },
-    onUpdate: (c, u) => { if (C.NET !== n) return; n.me = u.you.playerId; n.q.push(u); if (u.state?.phase === 'finished') forgetSeat(store, n.code); if (!inGame()) { guestEnter(); } else guestDrain(); },
+    onUpdate: (c, u) => { if (C.NET !== n) return; n.me = u.you.playerId; n.q.push(u); if (document.querySelector('#joinPick [data-retry]')) joinPickClear(); if (u.state?.phase === 'finished') forgetSeat(store, n.code); if (!inGame()) { guestEnter(); } else guestDrain(); },
     onReject: (c, m) => { if (C.NET !== n) return;
       if (!inGame()) { say(m.message, true); return; }
       pendDone(); if (m.code !== 'STALE') { SND.play('error_denied'); toast(m.message); } render(); },
     onBye: (c, r) => { if (C.NET !== n) return;
       if (r === 'HOST_LEFT' && !c.ended) return;   // M14: not final: the host may resume the game; the client reconnects (onStatus)
-      if (['BUILD_MISMATCH', 'FULL', 'STARTED', 'BAD_CLAIM', 'SEAT_IN_USE'].includes(r)) { $('#joinGo').disabled = false; netLeave(); return; }
+      if (['BUILD_MISMATCH', 'FULL', 'STARTED', 'NO_FREE_SEAT'].includes(r)) { if (r === 'STARTED' || r === 'NO_FREE_SEAT') forgetSeat(store, n.code || code); $('#joinGo').disabled = false; joinPickClear(); netLeave(); return; }
       if (r === 'NO_ANSWER') { $('#joinGo').disabled = false; netLeave(); say(JOIN_END_TEXT.NO_ANSWER, true); return; }   // v30.5: never a silent "Connecting…"
       if (r === 'GAME_OVER') forgetSeat(store, n.code);
       if (r === 'GAME_OVER' && inGame()) { n.lost = 'The game is over; the host closed the room.'; renderNetBanner(); return; }
@@ -1328,7 +1332,6 @@ function renderPlayers() {
   }).join('');
   $$('#players [data-toai]').forEach(b => b.onclick = () => seatToAI(+b.dataset.toai));
   $$('#players [data-seatback]').forEach(b => b.onclick = () => seatBack(+b.dataset.seatback));
-  $$('#players [data-reseat]').forEach(b => b.onclick = () => reseat(+b.dataset.reseat));
   renderNetBanner();
   $$('.player .gcard').forEach(g => g.onclick = () => {
     const p = G.playerById(s, g.closest('.player').dataset.pid); if (!p.general) return;

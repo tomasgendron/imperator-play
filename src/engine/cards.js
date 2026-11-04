@@ -231,12 +231,12 @@ TURN_PLAYS.bribe_the_ally = {
     if (flee > 0 || general) {
       const cand = S.nearestOwned(state, data, plan.owner, plan.target);
       if (!cand.length) { emit(ctx, 'survivorsLost', { actor: plan.owner, rule: '18.v', pub: { player: plan.owner, from: plan.target, n: flee, reason: 'no other province to flee to' } }); if (general) old.general.at = null; }
-      else if (cand.length === 1) moveSurvivors(ctx, plan.owner, plan.target, flee, general, cand[0]);
+      else if (cand.length === 1) moveSurvivors(ctx, plan.owner, plan.target, flee, general, cand[0], '18.v');
       else pushFrame(ctx, { kind: 'chooseProvince', purpose: 'bribeSurvivors', player: plan.owner, options: cand, from: plan.target, survivors: flee, general });
     }
   },
 };
-provinceChoiceHandlers.bribeSurvivors = (ctx, f, a) => moveSurvivors(ctx, f.player, f.from, f.survivors, f.general, a.province);
+provinceChoiceHandlers.bribeSurvivors = (ctx, f, a) => moveSurvivors(ctx, f.player, f.from, f.survivors, f.general, a.province, '18.v');
 
 // ------------------------------------------------------------------ registry: the handlers are implemented (PLAN 5.5)
 registerEffect('inspireRevolt', TURN_PLAYS.revolt);

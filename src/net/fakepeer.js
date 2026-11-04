@@ -7,6 +7,7 @@ const enc = new TextEncoder();
 const emitter = () => { const h = {}; return { on(e, f) { (h[e] ??= []).push(f); return this; }, emit(e, ...a) { (h[e] ?? []).forEach(f => { try { f(...a); } catch (x) { console.error(x); } }); } }; };
 let bc = null; const mine = new Map(); const conns = new Map();   // peers of this tab by id; connections of this tab by cid
 const stats = (globalThis.__fakepeer ??= { sent: 0, dropped: 0, maxBytes: 0 });
+const SLOW_MS = (() => { try { return Math.max(0, +new URLSearchParams(location.search).get('fpms') || 0); } catch { return 0; } })();
 function chan() {
   if (bc) return bc;
   bc = new BroadcastChannel('imperator-fakepeer');
@@ -28,7 +29,11 @@ function makeConn(cid, peerId, me) {
   c.send = d => {
     const bytes = enc.encode(JSON.stringify(d)).length; stats.maxBytes = Math.max(stats.maxBytes, bytes);
     if (bytes >= PEERJS_MTU) { stats.dropped++; c.emit('error', { type: 'message-too-big' }); return; }   // as PeerJS: nothing is sent
-    stats.sent++; chan().postMessage({ t: 'data', cid, to: peerId, d });
+    stats.sent++;
+    // v31.3: ?fpms=N: a slow link, every message N ms after the one before it (in order), to time long full syncs (Large Map 1)
+    if (!SLOW_MS) { chan().postMessage({ t: 'data', cid, to: peerId, d }); return; }
+    const at = Math.max(Date.now(), c._at ?? 0) + SLOW_MS; c._at = at;
+    setTimeout(() => chan().postMessage({ t: 'data', cid, to: peerId, d }), at - Date.now());
   };
   c.close = () => { if (!c.open) return; c.open = false; chan().postMessage({ t: 'close', cid, to: peerId }); conns.delete(cid); c.emit('close'); };
   return c;

@@ -12,7 +12,7 @@ export const totalTroops = (state, pid) => provincesOf(state, pid).reduce((t, id
 export const romaHolder = state => state.provinces.roma.owner;
 export const hasStartingProvince = (state, pid) => provincesOf(state, pid).some(id => state.provinces[id].status === 'starting');
 
-/** Shortest path length over ALL land and sea links of the 13-province graph (Q55). */
+/** Shortest path length over ALL land and sea links of the map graph (13 or 19 provinces; Roma and Carthage may be passed, Q55). */
 export function distances(data, from) {
   const dist = { [from]: 0 }; const q = [from];
   while (q.length) { const c = q.shift(); for (const n of neighbours(data, c)) if (dist[n] === undefined) { dist[n] = dist[c] + 1; q.push(n); } }

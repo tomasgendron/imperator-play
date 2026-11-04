@@ -453,3 +453,10 @@ button.pchip{min-height:var(--tap);color:var(--ink)}
 #mJoinGo.busy{opacity:.75}
 #reseatBox .hbtns,#roomBox .hbtns{gap:8px}
 #leaveBox p{margin:4px 2px 8px;line-height:1.4}
+
+/* v31.2: Large Map 1: the tokens grow with the zoom (--tk, set by spreadTokens) so each circle covers its printed dot */
+#tokens[style*="--tk"] .tok{width:var(--tk);height:var(--tk);margin:calc(var(--tk) / -2) 0 0 calc(var(--tk) / -2)}
+#tokens[style*="--tk"] .tok.roma{width:calc(var(--tk) + 4px);height:calc(var(--tk) + 4px);margin:calc(var(--tk) / -2 - 2px) 0 0 calc(var(--tk) / -2 - 2px)}
+#tokens[style*="--tk"] .tok .lbl{top:var(--tk)}
+#mapSeg button{flex-direction:column;line-height:1.15}
+#mapSeg button small{display:block;font-size:10.5px;opacity:.8;font-weight:500}

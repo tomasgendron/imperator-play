@@ -7,7 +7,7 @@ const prov = (data, id) => data.provincesById[id]?.name ?? id;
 
 /**
  * A new console session. Either `names` (all Human) or `seats` = [{name, controller: 'human'|'ai', general?: id|'random', startProvince?}]
- * (M4 setup screen). mode = 'random' | 'selected' | 'pick' | 'classic'. Throws an EngineError-like Error when the setup is invalid.
+ * (M4 setup screen). mode = 'random' | 'selected' | 'pick' (v31: no general-based starts, 15.i, 21.h). Throws an EngineError-like Error when the setup is invalid.
  */
 export function newSession(data, { seed = 'console', names = ['Vidi', 'Boardicca'], seats = null, mode = 'random' } = {}) {
   // v29.1: 'random' and startSide are passed on (they were dropped: a "Random general" human was asked again, a chosen side was lost)
@@ -112,7 +112,7 @@ const T = {
   stepStarted: (e, st) => `${pn(st, e.pub.player)}: ${e.pub.step} step.`,
   bonusTroopsGranted: (e, st, d) => e.pub.allied ? `${pn(st, e.pub.player)} gets +1 troop in allied ${prov(d, e.pub.province)} (19.r, 20.b).` : `${pn(st, e.pub.player)} gets +1 troop in ${prov(d, e.pub.province)} (20.b).`,
   nativesHealed: (e, st, d) => `The natives of ${prov(d, e.pub.province)} are back to ${e.pub.present}.`,
-  cardDrawn: (e, st) => `${pn(st, e.pub.player)} draws a ${e.pub.deck} card${e.priv ? ' (' + e.priv.def + ')' : e.pub.def ? ' (' + e.pub.def + ')' : ''}.`,
+  cardDrawn: (e, st) => `${pn(st, e.pub.player)} draws a ${e.pub.deck} card${e.priv ? ' (' + e.priv.def + ')' : e.pub.def ? ' (' + e.pub.def + ')' : ''}${e.pub.autoPlay ? ', played at once' : ''}.`,
   resourceApplied: (e, st) => `${pn(st, e.pub.player)}'s Resource card ${e.pub.def}: ${G(e.pub.gold ?? 0)}, ${e.pub.troops ?? 0} troop(s) to place.`,
   troopsPlaced: (e, st, d) => `${pn(st, e.pub.player)} places ${e.pub.n} troop(s) in ${prov(d, e.pub.province)}.`,
   resourceCardUsed: (e, st, d) => `${pn(st, e.pub.player)} uses a Resource card (${e.pub.piece}) in ${prov(d, e.pub.province)}.`,
@@ -146,7 +146,6 @@ const T = {
   cardReshuffled: (e, st) => `${pn(st, e.pub.player)} may hold only one ${e.pub.def}: it is shuffled back and ${pn(st, e.pub.player)} draws again.`,
   discardShuffledUnder: (e, st) => `Only cards ${pn(st, e.pub.player)} may not hold are left in the draw pile: the discard pile is shuffled, ${pn(st, e.pub.player)} draws a card from it and the other ${e.pub.underneath} go under the draw pile (Q78).`,
   catapultBought: (e, st) => `${pn(st, e.pub.player)} buys a Catapult (now ${e.pub.catapults}).`,
-  classicStartsChecked: (e, st, d) => e.pub.ok ? `Classic starts: ${e.pub.assignments.map(a => pn(st, a.player) + ' in ' + prov(d, a.province)).join(', ')}.` : e.pub.sidesBroken ? `Classic starts ${e.pub.assignments.map(a => prov(d, a.province)).join(' and ')} are not one west and one east: in a 2-player game the starts are dealt at random by side (15.i, 4.g).` : `Classic starts too close (${e.pub.tooClose.map(p => p.map(x => prov(d, x)).join('-')).join(', ')}): start provinces are dealt at random (15.i, 20.o).`,
   attackDeclared: (e, st, d) => `${pn(st, e.pub.player)} ATTACKS ${prov(d, e.pub.target)}${e.pub.defender ? ' (' + pn(st, e.pub.defender) + ')' : ''} from ${prov(d, e.pub.from)} with ${e.pub.troops} troop(s)${e.pub.general ? ' and the general' : ''}${e.pub.sea ? ' by sea' : ''}${e.pub.via ? ' through ' + prov(d, e.pub.via) : ''}.`,
   borrowDecided: (e, st, d) => `${pn(st, e.pub.player)} borrows ${e.pub.count} of up to ${e.pub.max} native(s) of ${prov(d, e.pub.from)}.`,
   battleCardsCommitted: (e, st) => `${pn(st, e.pub.player)} (${e.pub.role}) commits ${e.pub.n} battle card(s).`,

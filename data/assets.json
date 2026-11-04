@@ -7,6 +7,10 @@
    "path": "map/Map3_approved.jpg",
    "kind": "image"
   },
+  "map.large1": {
+   "path": "map/LargeMap1_approved.jpg",
+   "kind": "image"
+  },
   "ui.title": {
    "path": "ui/title.jpg",
    "kind": "image"

@@ -71,8 +71,11 @@ export function createGuest(page) {
       // v30.5.1: a game in progress with several free seats: "Which player are you?" (the player names; one tap joins that seat)
       onPick: (c, seats) => { if (!mineNet()) return; page.busyJoin(false); page.say('This game is already running. Which player are you?');
         page.pick?.(seats, i => { if (!mineNet()) return; page.pick?.(null); page.busyJoin(true); page.say(`Joining as ${seats.find(x => x.i === i)?.name ?? 'that player'}…`); c.pick(i); }); },
+      // v31.3: a long full sync (a Large Map 1 game: ~50-60 pieces) shows how far it is
+      onProgress: (c, got, of) => { if (!mineNet()) return; document.body.dataset.receiving = `${got}/${of}`; const t = `Receiving game… ${got}/${of}`;
+        if (!page.inGame()) page.say(t); else if (of >= 8) page.toast(t); },   // in a game only a long sync, not every move's 2-3 pieces
       onLobby: (c, m) => { if (mineNet()) page.lobby(m); if (C.S && mineNet() && page.inGame()) page.render(); },
-      onUpdate: (c, u) => { if (!mineNet()) return; n.me = u.you.playerId; n.q.push(u); if (c.lastNoState !== false) { c.lastNoState = false; page.retry?.(null); }
+      onUpdate: (c, u) => { if (!mineNet()) return; document.body.dataset.receiving = ''; n.me = u.you.playerId; n.q.push(u); if (c.lastNoState !== false) { c.lastNoState = false; page.retry?.(null); }
         if (u.state?.phase === 'finished') forgetSeat(store, n.code);
         if (!page.inGame()) enter(); else drain(); },
       onReject: (c, m) => { if (!mineNet()) return;
@@ -112,6 +115,7 @@ export function createGuest(page) {
   }
   function enter() {
     const u = C.NET.q.shift(); if (!u) return;
+    page.setMap?.(u.state?.config?.map ?? 'small1');   // v31.3: the host's map
     C.S = { data: page.data(), seed: 'room ' + C.NET.code, steps: [{ state: u.state, events: [], action: null, error: null, legal: u.legal, seq: u.seq }] }; C.NET.shown = u.seq;
     page.busyJoin(false); page.sound('deck_shuffle');
     try { page.enter(); } catch (e) { console.error('enter', e); page.say(`Joined, but the game screen did not open (${e.message}). Tap Join to try again.`, true); return; }
@@ -126,6 +130,7 @@ export function createGuest(page) {
     try {
       while (n.q.length) {
         u = n.q.shift(); before = st();
+        if (page.setMap?.(u.state?.config?.map ?? 'small1')) C.S = { ...C.S, data: page.data() };
         if (n.throwOnce) { n.throwOnce = false; throw new Error('test: the page could not apply this update'); }
         C.S = { ...C.S, steps: [...C.S.steps.slice(-2), { state: u.state, events: u.anim ?? [], action: null, error: null, legal: u.legal, seq: u.seq }] };
         n.shown = u.seq;

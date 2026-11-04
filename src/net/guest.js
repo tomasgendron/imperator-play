@@ -38,7 +38,7 @@ export class GuestClient {
    *  session (onHostGone), as in M11. */
   constructor({ transport, makeTransport = null, build, name, token = null, tokens = [], claim = null, joinMs = JOIN_MS, data, hooks = {}, retryMs = RETRY_MS, now = () => Date.now(), timers = globalThis }) {
     Object.assign(this, { makeTransport, build, name, token, tokens: (tokens ?? []).filter(t => t && t !== token), claim, joinMs, data, hooks, retryMs, now, timers });
-    this.seat = null; this.playerId = null; this.lobby = null; this.session = null; this.legal = []; this.seq = null; this.ended = null; this.ai = false; this.log = []; this.logTo = null; this.resyncAsked = false; this.resyncAt = 0; this.resyncs = []; this.applied = null;
+    this.receiving = null; this.seat = null; this.playerId = null; this.lobby = null; this.session = null; this.legal = []; this.seq = null; this.ended = null; this.ai = false; this.log = []; this.logTo = null; this.resyncAsked = false; this.resyncAt = 0; this.resyncs = []; this.applied = null;
     this.status = 'connecting'; this.hostAway = false; this.lastHeard = now(); this.attempt = 0; this.timer = null; this.reconnects = 0;
     this.bind(transport);
   }
@@ -46,6 +46,7 @@ export class GuestClient {
     this.transport = t;
     t.onMessage((p, m) => { if (t === this.transport && p === HOST) this.receive(m); });
     t.onPeerClose(p => { if (t === this.transport && p === HOST && !this.ended) this.linkLost('LINK_LOST'); });
+    t.onProgress?.((p, got, of) => { if (t === this.transport && p === HOST) this.progress(got, of); });
   }
   setStatus(st, info = {}) { this.status = st; this.hooks.onStatus?.(this, st, info); }
   async join(code) {
@@ -109,6 +110,14 @@ export class GuestClient {
   }
   /** This attempt reached a page that is not our host (no answer, or a room that does not know our token): drop it, retry. */
   notOurs(t, why) { try { t.send(HOST, msg('bye', {})); } catch { /* */ } try { t.close(); } catch { /* */ } this.why = why; this.scheduleRetry(); }
+  /** v31.3: a piece of a long message (a full sync) came: the host is alive (no 'host away' or lost link while a big game arrives), and a
+   *  waiting first state's watchdog (STATE_MS) starts again from this piece, so a 60-piece sync on a slow link never fires it falsely
+   *  (it fires only when no piece came for STATE_MS). The page may show 'Receiving game… got/of'. */
+  progress(got, of) {
+    this.lastHeard = this.now(); this.receiving = { got, of, at: this.now() };
+    if (this.stateTimer) this.watchState();
+    this.hooks.onProgress?.(this, got, of);
+  }
   /** Every few seconds (the page's timer): a host that has said nothing for HOST_AWAY_MS is shown as away. */
   tick() {
     if (this.ended || this.status !== 'connected') return;
@@ -160,8 +169,8 @@ export class GuestClient {
         m.anim = m.full ? [] : (m.events ?? []);   // what it animates (never a whole resent log)
         const step = { state: m.state, events: m.anim, action: null, error: null, by: m.by };
         const steps = this.session ? [...this.session.steps, step].slice(-KEEP) : [step];
-        this.session = { data: this.data, seed: 'online', steps, online: true };
-        this.timers.clearTimeout(this.stateTimer); this.stateTimer = null; this.noState = false;
+        this.session = { data: typeof this.data === 'function' ? this.data(m.state) : this.data, seed: 'online', steps, online: true };
+        this.timers.clearTimeout(this.stateTimer); this.stateTimer = null; this.noState = false; this.receiving = null;
         this.hooks.onUpdate?.(this, m); break;
       }
       case 'reject': if (m.code === 'STALE') this.resync('STALE'); this.hooks.onReject?.(this, m); break;
@@ -179,6 +188,7 @@ export class GuestClient {
   resync(why = 'PAGE') {
     if (this.ended || this.status !== 'connected') return false;
     if (this.resyncAsked && this.now() - this.resyncAt < RESYNC_RETRY_MS) return false;
+    if (this.receiving && this.now() - this.receiving.at < RESYNC_RETRY_MS && why !== 'NO_STATE' && why !== 'RETRY') return false;   // v31.3: pieces still coming in
     this.resyncAsked = true; this.resyncAt = this.now(); this.resyncs.push(why);
     this.transport.send(HOST, msg('resync', { why }));
     this.hooks.onResync?.(this, why);

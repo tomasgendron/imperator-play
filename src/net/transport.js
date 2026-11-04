@@ -17,10 +17,12 @@ import { peerIdOf, normCode } from './protocol.js';
 export const HOST = 'host';
 const err = (code, message) => Object.assign(new Error(message), { code });
 function hub() {
-  const h = { msg: [], peer: [], close: [] };
+  const h = { msg: [], peer: [], close: [], progress: [] };
   return {
     onMessage: fn => h.msg.push(fn), onPeer: fn => h.peer.push(fn), onPeerClose: fn => h.close.push(fn),
     emitMsg: (p, m) => h.msg.forEach(f => f(p, m)), emitPeer: p => h.peer.forEach(f => f(p)), emitClose: p => h.close.forEach(f => f(p)),
+    // v31.3: a long message arrives in pieces (a full sync of a Large Map 1 game: ~50-60): onProgress(fn(peer, got, of)) after each piece
+    onProgress: fn => h.progress.push(fn), emitProgress: (p, got, of) => h.progress.forEach(f => f(p, got, of)),
   };
 }
 
@@ -135,7 +137,8 @@ export function createPeerTransport(Peer, { iceServers = ICE_SERVERS, timeoutMs 
       if (!d || typeof d !== 'object') return;
       let text = null;
       if (d.k === 'm') text = d.s;
-      else if (d.k === 'c') { const b = parts.get(who + d.id) ?? []; b[d.i] = d.s; parts.set(who + d.id, b); if (b.filter(x => x !== undefined).length === d.n) { parts.delete(who + d.id); text = b.join(''); } }
+      else if (d.k === 'c') { const b = parts.get(who + d.id) ?? []; b[d.i] = d.s; parts.set(who + d.id, b); const got = b.filter(x => x !== undefined).length;
+        if (got === d.n) { parts.delete(who + d.id); text = b.join(''); } else ev.emitProgress(who, got, d.n); }
       if (text !== null) { let m; try { m = JSON.parse(text); } catch { return; } ev.emitMsg(who, m); }
     });
     conn.on('close', () => { if (conns.get(who) === conn) { conns.delete(who); ev.emitClose(who); } });
@@ -170,7 +173,7 @@ export function createPeerTransport(Peer, { iceServers = ICE_SERVERS, timeoutMs 
       const c = conns.get(to); if (!c || !c.open) return;
       for (const f of peerFrames(JSON.stringify(obj), ++seq)) c.send(f);
     },
-    onMessage: ev.onMessage, onPeer: ev.onPeer, onPeerClose: ev.onPeerClose,
+    onMessage: ev.onMessage, onPeer: ev.onPeer, onPeerClose: ev.onPeerClose, onProgress: ev.onProgress,
     close() { for (const c of conns.values()) try { c.close(); } catch { /* */ } conns.clear(); try { peer?.destroy(); } catch { /* */ } peer = null; },
   };
 }

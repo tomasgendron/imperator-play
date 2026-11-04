@@ -63,7 +63,7 @@ function renderSetup(errors = null) {
     <td class="startcol"${startMode === 'selected' ? '' : ' hidden'}><select name="start${i}">${opt('', 'pick in setup', !x.startProvince)}${ch.starts.map(p => opt(p.id, p.name, x.startProvince === p.id)).join('')}</select></td></tr>`).join('');
   f.innerHTML = `<h2>New game</h2>
     <p><label>Players <select name="seats">${opt(2, '2', seatCount === 2)}${opt(3, '3', seatCount === 3)}</select></label>
-    <label>Start provinces <select name="mode">${opt('random', 'Random (2+ provinces apart, never Carthage or Roma)', startMode === 'random')}${opt('selected', 'Selected (same rule)', startMode === 'selected')}${opt('classic', 'Classic (by general, 15.i)', startMode === 'classic')}</select></label>
+    <label>Start provinces <select name="mode">${opt('random', 'Random (2+ provinces apart, never Carthage or Roma)', startMode === 'random')}${opt('selected', 'Selected (same rule)', startMode === 'selected')}</select></label>
     <label>Seed <input name="seed" value="console" size="10"></label></p>
     <table class="seats"><tr><th></th><th>Name</th><th>Human / AI</th><th>General</th><th class="startcol"${startMode === 'selected' ? '' : ' hidden'}>Start province</th></tr>${seatRows}</table>
     <p class="status">Every player starts with ${data.rules.startingGold} Gold and ${data.rules.startingTroops} troops. AI seats move by themselves after a short delay; humans click the buttons (hot-seat).</p>

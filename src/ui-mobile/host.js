@@ -39,7 +39,7 @@ export function createHost(page) {
   }
   function net(t, code, salt) {
     C.NET = { role: 'host', code, transport: t, me: null, inbox: [], salt };
-    C.NET.room = new HostRoom({ transport: t, build: C.uiLabel, code, seats: [], data: page.data(), hooks: {
+    C.NET.room = new HostRoom({ transport: t, build: C.uiLabel, code, seats: [], data: () => C.S?.data ?? page.data(), hooks: {   // v31.3: the game's map
       onSeat: () => queueMicrotask(() => { if (C.NET?.role !== 'host') return; if (!page.inGame()) page.lobby(C.NET.room); else if (C.S) { page.render(); page.autosave(); } }),
       // v30.5.1: a device took a free seat with the room code: an AI seat goes back to a player at once
       onWantState: room => { if (C.NET?.role === 'host' && C.NET.room === room && C.S) push(); },   // v30.5.1: a seat came into a resumed game before any move

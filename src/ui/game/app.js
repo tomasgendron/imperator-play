@@ -30,7 +30,7 @@ const { hostHidden, later, sleep, spd, full, st, mineNow, apply, schedule, displ
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const attr = s => esc(s).replace(/'/g, '&#39;');
 
-let data, assets, SND;
+let data, assets, SND, datasets;   // v31.1: datasets = { small1, large1 } (21.a); `data` is the map in play / chosen on the setup screen
 let hidden = false;
 let ab = null;                   // builder {type, from, to, n, key}
 let selected = null, tab = 'table';
@@ -41,6 +41,20 @@ const img = (id, o = {}) => { const r = resolveAsset(assets, id, o); return r.pa
 const prov = id => data.provincesById[id]?.name ?? id;
 const pn = id => G.nameOf(st(), id);
 const col = id => G.colorClass(st(), id);
+// v31.1 (21.a): the map. Q5: Large Map 1 is the default for 3 players, Small Map 1 for 2; Q11: a map the player chose is kept when the
+// player count changes. A save plays on its own map (G.saveMapId: no map id = Small Map 1).
+const mapImg = () => img(data.mapId && data.mapId !== 'small1' ? 'map.' + data.mapId : 'map');
+let mapPick = null;   // the setup screen's manual choice; null = the default for the player count
+const autoMap = n => (n === 3 ? 'large1' : 'small1');   // v31.3: hosting online too (Large Map 1 is online now)
+const mapWanted = () => mapPick ?? autoMap(seats.length);
+/** Plays/draws on map `id` (no setup reset). Returns true when the map changed. */
+function setMap(id) {
+  if (!datasets?.[id] || data === datasets[id]) return false;
+  data = datasets[id]; $('#links').innerHTML = ''; $('#arrows').innerHTML = ''; $('#mapImg').src = mapImg(); if ($('#spImg')) $('#spImg').src = mapImg();
+  document.body.dataset.map = data.mapId; return true;
+}
+/** The map has fixed start provinces for this many players (21.f: Large Map 1, 3 players): picked in the game, highest roll first. */
+const fixedStartsNow = () => !!data.rules.fixedStarts?.[String(seats.length)];
 const genLetter = gid => (data.generalsById[gid]?.name ?? gid ?? '?')[0];
 
 // ------------------------------------------------------------------ toast / modal helpers
@@ -78,11 +92,12 @@ $('#ovModal').addEventListener('click', e => { if (e.target.id === 'ovModal' && 
 
 // ------------------------------------------------------------------ boot
 async function boot() {
-  try { ({ data, assets } = await loadGameData()); } catch (e) { document.body.innerHTML = `<pre style="padding:20px;color:#b02a1c">Imperator could not load its data:\n${esc(e.message)}</pre>`; return; }
+  try { ({ data, assets, datasets } = await loadGameData()); } catch (e) { document.body.innerHTML = `<pre style="padding:20px;color:#b02a1c">Imperator could not load its data:\n${esc(e.message)}</pre>`; return; }
   SND = createSound(assets); SND.ui();
   $$('[data-img]').forEach(e => { e.src = img(e.dataset.img); });
   renderSetupDecks();
-  $('#mapImg').src = img('map');
+  $('#mapImg').src = mapImg(); document.body.dataset.map = data.mapId;
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => placeSideMarks()).observe($('#tokens'));   // v31.1: the side markers follow a resize
   try { const b = await (await fetch('BUILD.json', { cache: 'no-store' })).json(); C.uiLabel = b.uiLabel ?? `v23 · ${b.stamp}`; } catch { C.uiLabel = 'v23 · (no BUILD.json)'; }
   $('#tbVer').textContent = C.uiLabel;
   $('#speed').value = String(C.speed); if (!$('#speed').value) { $('#speed').value = '1'; C.speed = 1; }
@@ -153,6 +168,8 @@ function startWhy(i, id) {
 }
 function renderSetup() {
   document.body.className = 'screen-setup'; document.body.dataset.screen = 'setup'; applyTabsHidden(); renderNetBanner();
+  if (setMap(mapWanted())) { rollOff = null; seats.forEach(x => { x.start = ''; x.skip = false; x.side = ''; }); }
+  renderMapChoice();
   const ch = setupChoices(data); const mode = $('#startMode').value; const sel = mode === 'selected';
   const toggle = (i, v, label) => `<button type="button" class="segb ctl${seats[i].controller === v ? ' on' : ''}" data-seat="${i}" data-ctl="${v}" aria-pressed="${seats[i].controller === v}">${label}</button>`;
   const hosting = playWhere === 'host';
@@ -313,6 +330,15 @@ function renderStartPick() {
   $$('#spTokens .sptok.bad').forEach(b => b.onmouseenter = () => { $('#spWhy').textContent = b.dataset.why; });
   $('#spRandom').onclick = () => setStart(i, '');
 }
+function renderMapChoice() {
+  if ($('#winPrest')) $('#winPrest').textContent = data.rules.winPrestige;   // v31.1: Large Map 1 is won with 11, Small Map 1 with 8
+  $$('#mapPick .segb').forEach(b => { const on = b.dataset.map === data.mapId; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+  const fx = data.rules.fixedStarts?.[String(seats.length)];
+  const sm = $('#startMode');
+  if (fx) { if (!sm.disabled) { sm.dataset.was = sm.value; sm.value = 'random'; sm.disabled = true; } }
+  else if (sm.disabled) { sm.disabled = false; sm.value = sm.dataset.was || 'random'; }
+  $('#mapNote').innerHTML = (mapPick ? 'your choice' : `default for ${seats.length} players`) + (fx ? ` · <span id="fixedNote">${seats.length} players on ${esc(data.mapName)}: the starts are ${fx.map(prov).map(esc).join(', ')}; after the roll-off the highest roller picks first (21.f)</span>` : '');
+}
 function validate() {
   const mode = $('#startMode').value;
   const r = checkSetup(data, engineSeats().map(x => ({ ...x, startProvince: mode === 'selected' ? x.startProvince : undefined })), mode);
@@ -432,7 +458,7 @@ async function openHost() {
 }
 function hostNet(t, code, salt) {
   C.NET = { role: 'host', code, transport: t, me: null, inbox: [], salt };
-  C.NET.room = new HostRoom({ transport: t, build: C.uiLabel, code, seats: [], data, hooks: {
+  C.NET.room = new HostRoom({ transport: t, build: C.uiLabel, code, seats: [], data: () => C.S?.data ?? data, hooks: {   // v31.3: the game's map
     onSeat: () => queueMicrotask(() => { if (!C.NET) return; if (document.body.dataset.screen === 'setup') renderSetup(); else if (C.S) { render(); autosave(); } }),
     onAct: (i, action, reply, fresh) => { C.NET.inbox.push({ i, action, reply, fresh }); if (!C.busy) hostDrain(); else nudgeHost(i); },
     // v30.5.1: a device took a free seat with the room code (an AI seat goes back to a player at once)
@@ -449,6 +475,8 @@ function onlineSave(text) { try { const o = typeof text === 'string' ? JSON.pars
  *  restores the seats and their tokens, and the guests' pages reconnect to their seats by themselves. */
 async function resumeOnline(obj) {
   const show = m => { const el = $('#ldErr') ?? $('#setupErrors'); if (el) el.textContent = m; else toast(m); };
+  const mid = G.saveMapId(obj); if (!datasets[mid]) { show(`This save is for a map this build does not have (${mid}).`); return false; }
+  setMap(mid);   // v31.3: Large Map 1 online too
   let ns; try { ns = G.readSave(obj, data); } catch (e) { show(e.message); return false; }
   const on = obj.online; netLeave(); clearTimeout(C.aiTimer);
   playWhere = 'host'; show('Reopening the room…');
@@ -565,8 +593,11 @@ async function joinGame() {
       el.innerHTML = seats.map(x => `<button type="button" class="btn" data-pick="${x.i}">${esc(x.name)} <span class="small">(${x.ai ? 'AI now' : 'offline'})</span></button>`).join(' ');
       joinPickClear(); $('#joinStatus').after(el);
       el.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { if (C.NET !== n) return; const i = +b.dataset.pick; joinPickClear(); say(`Joining as ${seats.find(x => x.i === i)?.name ?? 'that player'}…`); c.pick(i); }); },
+    // v31.3: a long full sync (a Large Map 1 game: ~50-60 pieces) shows how far it is
+    onProgress: (c, got, of) => { if (C.NET !== n) return; document.body.dataset.receiving = `${got}/${of}`; const t = `Receiving game… ${got}/${of}`;
+      if (!inGame()) say(t); else if (of >= 8) toast(t); },   // in a game only a long sync (a rejoin / resync), not every move's 2-3 pieces
     onLobby: (c, m) => { if (C.NET === n) renderGuestLobby(m); if (C.S && C.NET === n) render(); },
-    onUpdate: (c, u) => { if (C.NET !== n) return; n.me = u.you.playerId; n.q.push(u); if (document.querySelector('#joinPick [data-retry]')) joinPickClear(); if (u.state?.phase === 'finished') forgetSeat(store, n.code); if (!inGame()) { guestEnter(); } else guestDrain(); },
+    onUpdate: (c, u) => { if (C.NET !== n) return; document.body.dataset.receiving = ''; n.me = u.you.playerId; n.q.push(u); if (document.querySelector('#joinPick [data-retry]')) joinPickClear(); if (u.state?.phase === 'finished') forgetSeat(store, n.code); if (!inGame()) { guestEnter(); } else guestDrain(); },
     onReject: (c, m) => { if (C.NET !== n) return;
       if (!inGame()) { say(m.message, true); return; }
       pendDone(); if (m.code !== 'STALE') { SND.play('error_denied'); toast(m.message); } render(); },
@@ -631,8 +662,11 @@ function netLost(msg) {
   n.lost = msg; document.body.dataset.netLost = '1'; render();
   openModal(`<div class="ask" id="netLostBox"><h2>Disconnected</h2><p>${esc(msg)}</p><button class="btn gold" data-close>OK</button></div>`);
 }
+/** v31.3: a guest plays on the host's map (state.config.map; none = Small Map 1). */
+function guestMap(s) { const id = s?.config?.map ?? 'small1'; if (datasets?.[id] && setMap(id) && C.S) C.S = { ...C.S, data }; }
 function guestEnter() {
   const u = C.NET.q.shift(); if (!u) return;
+  guestMap(u.state);
   C.S = { data, seed: 'room ' + C.NET.code, steps: [{ state: u.state, events: [], action: null, error: null, legal: u.legal, seq: u.seq }] }; C.NET.shown = u.seq;
   $('#joinGo').disabled = false; SND.play('deck_shuffle'); enterGame();
   if (C.NET.q.length) guestDrain();
@@ -646,7 +680,7 @@ async function guestDrain() {
   let u, before;
   try {
     while (n.q.length) {
-      u = n.q.shift(); before = st();
+      u = n.q.shift(); before = st(); guestMap(u.state);
       if (n.throwOnce) { n.throwOnce = false; throw new Error('test: the page could not apply this update'); }
       C.S = { ...C.S, steps: [...C.S.steps.slice(-2), { state: u.state, events: u.anim ?? [], action: null, error: null, legal: u.legal, seq: u.seq }] };
       n.shown = u.seq;
@@ -800,6 +834,7 @@ async function playEvents(events, before = null) {
       // romeRoll / senateDecree: told by the Game Roll popup (gameRollResolved, item 1)
       case 'displeasedDrawn': await flipCard('displeased', e.pub.def, 'draws from Rome Is Displeased', G.isHuman(s, e.pub.player), e.pub.player); break;
       case 'cardDrawn': {
+        if (e.pub.autoPlay) break;   // v31.3: an auto-played Prestige / Garrison card is shown by its cardPlayed popup
         const def = e.pub.def ?? (e.priv && e.pub.player === C.viewer ? e.priv.def : null);
         if (def && (G.isHuman(s, e.pub.player) || e.pub.deck !== 'game')) await flipCard(e.pub.deck, def, `draws a ${e.pub.deck === 'game' ? 'Game' : 'Resource'} card`, G.isHuman(s, e.pub.player), e.pub.player);
         else toast(`${pn(e.pub.player)} draws a ${e.pub.deck === 'game' ? 'Game Card (hidden)' : e.pub.deck + ' card'}`);
@@ -1426,10 +1461,20 @@ function pickTargets(legal) {
   if (['chooseProvince', 'setupStartProvince', 'placeTroops', 'resourceBuild'].includes(f.kind) || (f.kind === 'responseWindow' && f.window === 'defenceAnnounced')) return new Set(legal.map(G.mainProvince).filter(Boolean));
   return new Set();
 }
+/** v31.1 Large Map 1: a marker beside a circle (the general on the left; the Road and the WALLS note on the right) sits just clear
+ * of the circle or the "5/3" pill, whatever the window size (the circle grows with the map, the markers have a minimum font size). */
+function placeSideMarks() {
+  for (const m of $$('#tokens .mk[data-side]')) {
+    const t = $(`#tokens .tok[data-id="${m.dataset.at}"]`); if (!t) continue;
+    const dx = t.offsetWidth / 2 + 3 + m.offsetWidth / 2;
+    m.style.left = (t.offsetLeft + (m.dataset.side === 'l' ? -dx : dx)) + 'px'; m.style.top = t.offsetTop + 'px';
+  }
+}
 function renderMap(legal) {
   const s = st(); const picks = pickTargets(legal); const builder = ab && !topFrame(s);
   const showMin = $('#chkNames').checked; let h = '';
-  const mk = (cls, txt, x, y, title = '') => { h += `<div class="mk ${cls}" style="left:${x}%;top:${y}%" title="${attr(title)}">${esc(txt)}</div>`; };
+  const LM = data.mapId === 'large1';   // v31.1: Large Map 1 prints the province names just above the dots: the general and Road markers go beside the circle, the WALLS notes to the right
+  const mk = (cls, txt, x, y, title = '', side = '') => { h += `<div class="mk ${cls}" style="left:${x}%;top:${y}%" title="${attr(title)}"${side}>${esc(txt)}</div>`; };
   if (!$('#links').innerHTML) {
     let links = ''; const seen = new Set();
     for (const p of data.provinces) for (const kind of ['land', 'sea']) for (const b of p[kind]) { const k = [p.id, b].sort().join('|') + kind; if (seen.has(k)) continue; seen.add(k); const A = p.token, B = data.provincesById[b].token; links += `<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${kind === 'sea' ? '#bde3ff' : '#fff'}" stroke-width="1.6" ${kind === 'sea' ? 'stroke-dasharray="5 4"' : ''} opacity=".85"/>`; }
@@ -1449,14 +1494,14 @@ function renderMap(legal) {
     if (builder) cls += ab.from === id ? ' ab-origin' : ab.to === id ? ' ab-tgt' : picks.has(id) ? ' ab-ok' : ' ab-dim';
     else if (picks.has(id)) cls += ' pick';
     h += `<div class="${cls}" data-id="${id}" style="left:${x}%;top:${y}%" title="${attr(tip)}" data-troops="${p.owner || id === 'roma' ? p.troops : ''}" data-natives="${nat || ''}">${txt}</div>`;
-    if (p.road) mk('road', 'R', x + 2.4, y + 3.9, 'Road');
+    if (p.road) mk('road', 'R', x + (LM ? 2.9 : 2.4), y + (LM ? 0 : 3.9), 'Road', LM ? ` data-at="${id}" data-side="r"` : '');
     for (const w of p.walls ?? []) { const [x2, y2] = tokenFor(w); mk('wall', 'W', x + (x2 - x) * 0.42, y + (y2 - y) * 0.42, 'Wall facing ' + prov(w)); }
     if (showMin) { const m = G.shownMin(s, data, id); if (m?.min) mk('lbl', 'min ' + m.min, x, y + 5.7, 'Minimum garrison'); }
     if (!p.owner && id !== 'roma' && p.native.present !== null && p.native.count !== null && p.native.present < p.native.count) mk('lbl', p.native.present + '/' + p.native.count, x, y + 5.7, 'natives present / count (depleted)');
   }
-  for (const pl of s.players) if (pl.general?.at && !pl.out) { const [x, y] = tokenFor(pl.general.at); mk('gen ' + col(pl.id), genLetter(pl.general.id), x - 2.3, y - 3.9, `${data.generalsById[pl.general.id].name} (${pl.name})`); }
-  { const [cx, cy] = tokenFor('carthage'); if (!s.provinces.carthage.owner) mk('wall', 'WALLS', cx, cy - 5.8, 'Carthage: walls on all sides'); const [rx, ry] = tokenFor('roma'); mk('wall', 'WALLS', rx, ry - 6.2, 'Roma: walls on all sides'); }
-  $('#tokens').innerHTML = h;
+  for (const pl of s.players) if (pl.general?.at && !pl.out) { const [x, y] = tokenFor(pl.general.at); mk('gen ' + col(pl.id), genLetter(pl.general.id), x - (LM ? 2.9 : 2.3), y - (LM ? 0 : 3.9), `${data.generalsById[pl.general.id].name} (${pl.name})`, LM ? ` data-at="${pl.general.at}" data-side="l"` : ''); }
+  { const [cx, cy] = tokenFor('carthage'); if (!s.provinces.carthage.owner) mk('wall', 'WALLS', cx + (LM ? 4.4 : 0), cy - (LM ? 0 : 5.8), 'Carthage: walls on all sides', LM ? ' data-at="carthage" data-side="r"' : ''); const [rx, ry] = tokenFor('roma'); mk('wall', 'WALLS', rx + (LM ? 4.4 : 0), ry - (LM ? 0 : 6.2), 'Roma: walls on all sides', LM ? ' data-at="roma" data-side="r"' : ''); }
+  $('#tokens').innerHTML = h; placeSideMarks();
   const r = s.provinces.roma; $('#romainfo').innerHTML = `ROMA: ${r.troops} troops · Gold pile ${s.roma?.goldPile ?? 0} · ${r.owner ? 'held by ' + esc(pn(r.owner)) : 'no holder'}<br><span style="opacity:.85">Walls on all sides · Ingrained Loyalty</span>`;
   $$('#tokens .tok').forEach(t => {
     t.onmouseenter = () => { if (!selected) showInfo(t.dataset.id, false); };
@@ -1753,6 +1798,8 @@ const BATTLE_DICE = new Set(['battleRound', 'battleAttack', 'battleDefence']);
 let tabsHidden = false; try { tabsHidden = localStorage.getItem('imperator.tabsHidden') === '1'; } catch { /* */ }
 function applyTabsHidden() {
   document.body.classList.toggle('tabshidden', tabsHidden);
+  const t = $('#bTables');   // v31.3 bug #1: a show/hide control in the top bar, always on screen (the one under the map can scroll out of view)
+  if (t) { t.textContent = tabsHidden ? 'Show tables' : 'Hide tables'; t.setAttribute('aria-pressed', tabsHidden ? 'true' : 'false'); t.title = tabsHidden ? 'Show the Provinces / Battle tables below the map again' : 'Hide the Provinces / Battle tables below the map (the map gets the room)'; t.classList.toggle('gold', tabsHidden); }
   const b = $('#tabsToggle'); if (!b) return;
   b.textContent = tabsHidden ? '▴ Show Provinces / Battle' : '▾ Hide'; b.setAttribute('aria-pressed', tabsHidden ? 'true' : 'false');
   b.title = tabsHidden ? 'Show the Provinces / Battle section again' : 'Hide the Provinces / Battle section: the map gets the room';
@@ -1788,10 +1835,11 @@ function loadFrom(obj, { local = false } = {}) {
     return true;
   }
   const show = m => { const el = $('#ldErr') ?? (document.body.dataset.screen === 'setup' ? $('#setupErrors') : null); if (el) el.textContent = m; else toast(m); };
-  let ns; try { ns = G.readSave(obj, data); } catch (e) { show(e.message); return false; }
+  const before = data; setMap(G.saveMapId(obj));   // v31.1: a save plays on its own map
+  let ns; try { ns = G.readSave(obj, data); } catch (e) { if (data !== before) { setMap(before.mapId); } show(e.message); return false; }
   if (C.NET) { netLeave(); playWhere = 'local'; }   // M11: a loaded save is played on this computer
   const prev = C.S; clearTimeout(C.aiTimer); C.S = ns; closeModal();
-  try { enterGame(); } catch (e) { console.warn('load', e); C.S = prev; if (prev) { render(); schedule(); } else renderSetup(); show('This save could not be shown by this build: ' + e.message + ' (the file itself is not changed).'); return false; }
+  try { enterGame(); } catch (e) { console.warn('load', e); C.S = prev; if (data !== before) setMap(before.mapId); if (prev) { render(); schedule(); } else renderSetup(); show('This save could not be shown by this build: ' + e.message + ' (the file itself is not changed).'); return false; }
   toast('Game loaded'); SND.play('deck_shuffle'); return true;
 }
 function showGameOver() {
@@ -1829,7 +1877,8 @@ function wireStatic() {
   $('#addSeat').onclick = () => setSeatCount(3);
   $('#delSeat').onclick = () => setSeatCount(2);
   $$('#pCount .segb').forEach(b => b.onclick = () => setSeatCount(+b.dataset.n));
-  $('#spImg').src = img('map');
+  $('#spImg').src = mapImg();
+  $$('#mapPick .segb').forEach(b => b.onclick = () => { mapPick = b.dataset.map; SND.play('button_click'); renderSetup(); });
   $('#startMode').onchange = renderSetup;
   $('#seed').addEventListener('input', () => { if (rollOff) { resetRollOff(); renderSetup(); } });   // Q110: a new seed means a new roll-off
   $('#startGame').onclick = startGame;
@@ -1838,6 +1887,7 @@ function wireStatic() {
   $('#importFile').onchange = async e => { const f = e.target.files[0]; if (!f) return; const text = await f.text(); e.target.value = ''; let o = text; try { o = JSON.parse(text); } catch { /* readSave says why */ } loadFrom(o); };
   $$('.tab').forEach(b => b.onclick = () => { if (tabsHidden) setTabsHidden(false); setTab(b.dataset.tab); });
   $('#tabsToggle').onclick = () => { SND.play('button_click'); setTabsHidden(!tabsHidden); };
+  $('#bTables').onclick = () => { SND.play('button_click'); setTabsHidden(!tabsHidden); if (!tabsHidden) $('.tabs')?.scrollIntoView({ block: 'nearest' }); };
   applyTabsHidden();
   $$('.deck[data-deck]').forEach(d => d.onclick = () => { const k = d.dataset.key; const x = k && mineNow().find(y => G.descKey(y) === k); if (x) human(x); else { SND.play('error_denied'); toast(notDueText('draw from this deck')); } });
   $('#mapwrap').addEventListener('click', e => { if (!e.target.closest('.info') && !e.target.closest('.tok') && !e.target.closest('.maptools')) { selected = null; hideInfo(); if (C.S) renderMap(mineNow()); } });

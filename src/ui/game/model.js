@@ -202,6 +202,11 @@ export function makeSave(session, meta = {}) {
   const state = stateOf(session);
   return { schema: SAVE_SCHEMA, schemaVersion: state.schemaVersion, ruleset: session.data.ruleset?.id ?? null, seed: session.seed, snapshot: state, meta: { savedAt: new Date().toISOString(), ...meta } };
 }
+/** v31 (21.a): the map id of a save (object or JSON text); saves from before v31 carry none and are Small Map 1. */
+export function saveMapId(input) {
+  let o = input; if (typeof input === 'string') { try { o = JSON.parse(input); } catch { return 'small1'; } }
+  return o?.snapshot?.config?.map ?? 'small1';
+}
 /** Reads a save (object or JSON text); throws an Error that says what is wrong. Returns a fresh session at the saved state. */
 export function readSave(input, data) {
   let o = input;

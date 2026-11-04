@@ -104,7 +104,7 @@ EFFECTS.removed_from_province = (ctx, pid) => {
   pushFrame(ctx, { kind: 'chooseProvince', purpose: 'removedProvince', player: pid, options: opts });
 };
 provinceChoiceHandlers.removedProvince = (ctx, f, a) => removeProvince(ctx, f.player, a.province);
-provinceChoiceHandlers.removedTroops = (ctx, f, a) => moveSurvivors(ctx, f.player, f.from, f.survivors, f.general, a.province);
+provinceChoiceHandlers.removedTroops = (ctx, f, a) => moveSurvivors(ctx, f.player, f.from, f.survivors, f.general, a.province, '18.q');
 function removeProvince(ctx, pid, id) {
   const { state, data } = ctx; const pl = mustPlayer(state, pid); const p = state.provinces[id];
   const troops = p.troops; const general = pl.general?.at === id;
@@ -120,7 +120,7 @@ function removeProvince(ctx, pid, id) {
   if (!troops && !general) return;
   const dest = S.provincesOf(state, pid).filter(x => x !== 'roma' || S.romaRoom(state, data) > 0);
   if (!dest.length) { emit(ctx, 'survivorsLost', { actor: pid, rule: '18.q', pub: { player: pid, from: id, n: troops, reason: 'no other province to move to' } }); if (general) pl.general.at = null; return; }
-  if (dest.length === 1) return moveSurvivors(ctx, pid, id, troops, general, dest[0]);
+  if (dest.length === 1) return moveSurvivors(ctx, pid, id, troops, general, dest[0], '18.q');
   pushFrame(ctx, { kind: 'chooseProvince', purpose: 'removedTroops', player: pid, options: dest, from: id, survivors: troops, general });
 }
 // 18.r Emperor steals your troops! (Q41)

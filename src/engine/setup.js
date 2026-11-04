@@ -1,5 +1,6 @@
 // Game creation and the setup flow (PLAN 3.5, 4.4 assignStartProvinces, 8.2; rules 4.a-4.c, 20.l, 20.n, Q1-Q4, Q55).
-// Flow: roll-off (d10 each, ties re-roll among the tied) -> generals (reverse turn order) -> start provinces (random deal or picks)
+// Flow: roll-off (d10 each, ties re-roll among the tied) -> generals (reverse turn order) -> start provinces (random deal or picks;
+// v31: on a map with fixed starts, 21.f, always picks in turn order, the highest roll-off first)
 // -> start natives (d6 each) -> phase "turn". Each step is a frame resolved by an action; nothing rolls on its own.
 import { createBlankState } from './state.js';
 import { createRng, shuffle, int } from './rng.js';
@@ -26,10 +27,16 @@ export const sideOf = (data, id) => (data.rules.twoPlayerSides ? ['west', 'east'
 export const sideProvinces = (data, side) => data.rules.twoPlayerSides[side].filter(id => data.provincesById[id]?.startingEligible);
 export const OTHER_SIDE = { west: 'east', east: 'west' };
 export const SIDE_NAMES = { west: 'West', east: 'East' };
-/** Can `id` be a start province in an n-player game at all? (4.b; 4.g in a 2-player game) */
-export const startAllowed = (data, n, id) => !!data.provincesById[id]?.startingEligible && (!sidesApply(data, n) || sideOf(data, id) !== null);
+/** v31 (21.f): the fixed start provinces of an n-player game on this map, or null. */
+export const fixedStartsFor = (data, n) => data.rules.fixedStarts?.[n] ?? null;
+/** v31 (21.f): with fixed starts the seats pick in turn order (the highest roll-off first); otherwise in reverse turn order (4.b). */
+export const startPickOrder = (state, data) => (fixedStartsFor(data, state.players.length) && data.rules.fixedStartPickOrder === 'rollOffHighestFirst' ? [...state.turnOrder] : [...state.turnOrder].reverse());
+/** Can `id` be a start province in an n-player game at all? (4.b; 4.g / 21.g in a 2-player game; 21.f fixed starts) */
+export const startAllowed = (data, n, id) => !!data.provincesById[id]?.startingEligible && (!sidesApply(data, n) || sideOf(data, id) !== null) && (!fixedStartsFor(data, n) || fixedStartsFor(data, n).includes(id));
+/** "West (Britain, Gaul, ...)" for this map (4.g, 21.g). */
+export const sideLabel = (data, side) => `${SIDE_NAMES[side]} (${sideProvinces(data, side).map(x => data.provincesById[x].name).join(', ')})`;
 
-/** Shortest-path distance matrix over the full 13-province graph (Roma and Carthage may be passed through, Q55). */
+/** Shortest-path distance matrix over the whole map graph (Roma and Carthage may be passed through, Q55). */
 export function distanceMatrix(data) {
   return Object.fromEntries(data.provinceIds.map(id => [id, distances(data, id)]));
 }
@@ -41,6 +48,11 @@ export function distanceMatrix(data) {
  * Mutates `rng`. Returns {assignments:[province per player], requestedDistance, usedDistance, fallbackUsed, exceptionsUsed}.
  */
 export function assignStartProvinces(rng, data, n) {
+  const fixed = fixedStartsFor(data, n);
+  if (fixed) {   // 21.f: the fixed starts (checked against 20.o when the data is built); a seeded deal for callers that deal
+    const D = distanceMatrix(data); const want = data.rules.startProvinceMinDistance;
+    return { assignments: shuffle(rng, fixed), requestedDistance: want, usedDistance: Math.min(...fixed.flatMap((a, i) => fixed.slice(i + 1).map(b => D[a][b]))), fallbackUsed: false, exceptionsUsed: [], tier: 1, candidates: 1, fixed: true };
+  }
   if (sidesApply(data, n)) {   // 4.g: the sides are dealt at random, then a random start on each side; a pair that breaks 20.o is re-dealt
     const sides = shuffle(rng, ['west', 'east']); const D = distanceMatrix(data); const want = data.rules.startProvinceMinDistance;
     const all = []; for (const a of sideProvinces(data, sides[0])) for (const b of sideProvinces(data, sides[1])) all.push([a, b]);
@@ -66,18 +78,6 @@ export function assignStartProvinces(rng, data, n) {
   return { assignments, requestedDistance: want, usedDistance: used, fallbackUsed: tier > 1, exceptionsUsed, tier, candidates: sets.length };
 }
 
-/** Classic start provinces of the chosen generals (15.i) and whether every pair keeps 2+ provinces between them (20.o). */
-export function classicStarts(data, generalIds) {
-  const provinces = generalIds.map(g => data.rules.classicStarts[g]);
-  const D = distanceMatrix(data); const tooClose = [];
-  for (let i = 0; i < provinces.length; i++) for (let j = i + 1; j < provinces.length; j++)
-    if (D[provinces[i]][provinces[j]] < data.rules.startProvinceMinDistance) tooClose.push([provinces[i], provinces[j]]);
-  // 4.g: in a 2-player game the classic starts must be one west and one east (Germanicus' Germanica is on neither side): else dealt at random
-  const sides = sidesApply(data, provinces.length) ? provinces.map(id => sideOf(data, id)) : null;
-  const sidesBroken = !!sides && (sides.includes(null) || sides[0] === sides[1]);
-  return { ok: !tooClose.length && !sidesBroken, provinces, tooClose, sidesBroken, sides };
-}
-
 // ------------------------------------------------------------------ setup validation (M4: the setup screen and createGame share it)
 export const CONTROLLERS = ['human', 'ai'];
 /**
@@ -92,7 +92,8 @@ export function validateSetup(data, { players = [], startProvinceMode = data.rul
   if (players.length < 2) err(null, 'players', 'BAD_PLAYERS', 'A game needs at least 2 players.');
   if (players.length > max) err(null, 'players', 'TOO_MANY_PLAYERS', `At most ${max} players.`);
   const mode = startProvinceMode === 'selected' ? 'pick' : startProvinceMode;
-  if (!['random', 'pick', 'classic'].includes(mode)) err(null, 'startProvinceMode', 'BAD_OPTION', 'Start provinces are "random" or "selected" (or "classic").');
+  if (!['random', 'pick'].includes(mode)) err(null, 'startProvinceMode', 'BAD_OPTION', 'Start provinces are "random" or "selected" (15.i, 21.h: no general-based starts).');
+  const fixed = fixedStartsFor(data, players.length);
   const gens = [];
   players.forEach((p, i) => {
     if (p.name !== undefined && !String(p.name).trim()) err(i, 'name', 'BAD_NAME', `Seat ${i + 1} needs a name.`);
@@ -110,6 +111,7 @@ export function validateSetup(data, { players = [], startProvinceMode = data.rul
   else if (sidesSet.length && (!two || mode !== 'pick')) err(null, 'startSide', 'BAD_OPTION', 'Start sides are only chosen in a 2-player game with Selected starts (4.g).');
   else if (new Set(sidesSet).size < sidesSet.length) err(null, 'startSide', 'START_SAME_SIDE', 'The two players start on different sides, one west and one east (4.g).');
   if (starts.length && mode !== 'pick') err(null, 'startProvince', 'BAD_OPTION', 'Start provinces can only be set with Selected starts.');
+  else if (starts.length && fixed) err(null, 'startProvince', 'START_PICKED_AFTER_ROLL_OFF', `On ${data.mapName ?? 'this map'} the ${players.length} starts are ${fixed.map(x => data.provincesById[x].name).join(', ')}: each player picks one after the roll-off, the highest roll first (21.f).`);
   const D = new Map(); const dist = x => D.get(x) ?? (D.set(x, distances(data, x)), D.get(x));
   const isEx = (a, b) => data.rules.startDistanceExceptions.some(e => (e.a === a && e.b === b) || (e.a === b && e.b === a));
   const placed = [];
@@ -117,7 +119,7 @@ export function validateSetup(data, { players = [], startProvinceMode = data.rul
     const def = data.provincesById[id];
     if (!def) { err(i, 'startProvince', 'UNKNOWN_PROVINCE', `Unknown province "${id}".`); continue; }
     if (!def.startingEligible) { err(i, 'startProvince', 'START_INELIGIBLE', `${def.name} can never be a start province (never Carthage or Roma, 4.b).`); continue; }
-    if (two && !sideOf(data, id)) { err(i, 'startProvince', 'START_NOT_ON_SIDE', `${def.name} is not a start province in a 2-player game: Swiss and Germanica divide the west from the east (4.g).`); continue; }
+    if (two && !sideOf(data, id)) { err(i, 'startProvince', 'START_NOT_ON_SIDE', `${def.name} is not a start province in a 2-player game (4.g, 21.g).`); continue; }
     if (two && players[i].startSide && sideOf(data, id) !== players[i].startSide) { err(i, 'startProvince', 'START_WRONG_SIDE', `${def.name} is in the ${sideOf(data, id)}; this seat starts in the ${players[i].startSide} (4.g).`); continue; }
     if (placed.includes(id)) { err(i, 'startProvince', 'START_TAKEN', `${def.name} is already another seat's start.`); continue; }
     if (two && placed.some(o => sideOf(data, o) === sideOf(data, id))) { err(i, 'startProvince', 'START_SAME_SIDE', `${def.name} is in the ${sideOf(data, id)}, like ${data.provincesById[placed.find(o => sideOf(data, o) === sideOf(data, id))].name}: in a 2-player game one player starts in the west and the other in the east (4.g).`); continue; }
@@ -126,9 +128,10 @@ export function validateSetup(data, { players = [], startProvinceMode = data.rul
     placed.push(id);
   }
   if (!errors.length && mode === 'pick' && !allowCloseStarts) {
+    const NP = players.length;
     const far = (x, ys) => ys.every(y => dist(x)[y] >= data.rules.startProvinceMinDistance);
     const okSide = (c, chosen) => !two || (sideOf(data, c) && !chosen.some(y => sideOf(data, y) === sideOf(data, c)));
-    const fits = (k, chosen) => k === 0 || data.provinceIds.some(c => data.provincesById[c].startingEligible && okSide(c, chosen) && !chosen.includes(c) && far(c, chosen) && fits(k - 1, chosen.concat(c)));
+    const fits = (k, chosen) => k === 0 || data.provinceIds.some(c => startAllowed(data, NP, c) && okSide(c, chosen) && !chosen.includes(c) && far(c, chosen) && fits(k - 1, chosen.concat(c)));
     if (!fits(players.length - placed.length, placed)) err(null, 'startProvince', 'START_LEAVES_NO_ROOM', 'These starts leave no valid start province for the other seats.');
   }
   return { ok: !errors.length, errors };
@@ -151,7 +154,8 @@ export function createGame(data, { seed, players, options = {} }) {
   check(new Set(preset).size === preset.length, 'GENERAL_TAKEN', 'Two players cannot have the same general.', '15.e');
   const state = createBlankState(data, { seed, players: ps });
   const mode = options.startProvinceMode === 'selected' ? 'pick' : options.startProvinceMode ?? data.rules.startProvinceMode;   // 'selected' = picks (M4 setup screen)
-  check(['random', 'pick', 'classic'].includes(mode), 'BAD_OPTION', 'startProvinceMode must be "random", "pick" or "classic".');
+  check(['random', 'pick'].includes(mode), 'BAD_OPTION', 'startProvinceMode must be "random" or "pick" (15.i, 21.h: no general-based starts).');
+  if (options.map !== undefined) check(options.map === (data.mapId ?? 'small1'), 'BAD_OPTION', `options.map "${options.map}" does not match the rules data (map "${data.mapId ?? 'small1'}").`);
   state.config.startProvinceMode = mode; state.config.allowCloseStarts = !!options.allowCloseStarts; state.config.hideHandDefault = !!options.hideHand;
   state.config.rewardMode = options.rerandomRewards ? 'random' : data.rules.rewardMode;
   if (options.rerandomRewards) {   // Q5: keeps the 7 Troop / 5 Gold split, every province gets a random reward
@@ -165,9 +169,10 @@ export function createGame(data, { seed, players, options = {} }) {
   const randomGenerals = ps.filter((p, i) => players[i].general === 'random').map(p => p.id);
   // v29.1: likewise "Random for this seat" (Selected starts, startProvince 'random'): that seat's start is drawn on state.rng, never asked
   const randomStarts = ps.filter((p, i) => players[i].startProvince === 'random').map(p => p.id);
-  state.setup = { ...(randomGenerals.length ? { randomGenerals } : {}), ...(randomStarts.length && mode === 'pick' ? { randomStarts } : {}), presetStarts: Object.fromEntries(ps.filter(p => p.startProvince).map(p => [p.id, p.startProvince])), ...(Object.keys(presetSides).length ? { presetSides } : {}), stage: 'rollOff', rollOff: { round: 1, queue: ps.map(p => p.id), keys: Object.fromEntries(ps.map(p => [p.id, []])) } };
+  const picks = mode === 'pick' || !!fixedStartsFor(data, ps.length);   // 21.f: fixed starts are always picked in roll-off order, whatever the start setting
+  state.setup = { ...(randomGenerals.length ? { randomGenerals } : {}), ...(randomStarts.length && picks ? { randomStarts } : {}), presetStarts: Object.fromEntries(ps.filter(p => p.startProvince).map(p => [p.id, p.startProvince])), ...(Object.keys(presetSides).length ? { presetSides } : {}), stage: 'rollOff', rollOff: { round: 1, queue: ps.map(p => p.id), keys: Object.fromEntries(ps.map(p => [p.id, []])) } };
   const ctx = makeCtx(state, data, {});
-  emit(ctx, 'gameCreated', { rule: '4.a', pub: { seed, players: ps.map(p => ({ id: p.id, name: p.name })), startProvinceMode: mode } });
+  emit(ctx, 'gameCreated', { rule: '4.a', pub: { seed, players: ps.map(p => ({ id: p.id, name: p.name })), startProvinceMode: mode, ...(data.mapId && data.mapId !== 'small1' ? { map: data.mapId } : {}) } });
   settle(ctx);
   return { state, events: ctx.events };
 }
@@ -179,11 +184,11 @@ function randomStartOptions(state, data, pid) {
   const taken = state.players.filter(p => p.startProvince).map(p => p.startProvince);
   const remaining = state.players.filter(p => !p.startProvince && p.id !== pid).length;
   const D = new Map(); const dist = x => D.get(x) ?? (D.set(x, distances(data, x)), D.get(x));
-  const close = !!state.config.allowCloseStarts;
+  const close = !!state.config.allowCloseStarts; const NP = state.players.length;
   const far = (x, ys) => close || ys.every(y => dist(x)[y] >= data.rules.startProvinceMinDistance);
   const okSide = (c, chosen) => !two || (sideOf(data, c) && !chosen.some(y => sideOf(data, y) === sideOf(data, c)));
-  const fits = (k, chosen) => k === 0 || data.provinceIds.some(c => data.provincesById[c].startingEligible && okSide(c, chosen) && !chosen.includes(c) && far(c, chosen) && fits(k - 1, chosen.concat(c)));
-  return data.provinceIds.filter(id => data.provincesById[id].startingEligible && state.provinces[id].owner === null
+  const fits = (k, chosen) => k === 0 || data.provinceIds.some(c => startAllowed(data, NP, c) && okSide(c, chosen) && !chosen.includes(c) && far(c, chosen) && fits(k - 1, chosen.concat(c)));
+  return data.provinceIds.filter(id => startAllowed(data, NP, id) && state.provinces[id].owner === null
     && (!two || (sideOf(data, id) && (!side || sideOf(data, id) === side) && okSide(id, taken)))
     && far(id, taken) && (close || fits(remaining, taken.concat(id))));
 }
@@ -251,7 +256,7 @@ define('CHOOSE_SIDE', {
   frame: ['setupSide'],
   run(ctx, a) {
     const { state } = ctx; const f = state.pending[state.pending.length - 1];
-    check(OTHER_SIDE[a.side], 'BAD_SIDE', 'Choose "west" (Britain, Gaul, Iberia, Mauretania) or "east" (Dalmacia, Macedonia, Greece, Parthia, Egypt) (4.g).', '4.g');
+    check(OTHER_SIDE[a.side], 'BAD_SIDE', `Choose "west" ${sideLabel(ctx.data, 'west').slice(5)} or "east" ${sideLabel(ctx.data, 'east').slice(5)} (4.g, 21.g).`, '4.g');
     const other = state.players.find(p => p.id !== f.player);
     state.setup.sides = { [f.player]: a.side, [other.id]: OTHER_SIDE[a.side] };
     popFrame(ctx);
@@ -267,9 +272,11 @@ define('CHOOSE_START_PROVINCE', {
     check(def, 'UNKNOWN_PROVINCE', `Unknown province "${id}".`);
     check(def.startingEligible, 'START_INELIGIBLE', `${def.name} can never be a starting province (${id === 'carthage' ? '4.b, 16.n, 20.l' : 'Roma is special, 12.g'}).`, id === 'carthage' ? '4.b' : '12.g');
     check(state.provinces[id].owner === null, 'START_TAKEN', `${def.name} is already someone's start province.`, '4.b');
+    const fixed = fixedStartsFor(data, state.players.length);
+    if (fixed) check(fixed.includes(id), 'START_NOT_FIXED', `On ${data.mapName ?? 'this map'} the starts are ${fixed.map(x => data.provincesById[x].name).join(', ')} (21.f).`, '21.f');
     const two = sidesApply(data, state.players.length); const sides = state.setup?.sides ?? null;
     if (two) {
-      check(sideOf(data, id), 'START_NOT_ON_SIDE', `${def.name} is not a start province in a 2-player game: Swiss and Germanica divide the west from the east (4.g).`, '4.g');
+      check(sideOf(data, id), 'START_NOT_ON_SIDE', `${def.name} is not a start province in a 2-player game (4.g, 21.g).`, '4.g');
       if (sides?.[f.player]) check(sideOf(data, id) === sides[f.player], 'START_WRONG_SIDE', `${def.name} is in the ${sideOf(data, id)}: you start in the ${sides[f.player]} (${sideProvinces(data, sides[f.player]).map(x => data.provincesById[x].name).join(', ')}) (4.g).`, '4.g');
     }
     if (!state.config.allowCloseStarts) {
@@ -279,12 +286,12 @@ define('CHOOSE_START_PROVINCE', {
         fail('START_TOO_CLOSE', `${def.name} is only ${D[p.startProvince]} step(s) from ${data.provincesById[p.startProvince].name}; start provinces need ${data.rules.startProvinceMinDistance} steps (Q3, Q55).`, 'Q3');
     }
     if (!state.config.allowCloseStarts) {   // never paint the table into a corner: the players still to pick need room (found by the M1.4 fuzz test)
-      const remaining = state.players.filter(p => !p.startProvince && p.id !== f.player).length;
+      const remaining = state.players.filter(p => !p.startProvince && p.id !== f.player).length; const NP = state.players.length;
       const taken = state.players.filter(p => p.startProvince).map(p => p.startProvince).concat(id);
       const D = new Map(); const dist = x => D.get(x) ?? (D.set(x, distances(data, x)), D.get(x));
       const far = (x, ys) => ys.every(y => dist(x)[y] >= data.rules.startProvinceMinDistance);
       const okSide = (c, chosen) => !two || (sideOf(data, c) && !chosen.some(y => sideOf(data, y) === sideOf(data, c)));
-      const fits = (k, chosen) => k === 0 || data.provinceIds.some(c => data.provincesById[c].startingEligible && okSide(c, chosen) && !chosen.includes(c) && far(c, chosen) && fits(k - 1, chosen.concat(c)));
+      const fits = (k, chosen) => k === 0 || data.provinceIds.some(c => startAllowed(data, NP, c) && okSide(c, chosen) && !chosen.includes(c) && far(c, chosen) && fits(k - 1, chosen.concat(c)));
       check(fits(remaining, taken), 'START_LEAVES_NO_ROOM', `${def.name} would leave no valid start province (3 steps apart) for the players who still have to pick.`, 'Q3');
     }
     popFrame(ctx);
@@ -336,14 +343,10 @@ onSettle(ctx => {
     return true;
   }
   if (su.stage === 'provinces') {
-    if (state.config.startProvinceMode === 'classic' && !su.classicTried) {   // classic starts by general (15.i); redrawn at random if 20.o fails
-      su.classicTried = true;
-      const r = classicStarts(data, state.players.map(p => p.general.id));
-      emit(ctx, 'classicStartsChecked', { rule: r.sidesBroken ? '15.i, 4.g' : '15.i, 20.o', pub: { ok: r.ok, assignments: state.players.map((p, i) => ({ player: p.id, province: r.provinces[i] })), tooClose: r.tooClose, ...(r.sidesBroken ? { sidesBroken: true } : {}) } });
-      if (r.ok) state.players.forEach((p, i) => placeStart(ctx, p.id, r.provinces[i]));
-      return true;
-    }
-    if (state.config.startProvinceMode !== 'pick') {
+    // 15.i, 21.h (2026-11-01): no general-based ("classic") starts any more; an old save still in setup with that mode is dealt at random.
+    // 21.f: fixed starts are always picked, in roll-off order (the highest roll first), whatever the start setting.
+    const picks = state.config.startProvinceMode === 'pick' || !!fixedStartsFor(data, state.players.length);
+    if (!picks) {
       if (state.players.some(p => !p.startProvince)) { pushFrame(ctx, { kind: 'roll', die: 'deal', purpose: 'startProvinces', player: null }); return true; }
     } else {
       if (su.presetStarts && Object.keys(su.presetStarts).length) {   // Selected starts from the setup screen (validated by validateSetup)
@@ -361,10 +364,10 @@ onSettle(ctx => {
           emit(ctx, 'startSidesSet', { rule: '4.g', pub: { sides: state.players.map(p => ({ player: p.id, side: su.sides[p.id] })), by: pid } });
           return true;
         }
-        const first = [...state.turnOrder].reverse().find(id => !playerOf(state, id).startProvince);
+        const first = startPickOrder(state, data).find(id => !playerOf(state, id).startProvince);
         if (!su.randomStarts?.includes(first)) { pushFrame(ctx, { kind: 'setupSide', player: first }); return true; }
       }
-      const next = [...state.turnOrder].reverse().find(id => !playerOf(state, id).startProvince);
+      const next = startPickOrder(state, data).find(id => !playerOf(state, id).startProvince);
       if (next && su.randomStarts?.includes(next)) {   // v29.1: "Random for this seat": a random legal start (the same rules as a hand pick), on state.rng
         const opts = randomStartOptions(state, data, next);
         check(opts.length, 'START_LEAVES_NO_ROOM', 'No valid start province is left for a random start.', 'Q3');

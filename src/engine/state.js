@@ -36,10 +36,14 @@ export function stateHash(state) {
 }
 
 /**
- * Blank game state before setup (PLAN 3.1 to 3.3): 13 unowned provinces with random Game Roll numbers 3..8 (each used twice, 16.h),
+ * Blank game state before setup (PLAN 3.1 to 3.3): the map's unowned provinces (13 on Small Map 1, 19 on Large Map 1) with random Game Roll
+ * numbers 3..8 (each used twice on Small Map 1, 16.h; three times on Large Map 1, 21.c),
  * rewards from the map defaults (Q5), Roma at 10 troops, Carthage natives 10, the static 54-card registry and shuffled decks.
  * Setup (roll-off, generals, start provinces) is M1 and fills players/turnOrder/startProvince.
  */
+/** v31 (21.a): the map a state is on; states and saves from before v31 have none and are Small Map 1. */
+export const mapOfState = state => state?.config?.map ?? 'small1';
+
 export function createBlankState(data, { seed, players = [], gameId = 'g-' + seed } = {}) {
   const rng = createRng(seed);
   const cards = {};
@@ -71,7 +75,7 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
   }
   return {
     schemaVersion: SCHEMA_VERSION, gameId,
-    config: { ruleset: data.ruleset.id, winPrestige: data.rules.winPrestige, startGold: data.rules.startingGold, startTroops: data.rules.startingTroops,
+    config: { ruleset: data.ruleset.id, map: data.mapId ?? 'small1', winPrestige: data.rules.winPrestige, startGold: data.rules.startingGold, startTroops: data.rules.startingTroops,
       actionsPerTurn: data.rules.actionsPerTurn, unusedActionGold: data.rules.unusedActionGold, seed, hideHandDefault: false },
     rng, phase: 'setup',
     players: players.map(p => ({ id: p.id, name: p.name, color: p.color ?? null, controller: p.controller ?? 'human', general: p.general ? { id: p.general, at: null } : null, startProvince: null,
@@ -96,6 +100,8 @@ export function validateState(state, data, opts = {}) {
   const isNat = n => Number.isInteger(n) && n >= 0;
 
   if (state.schemaVersion !== SCHEMA_VERSION) err(`schemaVersion ${state.schemaVersion} != ${SCHEMA_VERSION}`);
+  const sm = mapOfState(state), dm = data.mapId ?? 'small1';   // v31 (21.a): a save without a map id is Small Map 1
+  if (sm !== dm) { err(`this game is on map "${sm}" but the rules data is for map "${dm}"`); return errs; }
   if (!PHASES.includes(state.phase)) err('bad phase ' + state.phase);
   if (!state.rng || state.rng.algo !== 'sfc32' || !Array.isArray(state.rng.s) || state.rng.s.length !== 4 || !state.rng.s.every(x => Number.isInteger(x) && x >= 0 && x < 4294967296) || !isNat(state.rng.draws)) err('bad rng state');
 

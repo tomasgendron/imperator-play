@@ -1,0 +1,549 @@
+{
+ "_comment": "Large Map 1, 19 provinces (rules 21.a-21.i). Links from the Drive sheet \"Large Map Province Connections\" (/workspace/largemap/large_links.json, 34 links: 20 land, 14 sea; 21.b). Token centres from LargeMap1_centers.json x 819/1280 (Roma on the eagle at 633,385, Q8). Rewards 21.d. startingEligible false for Roma, Carthage and Swiss (4.b, 21.f, 21.g). `rules` overrides ruleset.json values on this map only.",
+ "map": {
+  "id": "large1",
+  "name": "Large Map 1",
+  "image": "map/LargeMap1_approved.jpg",
+  "width": 1280,
+  "height": 720,
+  "tokenSpace": {
+   "w": 819,
+   "h": 461
+  }
+ },
+ "provinces": [
+  {
+   "id": "caledonia",
+   "name": "Caledonia",
+   "kind": "regular",
+   "token": {
+    "x": 113.25,
+    "y": 88.36
+   },
+   "land": [
+    "briton"
+   ],
+   "sea": [],
+   "defaultReward": "troop",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 113,
+    "cy": 88,
+    "r": 22
+   }
+  },
+  {
+   "id": "briton",
+   "name": "Briton",
+   "kind": "regular",
+   "token": {
+    "x": 185.55,
+    "y": 105.01
+   },
+   "land": [
+    "caledonia"
+   ],
+   "sea": [
+    "upper_gaul"
+   ],
+   "defaultReward": "gold",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 186,
+    "cy": 105,
+    "r": 22
+   }
+  },
+  {
+   "id": "upper_gaul",
+   "name": "Upper Gaul",
+   "kind": "regular",
+   "token": {
+    "x": 303.93,
+    "y": 154.95
+   },
+   "land": [
+    "lower_gaul",
+    "germanica",
+    "swiss",
+    "roma"
+   ],
+   "sea": [
+    "briton"
+   ],
+   "defaultReward": "troop",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 304,
+    "cy": 155,
+    "r": 22
+   }
+  },
+  {
+   "id": "lower_gaul",
+   "name": "Lower Gaul",
+   "kind": "regular",
+   "token": {
+    "x": 241.22,
+    "y": 206.17
+   },
+   "land": [
+    "upper_gaul",
+    "iberia",
+    "roma"
+   ],
+   "sea": [],
+   "defaultReward": "gold",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 241,
+    "cy": 206,
+    "r": 22
+   }
+  },
+  {
+   "id": "iberia",
+   "name": "Iberia",
+   "kind": "regular",
+   "token": {
+    "x": 143.32,
+    "y": 263.15
+   },
+   "land": [
+    "lower_gaul"
+   ],
+   "sea": [
+    "mauretania"
+   ],
+   "defaultReward": "troop",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 143,
+    "cy": 263,
+    "r": 22
+   }
+  },
+  {
+   "id": "mauretania",
+   "name": "Mauretania",
+   "kind": "regular",
+   "token": {
+    "x": 151.64,
+    "y": 393.77
+   },
+   "land": [
+    "numidia"
+   ],
+   "sea": [
+    "iberia"
+   ],
+   "defaultReward": "troop",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 152,
+    "cy": 394,
+    "r": 22
+   }
+  },
+  {
+   "id": "numidia",
+   "name": "Numidia",
+   "kind": "regular",
+   "token": {
+    "x": 280.89,
+    "y": 384.81
+   },
+   "land": [
+    "mauretania",
+    "carthage"
+   ],
+   "sea": [
+    "roma"
+   ],
+   "defaultReward": "gold",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 281,
+    "cy": 385,
+    "r": 22
+   }
+  },
+  {
+   "id": "germanica",
+   "name": "Germanica",
+   "kind": "regular",
+   "token": {
+    "x": 392.22,
+    "y": 97.96
+   },
+   "land": [
+    "upper_gaul",
+    "swiss",
+    "dalmacia"
+   ],
+   "sea": [],
+   "defaultReward": "troop",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 392,
+    "cy": 98,
+    "r": 22
+   }
+  },
+  {
+   "id": "swiss",
+   "name": "Swiss",
+   "kind": "regular",
+   "token": {
+    "x": 369.19,
+    "y": 165.83
+   },
+   "land": [
+    "upper_gaul",
+    "germanica",
+    "dalmacia",
+    "roma"
+   ],
+   "sea": [],
+   "defaultReward": "gold",
+   "startingEligible": false,
+   "hit": {
+    "shape": "circle",
+    "cx": 369,
+    "cy": 166,
+    "r": 22
+   }
+  },
+  {
+   "id": "carthage",
+   "name": "Carthage",
+   "kind": "regular",
+   "token": {
+    "x": 389.66,
+    "y": 398.25
+   },
+   "land": [
+    "numidia",
+    "egypt"
+   ],
+   "sea": [
+    "roma"
+   ],
+   "defaultReward": "troop",
+   "startingEligible": false,
+   "hit": {
+    "shape": "circle",
+    "cx": 390,
+    "cy": 398,
+    "r": 22
+   }
+  },
+  {
+   "id": "dalmacia",
+   "name": "Dalmacia",
+   "kind": "regular",
+   "token": {
+    "x": 550.91,
+    "y": 123.57
+   },
+   "land": [
+    "germanica",
+    "swiss",
+    "macedonia"
+   ],
+   "sea": [
+    "parthia"
+   ],
+   "defaultReward": "troop",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 551,
+    "cy": 123,
+    "r": 22
+   }
+  },
+  {
+   "id": "macedonia",
+   "name": "Macedonia",
+   "kind": "regular",
+   "token": {
+    "x": 560.5,
+    "y": 185.04
+   },
+   "land": [
+    "dalmacia",
+    "thrace"
+   ],
+   "sea": [
+    "parthia",
+    "roma"
+   ],
+   "defaultReward": "troop",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 561,
+    "cy": 185,
+    "r": 22
+   }
+  },
+  {
+   "id": "thrace",
+   "name": "Thrace",
+   "kind": "regular",
+   "token": {
+    "x": 581.62,
+    "y": 230.5
+   },
+   "land": [
+    "macedonia",
+    "greece"
+   ],
+   "sea": [
+    "parthia",
+    "phoenicia",
+    "roma"
+   ],
+   "defaultReward": "gold",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 582,
+    "cy": 230,
+    "r": 22
+   }
+  },
+  {
+   "id": "greece",
+   "name": "Greece",
+   "kind": "regular",
+   "token": {
+    "x": 563.06,
+    "y": 291.33
+   },
+   "land": [
+    "thrace"
+   ],
+   "sea": [
+    "egypt",
+    "phoenicia",
+    "judea",
+    "roma"
+   ],
+   "defaultReward": "troop",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 563,
+    "cy": 291,
+    "r": 22
+   }
+  },
+  {
+   "id": "parthia",
+   "name": "Parthia",
+   "kind": "regular",
+   "token": {
+    "x": 735.18,
+    "y": 179.92
+   },
+   "land": [
+    "phoenicia"
+   ],
+   "sea": [
+    "dalmacia",
+    "macedonia",
+    "thrace"
+   ],
+   "defaultReward": "gold",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 735,
+    "cy": 180,
+    "r": 22
+   }
+  },
+  {
+   "id": "phoenicia",
+   "name": "Phoenicia",
+   "kind": "regular",
+   "token": {
+    "x": 727.5,
+    "y": 256.11
+   },
+   "land": [
+    "parthia",
+    "judea"
+   ],
+   "sea": [
+    "thrace",
+    "greece"
+   ],
+   "defaultReward": "troop",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 728,
+    "cy": 256,
+    "r": 22
+   }
+  },
+  {
+   "id": "judea",
+   "name": "Judea",
+   "kind": "regular",
+   "token": {
+    "x": 739.66,
+    "y": 329.74
+   },
+   "land": [
+    "egypt",
+    "phoenicia"
+   ],
+   "sea": [
+    "greece"
+   ],
+   "defaultReward": "gold",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 740,
+    "cy": 330,
+    "r": 22
+   }
+  },
+  {
+   "id": "egypt",
+   "name": "Egypt",
+   "kind": "regular",
+   "token": {
+    "x": 614.89,
+    "y": 405.94
+   },
+   "land": [
+    "carthage",
+    "judea"
+   ],
+   "sea": [
+    "greece"
+   ],
+   "defaultReward": "gold",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 615,
+    "cy": 406,
+    "r": 22
+   }
+  },
+  {
+   "id": "roma",
+   "name": "Roma",
+   "kind": "roma",
+   "token": {
+    "x": 405.02,
+    "y": 246.51
+   },
+   "land": [
+    "upper_gaul",
+    "lower_gaul",
+    "swiss"
+   ],
+   "sea": [
+    "numidia",
+    "carthage",
+    "macedonia",
+    "thrace",
+    "greece"
+   ],
+   "startingEligible": false,
+   "hit": {
+    "shape": "circle",
+    "cx": 405,
+    "cy": 246,
+    "r": 22
+   }
+  }
+ ],
+ "rules": {
+  "winPrestige": {
+   "value": 11,
+   "rule": "21.e, 12.e"
+  },
+  "provinceNumbers": {
+   "value": {
+    "values": [
+     3,
+     4,
+     5,
+     6,
+     7,
+     8
+    ],
+    "timesEach": 3
+   },
+   "rule": "21.c, 16.h"
+  },
+  "twoPlayerSides": {
+   "value": {
+    "players": 2,
+    "west": [
+     "caledonia",
+     "briton",
+     "upper_gaul",
+     "lower_gaul",
+     "iberia",
+     "mauretania",
+     "numidia"
+    ],
+    "east": [
+     "dalmacia",
+     "macedonia",
+     "thrace",
+     "greece",
+     "parthia",
+     "phoenicia",
+     "judea",
+     "egypt"
+    ]
+   },
+   "rule": "21.g, 4.g, 20.o: one player starts in the west, the other in the east; Roma, Carthage, Swiss and Germanica are not 2-player starts"
+  },
+  "startProvinceExcluded": {
+   "value": [
+    "roma",
+    "carthage",
+    "swiss"
+   ],
+   "rule": "4.b, 21.f, 21.g (Swiss is never a start on Large Map 1)"
+  },
+  "startDistanceExceptions": {
+   "value": [],
+   "rule": "20.o, 21.g (no exceptions on Large Map 1)"
+  },
+  "fixedStarts": {
+   "value": {
+    "3": [
+     "germanica",
+     "judea",
+     "mauretania"
+    ]
+   },
+   "rule": "21.f"
+  },
+  "fixedStartPickOrder": {
+   "value": "rollOffHighestFirst",
+   "rule": "21.f (exception to 4.b: the highest roll-off picks first)"
+  }
+ }
+}

@@ -125,6 +125,9 @@ function drawCard(ctx, f) {
     return;
   }
   // game deck
+  // v31.3: an auto-played Game Card (Prestige 18.k, Garrison Requirement 18.t) is still a draw: say so first, in public (the card is shown
+  // face up at once), so the log never loses 'X draws a Game Card' for a Game Roll reward (16.c, 16.l) or a battle or purchase draw
+  if (def.onDraw === 'autoPlay' || def.onDraw === 'autoPlayInPlay') emit(ctx, 'cardDrawn', { actor: pid, rule: '18.j', pub: { player: pid, deck: 'game', reason: f.reason, def: defId, uid, autoPlay: true } });
   if (def.onDraw === 'autoPlay') {                      // Prestige: played at once, +1, to the bottom (18.k)
     emit(ctx, 'cardPlayed', { actor: pid, rule: '18.k', pub: { player: pid, def: defId, uid, auto: true } });
     toDiscard(state, uid);
@@ -319,9 +322,9 @@ defineRoll('gameRoll', (ctx, f) => {
 });
 
 // ------------------------------------------------------------------ Revolt Roll and revolt (17.c, 17.r, 18.m)
-export function moveSurvivors(ctx, pid, from, survivors, withGeneral, dest) {
+export function moveSurvivors(ctx, pid, from, survivors, withGeneral, dest, rule = '17.c') {   // rule: 17.c revolt, 18.v Bribe the Ally!, 18.q Removed from Province (v31.3)
   const { state } = ctx; const pl = mustPlayer(state, pid);
-  if (survivors > 0) { changeTroops(ctx, dest, survivors); emit(ctx, 'survivorsMoved', { actor: pid, rule: '17.c', pub: { player: pid, from, to: dest, n: survivors, general: withGeneral } }); }
+  if (survivors > 0) { changeTroops(ctx, dest, survivors); emit(ctx, 'survivorsMoved', { actor: pid, rule, pub: { player: pid, from, to: dest, n: survivors, general: withGeneral } }); }
   if (withGeneral && pl.general) pl.general.at = dest;
 }
 

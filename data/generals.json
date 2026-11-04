@@ -110,14 +110,7 @@
     }
    ],
    "quote": "One enemy legion will flee into the hills.",
-   "intro": [
-    {
-     "text": "Classic starting province: Iberia.",
-     "rule": [
-      "15.i"
-     ]
-    }
-   ]
+   "intro": []
   },
   {
    "id": "scipio",
@@ -173,12 +166,6 @@
       "15.f",
       "18.b",
       "18.c"
-     ]
-    },
-    {
-     "text": "Classic starting province: Dalmacia.",
-     "rule": [
-      "15.i"
      ]
     }
    ]
@@ -293,14 +280,7 @@
     }
    ],
    "quote": "Master of the Sea, commands extreme loyalty.",
-   "intro": [
-    {
-     "text": "Classic starting province: Greece.",
-     "rule": [
-      "15.i"
-     ]
-    }
-   ]
+   "intro": []
   },
   {
    "id": "germanicus",
@@ -395,12 +375,6 @@
      "rule": [
       "15.h",
       "15.f"
-     ]
-    },
-    {
-     "text": "Classic starting province: Germanica.",
-     "rule": [
-      "15.i"
      ]
     }
    ]

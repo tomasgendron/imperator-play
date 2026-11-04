@@ -793,3 +793,12 @@ body[data-online="guest"] #bSave,body[data-online="guest"] #bLoad,body[data-join
   .modal.genview .gvtxt{max-width:none;overflow:visible;padding-right:0}
 }
 @media (max-width:520px){.modal.genview .cardbig{display:none}.modal.genview .gvacts .pacts.turn{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* v31.1 Large Map 1: the province circles sit on the dots printed in the art (LargeMap1_centers.json) and fully cover them.
+   The printed dot is r 13.6 px of the 1280 px art (+1.2 px soft edge); the province names sit 17-22 art px above the dot centres.
+   So the circle is 2.5cqw wide (r 16 art px: covers the dot, clear of the names), floored at 16 px and with no 42 px cap
+   (a cap would leave the dot showing round the circle on a wide map). tests/ui/m19_largemap.py checks this at 3 window sizes. */
+body[data-map="large1"] .tok{width:max(16px,2.5cqw);height:max(16px,2.5cqw);font-size:clamp(9px,1.25cqw,20px)}
+body[data-map="large1"] .tok.wn{width:auto;min-width:max(16px,2.5cqw);padding:0 clamp(2px,.35cqw,5px)}
+.maprow{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:14px}.maprow>b{font-size:1.15em}
+body:not([data-screen="game"]) #bTables{display:none}
+@media (max-width:1180px){header #consoleLink{display:none}header .btn{padding-left:7px;padding-right:7px}}   /* v31.3: the top bar (with Hide/Show tables) fits at 1024 px */

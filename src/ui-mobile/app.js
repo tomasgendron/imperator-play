@@ -23,7 +23,7 @@ const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').re
 const attr = s => esc(s).replace(/'/g, '&#39;');
 const UI_KEY = 'imperator.ui';
 
-let data, assets, SND, MV;
+let data, assets, datasets, SND, MV;
 const C = createController({
   data: () => data, render: () => render(), playEvents: (evs, before) => playEvents(evs, before), freezeControls: () => freezeControls(),
   applied: ({ fromAi }) => { if (!fromAi && ['ask', 'list', 'moves', 'cards', 'assassin', 'cardTargets', 'ally', 'drawcall'].includes(sheetKind)) closeSheet(true); },
@@ -34,7 +34,7 @@ const C = createController({
 const { st, mineNow, human, schedule, autosave, makeSaveNow, spd, sleep } = C;
 const inGame = () => !!C.S && document.body.dataset.screen === 'game';
 const NETG = createGuest({
-  C, data: () => data, st: () => st(), inGame, render: () => render(), schedule: () => schedule(), toast: m => toast(m), sound: id => SND.play(id),
+  C, data: () => data, setMap: id => setMap(id), st: () => st(), inGame, render: () => render(), schedule: () => schedule(), toast: m => toast(m), sound: id => SND.play(id),
   freezeControls: () => freezeControls(), playEvents: (evs, before) => playEvents(evs, before), enter: () => enterGame(true), banner: () => renderNetBar(),
   // v30.5: every Join answer is shown and scrolled into view (a landscape phone, the iOS keyboard open); off the Join tab: a toast
   say: (m, bad = false) => { joinMsg = { m, bad }; const e = $('#mJoinStatus');
@@ -115,11 +115,11 @@ function wireViewLinks(root = document) {
 
 // ------------------------------------------------------------------ boot
 async function boot() {
-  try { ({ data, assets } = await loadGameData()); } catch (e) { document.body.innerHTML = `<pre style="padding:20px;color:#f0a35e;white-space:pre-wrap">Imperator could not load its data:\n${esc(e.message)}</pre>`; return; }
+  try { ({ data, assets, datasets } = await loadGameData()); } catch (e) { document.body.innerHTML = `<pre style="padding:20px;color:#f0a35e;white-space:pre-wrap">Imperator could not load its data:\n${esc(e.message)}</pre>`; return; }
   SND = createSound(assets);
   try { const b = await (await fetch('BUILD.json', { cache: 'no-store' })).json(); C.uiLabel = b.uiLabel ?? `v30 · ${b.stamp}`; } catch { C.uiLabel = 'v30 · (no BUILD.json)'; }
   document.documentElement.style.setProperty('--title', `url("${new URL(img('ui.title'), location.href).href}")`);
-  $('#mapImg').src = img('map'); $('#minimap').style.backgroundImage = `url("${img('map')}")`;
+  $('#mapImg').src = mapImgM(); $('#minimap').style.backgroundImage = `url("${mapImgM()}")`; document.body.dataset.map = data.mapId;
   $('#dieImg').src = img('dice.d10');
   const sp = data.map.map.tokenSpace;
   MV = createMapView({ wrap: $('#mapwrap'), inner: $('#mapinner'), mini: $('#minimap'), frame: $('#mmv'), aspect: sp.h / sp.w, onZoom: W => spreadTokens(W) });
@@ -149,6 +149,28 @@ async function boot() {
   }
 }
 
+// ------------------------------------------------------------------ v31.2: the map (21.a), as on the desktop: Small Map 1 or Large Map 1 (19
+// provinces, its own art; tokens on its printed dots). Q5: Large Map 1 is the default for 3 players, Small Map 1 for 2; Q11: a map the
+// player chose is kept when the player count changes. A save, a resumed game or a guest's game plays on its own map.
+const mapImgM = () => img(data.mapId && data.mapId !== 'small1' ? 'map.' + data.mapId : 'map');
+let mapPick = null;   // the start screen's manual choice; null = the default for the player count
+const autoMap = n => (n === 3 ? 'large1' : 'small1');
+const mapWanted = () => mapPick ?? autoMap(seats.length);
+/** Plays/draws on map `id`. Returns true when the map changed. */
+function setMap(id) {
+  if (!datasets?.[id] || data === datasets[id]) return false;
+  data = datasets[id]; const u = mapImgM(); $('#mapImg').src = u; $('#minimap').style.backgroundImage = `url("${u}")`;
+  document.body.dataset.map = data.mapId; nudge = {}; htmlCache.delete($('#tokens')); if ($('#tokens')) $('#tokens').innerHTML = '';
+  if (MV?.V?.W) spreadTokens(MV.V.W);
+  return true;
+}
+const fixedStartsNow = () => data.rules.fixedStarts?.[String(seats.length)] ?? null;
+function mapGrpHtml() {
+  const fx = fixedStartsNow();
+  return `<div class="grp" id="mapGrp"><h3>Map</h3><div class="seg" id="mapSeg" role="group" aria-label="Map">${Object.values(datasets ?? {}).map(d => `<button data-map="${d.mapId}" class="${data.mapId === d.mapId ? 'on' : ''}" aria-pressed="${data.mapId === d.mapId}">${esc(d.mapName)} <small>· ${d.provinces.length} provinces · ${d.rules.winPrestige}⭐</small></button>`).join('')}</div>
+    <p class="note" id="mapNote" style="margin:6px 2px 0">${mapPick ? 'Your choice' : `Default for ${seats.length} players`} · win with ${data.rules.winPrestige} Prestige${fx ? ` · <span id="fixedNote">${seats.length} players on ${esc(data.mapName)}: the starts are ${fx.map(id => esc(data.provincesById[id]?.name ?? id)).join(', ')}; after the roll-off the highest roller picks first (21.f)</span>` : ''}</p></div>`;
+}
+
 // ------------------------------------------------------------------ start screen (This phone / Host / Join, players, starts, decks, advanced)
 const SEAT_NAMES = ['Vidi', 'Marcus (AI)', 'Livia (AI)'];
 let seats = [{ name: 'Vidi', controller: 'human', general: 'random' }, { name: 'Marcus (AI)', controller: 'ai', general: 'random' }];
@@ -166,6 +188,8 @@ function hostSeats(on) {
 const autosaveText = () => { try { return localStorage.getItem('imperator.autosave'); } catch { return null; } };
 function renderStart() {
   document.body.dataset.screen = 'setup'; $('#app').hidden = true; const el = $('#start'); el.hidden = false; closeSheet(true);
+  if (playWhere !== 'join') setMap(mapWanted());   // v31.2
+  const fxs = fixedStartsNow(); if (fxs && startMode !== 'random') startMode = 'random';   // 21.f: fixed starts, picked in the game after the roll-off
   const gen = x => (x.general === 'random' ? null : data.generalsById[x.general]);
   const seatRow = (x, i) => { const g = gen(x);
     return `<div class="seat" data-seat="${i}" style="--c:var(--p${i + 1})"><button class="gc${g ? '' : ' rnd'}" data-gen="${i}" ${g ? `style="background-image:url('${attr(img('general.' + g.id))}')"` : ''} aria-label="Choose seat ${i + 1}'s general">${g ? '' : '?'}</button>
@@ -183,7 +207,8 @@ function renderStart() {
     ${playWhere === 'join' ? joinBoxHtml() : ''}
     ${online ? '' : `<div class="grp" id="seatsGrp"><h3>Players <span class="seg" style="padding:2px;border-radius:11px">${[2, 3].map(n => `<button data-n="${n}" class="${seats.length === n ? 'on' : ''}" style="min-width:52px" aria-pressed="${seats.length === n}">${n}</button>`).join('')}</span></h3>
       ${seats.map(seatRow).join('')}</div>
-    <div class="grp"><h3>Start provinces</h3><div class="seg" id="startSeg">${[['random', '🎲 Random'], ['selected', '🗺 Pick in the game']].map(([k, t]) => `<button data-mode="${k}" class="${startMode === k ? 'on' : ''}" aria-pressed="${startMode === k}">${t}</button>`).join('')}</div>
+    ${mapGrpHtml()}
+    <div class="grp"><h3>Start provinces</h3><div class="seg" id="startSeg">${[['random', fxs ? '🎲 Roll-off, then pick' : '🎲 Random'], ['selected', '🗺 Pick in the game']].map(([k, t]) => `<button data-mode="${k}" class="${startMode === k ? 'on' : ''}" aria-pressed="${startMode === k}" ${fxs && k === 'selected' ? 'disabled' : ''}>${t}</button>`).join('')}</div>
       ${startMode === 'selected' ? `<p class="note" style="margin:6px 2px 0">The game starts with a roll-off for turn order; then each player picks a start on the map, the last to move first.${seats.length === 2 && data.rules.twoPlayerSides ? ' With 2 players, the first to pick chooses West or East (4.g).' : ''}</p>` : ''}</div>`}
     <div class="grp"><h3>The decks</h3><div class="decks">${G.deckCatalog(data).map(d => `<button data-deck="${d.key}" style="background-image:url('${attr(img('deck.' + d.key))}')" aria-label="${attr(d.title)}: see every card"></button>`).join('')}<span>Tap a deck to see every card in it.</span></div></div>
     ${playWhere === 'join' ? '' : `<div class="grp" style="padding:0 9px"><button class="adv" id="mAdv" aria-expanded="${advOpen}">Advanced: seed, AI speed, sound <span>${advOpen ? '▾' : '▸'}</span></button>
@@ -205,6 +230,7 @@ function renderStart() {
   $$('input[name^=name]', el).forEach(inp => inp.oninput = () => { seats[+inp.name.slice(4)].name = inp.value; const rr = checkSetup(data, engineSeats(), startMode); $('#mErr').textContent = rr.ok ? '' : rr.errors.map(e => (e.seat !== null ? `Seat ${e.seat + 1}: ` : '') + e.message).join('\n'); if ($('#mStart')) $('#mStart').disabled = !rr.ok || playWhere === 'join' || (playWhere === 'host' && !NETH.readiness(seats).ok); if (playWhere === 'host') syncRoom(); });
   $$('[data-gen]', el).forEach(b => b.onclick = () => openGeneralPick(+b.dataset.gen));
   $$('[data-mode]', el).forEach(b => b.onclick = () => { startMode = b.dataset.mode; renderStart(); });
+  $$('[data-map]', el).forEach(b => b.onclick = () => { if (b.dataset.map === data.mapId) return; mapPick = b.dataset.map; SND.play('button_click'); renderStart(); });
   $$('[data-deck]', el).forEach(b => b.onclick = () => openDeck(b.dataset.deck));
   if ($('#mAdv')) $('#mAdv').onclick = () => { advOpen = !advOpen; renderStart(); };
   const sd = $('#mSeed'); if (sd) sd.oninput = () => { seed = sd.value; };
@@ -350,8 +376,10 @@ function startGame() {
 function loadFrom(text, errEl = null, { local = false } = {}) {
   const on = !local && onlineSave(text);
   if (on) { askResume(on); return true; }   // v30.4 (the desktop's M14): a hosted online game: reopen the room, or play it here
-  let ns; try { ns = G.readSave(text, data); } catch (e) { SND.play('error_denied'); if (errEl) errEl.textContent = e.message; else if (document.body.dataset.screen === 'setup') $('#mErr').textContent = e.message; else toast(e.message); return false; }
-  clearTimeout(C.aiTimer); leaveNet(); C.S = ns; enterGame(false); toast('Game loaded'); return true;
+  const mid = G.saveMapId(text); const md = datasets?.[mid];   // v31.2: a save plays on its own map (Large Map 1 too)
+  if (!md) { const m = `This save is for a map this build does not have (${mid}).`; SND.play('error_denied'); if (errEl) errEl.textContent = m; else if (document.body.dataset.screen === 'setup') $('#mErr').textContent = m; else toast(m); return false; }
+  let ns; try { ns = G.readSave(text, md); } catch (e) { SND.play('error_denied'); if (errEl) errEl.textContent = e.message; else if (document.body.dataset.screen === 'setup') $('#mErr').textContent = e.message; else toast(e.message); return false; }
+  clearTimeout(C.aiTimer); leaveNet(); setMap(mid); C.S = ns; enterGame(false); toast('Game loaded'); return true;
 }
 /** Leave whatever online game this page is in (a guest's link or a hosted room). */
 function leaveNet() { if (isHost()) NETH.leave(); else if (C.NET) NETG.leave(); joinBusy = false; joinLobby = null; joinMsg = null; hostErr = null; if (playWhere === 'host') { hostSeats(false); playWhere = 'local'; } }
@@ -368,7 +396,8 @@ function askResume(on) {
     const b = $('#raOnline'); b.disabled = true; b.textContent = 'Opening the room…';
     try {
       clearTimeout(C.aiTimer); if (C.NET) leaveNet();
-      const r = await NETH.resume(on, o => G.readSave(o, data));
+      const mid = G.saveMapId(on); if (!datasets?.[mid]) throw new Error(`This save is for a map this build does not have (${mid}).`);
+      const r = await NETH.resume(on, o => G.readSave(o, datasets[mid])); setMap(mid);   // v31.3: Large Map 1 online too
       playWhere = 'local'; closeSheet(true); enterGame(false); NETH.push();
       roomSheet(r.same ? 'The room is open again with the same code: the other players rejoin by themselves, or by opening the same link.'
         : `Room ${r.old} was taken, so the game has a new code. Send the other players this new link: their seats are kept.`, r.same ? null : r.old);
@@ -626,9 +655,15 @@ function reachFrom(id, legal) {
 // "Which province?" sheet instead of guessing; a tap on the map next to a single token opens that one.
 const TOK_GAP = 6, TAP_R = 34, TAP_TIE = 10;
 let nudge = {};
+// v31.2 (Large Map 1): the printed dots are 13.6 px (of the 1280 px art) in radius; a 44 px token covers one up to ~3.2x the art size,
+// so beyond that the tokens grow with the zoom (r = 16/1280 of the map, the desktop's size), and a nudge never moves a token so far
+// that its circle no longer covers its dot (cap = token r - dot r - 1). Small Map 1 is unchanged.
+const LARGE_DOT_R = 13.6 / 1280, LARGE_TOK_R = 16 / 1280;
+const tokR = W => (data.mapId === 'small1' ? 22 : Math.max(22, Math.round(LARGE_TOK_R * W)));
 function spreadTokens(W) {
-  if (!data) return; const sp = data.map.map.tokenSpace; const k = W / sp.w;
-  const T = data.provinces.map(d => ({ id: d.id, x: d.token.x * k, y: d.token.y * k, r: d.id === 'roma' ? 24 : 22, dx: 0, dy: 0 }));
+  if (!data) return; const sp = data.map.map.tokenSpace; const k = W / sp.w; const big = data.mapId !== 'small1'; const R = tokR(W);
+  const tk = $('#tokens'); if (tk) { if (big) tk.style.setProperty('--tk', 2 * R + 'px'); else tk.style.removeProperty('--tk'); }
+  const T = data.provinces.map(d => ({ id: d.id, x: d.token.x * k, y: d.token.y * k, r: d.id === 'roma' ? R + 2 : R, dx: 0, dy: 0 }));
   for (let it = 0; it < 8; it++) {
     let moved = false;
     for (let i = 0; i < T.length; i++) for (let j = i + 1; j < T.length; j++) {
@@ -639,8 +674,9 @@ function spreadTokens(W) {
     }
     if (!moved) break;
   }
-  const cap = v => Math.max(-30, Math.min(30, Math.round(v)));
-  nudge = {}; for (const t of T) if (Math.abs(t.dx) >= 0.5 || Math.abs(t.dy) >= 0.5) nudge[t.id] = [cap(t.dx), cap(t.dy)];
+  const lim = big ? Math.max(0, Math.floor(R - LARGE_DOT_R * W - 1)) : 30;
+  const cap = (dx, dy) => { const d = Math.hypot(dx, dy); const f = d > lim ? lim / d : 1; return [Math.round(dx * f), Math.round(dy * f)]; };
+  nudge = {}; for (const t of T) if (Math.abs(t.dx) >= 0.5 || Math.abs(t.dy) >= 0.5) nudge[t.id] = big ? cap(t.dx, t.dy) : [Math.max(-30, Math.min(30, Math.round(t.dx))), Math.max(-30, Math.min(30, Math.round(t.dy)))];
   $$('#tokens .tok').forEach(el => { const n = nudge[el.dataset.id]; el.style.translate = n ? `${n[0]}px ${n[1]}px` : ''; });
 }
 function tapCandidates(x, y) {
@@ -1280,6 +1316,7 @@ async function playEvents(events, before = null) {
       }
       case 'displeasedDrawn': await drawSheet('displeased', e.pub.def, e.pub.player, 'draws from Rome Is Displeased'); break;
       case 'cardDrawn': {
+        if (e.pub.autoPlay) break;   // v31.3: an auto-played Prestige / Garrison card is shown by its cardPlayed popup
         const def = e.pub.def ?? (e.priv && e.pub.player === C.viewer ? e.priv.def : null);
         if (def && (G.isHuman(s, e.pub.player) || e.pub.deck !== 'game')) await drawSheet(e.pub.deck, def, e.pub.player, `draws a ${e.pub.deck === 'game' ? 'Game' : 'Resource'} card`);
         else toast(`${pn(e.pub.player)} draws a ${e.pub.deck === 'game' ? 'Game Card (hidden)' : e.pub.deck + ' card'}`);

@@ -4,6 +4,7 @@
 // Descriptor: { type, playerId, label, action, range? } where range = { field, min, max } marks a numeric parameter the console may vary
 // (the `action` carries a sensible default, the maximum).
 import { applyAction } from './apply.js';
+import { sideLabel } from './setup.js';
 import { topFrame } from './core.js';
 import * as S from './selectors.js';
 import { attackTargets } from './battle.js';
@@ -46,7 +47,7 @@ export function legalActions(state, data) {
         add({ type: 'CHOOSE_GENERAL', general: 'random' }, 'Choose a random general');
         break;
       }
-      case 'setupSide': for (const side of ['west', 'east']) add({ type: 'CHOOSE_SIDE', side }, `Start in the ${side === 'west' ? 'West (Britain, Gaul, Iberia, Mauretania)' : 'East (Dalmacia, Macedonia, Greece, Parthia, Egypt)'}; the other player gets the other side (4.g)`); break;
+      case 'setupSide': for (const side of ['west', 'east']) add({ type: 'CHOOSE_SIDE', side }, `Start in the ${sideLabel(data, side)}; the other player gets the other side (4.g)`); break;
       case 'setupStartProvince': for (const id of data.provinceIds) add({ type: 'CHOOSE_START_PROVINCE', province: id }, `Start in ${nm(data, id)}`); break;
       case 'draw': add({ type: 'DRAW_CARD' }, `Draw a ${f.deck === 'displeased' ? 'Rome Is Displeased' : f.deck === 'resource' ? 'Resource' : 'Game'} card`); break;
       case 'placeTroops': {

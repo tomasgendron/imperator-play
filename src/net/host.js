@@ -27,6 +27,8 @@ export class HostRoom {
     transport.onMessage((p, m) => this.receive(p, m));
     transport.onPeerClose(p => { const s = this.bySeatPeer(p); if (s) { s.connected = false; s.peer = null; this.changed(s.i); } });
   }
+  /** v31.3: `data` may be a function (the page's current map: Small Map 1 or Large Map 1, chosen after the room opened). */
+  dataNow() { return typeof this.data === 'function' ? this.data() : this.data; }
   bySeatPeer(p) { return this.seats.find(s => s.peer === p) ?? null; }
   /** `connected` = the seat is playable (a guest seat: its guest answers). `guest` = an AI seat that once had a guest: whether that
    *  guest is connected now (M14: the host may give the seat back). */
@@ -151,8 +153,8 @@ export class HostRoom {
     full = full || s.sentTo == null || s.sentTo > to;
     const from = full ? 0 : s.sentTo;
     this.transport.send(s.peer, msg('update', {
-      seq: step.seq, by: step.by ?? null, view: seatView(step.state, this.data, pid), events: seatEvents(log, from, pid), from, to, full,
-      legal: s.kind === 'remote' ? humanLegal(step.state, this.data, pid) : [], you: { seat: s.i, playerId: pid, ai: s.kind === 'ai' }, seats: this.lobby().seats, ...(resync ? { resync: true } : {}),
+      seq: step.seq, by: step.by ?? null, view: seatView(step.state, this.dataNow(), pid), events: seatEvents(log, from, pid), from, to, full,
+      legal: s.kind === 'remote' ? humanLegal(step.state, this.dataNow(), pid) : [], you: { seat: s.i, playerId: pid, ai: s.kind === 'ai' }, seats: this.lobby().seats, ...(resync ? { resync: true } : {}),
     }));
     s.sentTo = to;
   }

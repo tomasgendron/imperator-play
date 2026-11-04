@@ -14,6 +14,28 @@ export const PLAY_WINDOWS = ['battleCards', 'ownActionsStep', 'revoltResponse', 
 export const ON_DRAW = ['keep', 'autoPlay', 'autoPlayInPlay', 'applyNow', 'buildOrSave'];
 const PROVINCE_STATUS_REWARD = ['troop', 'gold'];
 
+// v31 (rules 21.a): the maps this build knows. The province count is per map; map.json (no `map.id`) is Small Map 1.
+export const MAPS = { small1: { provinces: 13, name: 'Small Map 1' }, large1: { provinces: 19, name: 'Large Map 1' } };
+export const DEFAULT_MAP = 'small1';
+/** The id of a raw map file (`map.id`; absent = Small Map 1). */
+export const mapIdOf = rawMap => rawMap?.map?.id ?? DEFAULT_MAP;
+// ruleset keys a map file may ADD (every other override must name an existing ruleset key)
+const MAP_ONLY_RULES = ['fixedStarts', 'fixedStartPickOrder'];
+
+/** ruleset.json values with the map file's `rules` overrides on top (21.a: all rules apply except where section 21 says otherwise). */
+export function mergedRuleValues(raw) {
+  const out = { ...(raw.ruleset?.values || {}) };
+  for (const [k, e] of Object.entries(raw.map?.rules || {})) out[k] = e;
+  return out;
+}
+
+// shortest path over land + sea (the same graph as selectors.distances, Roma and Carthage may be passed, Q55)
+function bfs(provinces, from) {
+  const by = Object.fromEntries(provinces.map(p => [p.id, p])); const d = { [from]: 0 }; const q = [from];
+  while (q.length) { const x = q.shift(); for (const y of [...(by[x]?.land || []), ...(by[x]?.sea || [])]) if (d[y] === undefined) { d[y] = d[x] + 1; q.push(y); } }
+  return d;
+}
+
 const isInt = n => Number.isInteger(n);
 const isStr = s => typeof s === 'string' && s.length > 0;
 
@@ -28,38 +50,60 @@ export function validateData(raw, opts = {}) {
   };
 
   // ---- ruleset
-  const rs = raw.ruleset?.values;
-  if (!rs) err('ruleset.json', null, 'missing `values`');
-  else for (const [k, e] of Object.entries(rs)) {
+  const base = raw.ruleset?.values;
+  if (!base) err('ruleset.json', null, 'missing `values`');
+  else for (const [k, e] of Object.entries(base)) {
     if (!e || !('value' in e)) err('ruleset.json', k, 'entry needs a `value`');
     if (!e || !isStr(e.rule)) err('ruleset.json', k, 'entry needs a `rule` label string');
   }
+  const mapId = mapIdOf(raw.map); const mapFile = mapId === DEFAULT_MAP ? 'map.json' : `maps/${mapId}.json`;
+  for (const [k, e] of Object.entries(raw.map?.rules || {})) {   // v31: per-map rule overrides (section 21)
+    if (base && !(k in base) && !MAP_ONLY_RULES.includes(k)) err(mapFile, k, 'rule override for an unknown ruleset key');
+    if (!e || !('value' in e)) err(mapFile, k, 'override needs a `value`');
+    if (!e || !isStr(e.rule)) err(mapFile, k, 'override needs a `rule` label string');
+  }
+  const rs = mergedRuleValues(raw);
   const R = k => rs?.[k]?.value;
 
-  // ---- map
+  // ---- map (v31: the province count is per map, 21.a)
   const provinces = raw.map?.provinces;
   const pids = new Set();
-  if (!Array.isArray(provinces) || provinces.length !== 13) err('map.json', null, 'needs exactly 13 provinces');
+  const want = MAPS[mapId]?.provinces;
+  if (!want) err(mapFile, null, `unknown map id "${mapId}" (known: ${Object.keys(MAPS).join(', ')})`);
+  else if (!Array.isArray(provinces) || provinces.length !== want) err(mapFile, null, `needs exactly ${want} provinces (${MAPS[mapId].name})`);
   else {
     for (const p of provinces) {
-      if (!isStr(p.id)) { err('map.json', null, 'province without id'); continue; }
-      if (pids.has(p.id)) err('map.json', p.id, 'duplicate id');
+      if (!isStr(p.id)) { err(mapFile, null, 'province without id'); continue; }
+      if (pids.has(p.id)) err(mapFile, p.id, 'duplicate id');
       pids.add(p.id);
     }
     for (const p of provinces) {
-      if (!isStr(p.name)) err('map.json', p.id, 'missing name');
-      if (!p.token || typeof p.token.x !== 'number' || typeof p.token.y !== 'number') err('map.json', p.id, 'token {x,y} required');
-      if (typeof p.startingEligible !== 'boolean') err('map.json', p.id, '`startingEligible` boolean required');
-      if (p.kind !== 'roma' && !PROVINCE_STATUS_REWARD.includes(p.defaultReward)) err('map.json', p.id, '`defaultReward` must be troop|gold');
+      if (!isStr(p.name)) err(mapFile, p.id, 'missing name');
+      if (!p.token || typeof p.token.x !== 'number' || typeof p.token.y !== 'number') err(mapFile, p.id, 'token {x,y} required');
+      if (typeof p.startingEligible !== 'boolean') err(mapFile, p.id, '`startingEligible` boolean required');
+      if (p.kind !== 'roma' && !PROVINCE_STATUS_REWARD.includes(p.defaultReward)) err(mapFile, p.id, '`defaultReward` must be troop|gold');
       for (const kind of ['land', 'sea']) for (const q of p[kind] || []) {
         const other = provinces.find(x => x.id === q);
-        if (!other) err('map.json', p.id, `${kind} neighbour ${q} does not exist`);
-        else if (!(other[kind] || []).includes(p.id)) err('map.json', p.id, `${kind} link to ${q} is not symmetric`);
+        if (!other) err(mapFile, p.id, `${kind} neighbour ${q} does not exist`);
+        else if (!(other[kind] || []).includes(p.id)) err(mapFile, p.id, `${kind} link to ${q} is not symmetric`);
       }
     }
     const notEligible = provinces.filter(p => !p.startingEligible).map(p => p.id).sort().join(',');
     const excluded = [...(R('startProvinceExcluded') || [])].sort().join(',');
-    if (notEligible !== excluded) err('map.json', null, `startingEligible=false (${notEligible}) must equal ruleset startProvinceExcluded (${excluded})`);
+    if (notEligible !== excluded) err(mapFile, null, `startingEligible=false (${notEligible}) must equal ruleset startProvinceExcluded (${excluded})`);
+    // 16.h, 21.c: every number goes to the same count of non-Roma provinces
+    const pn = R('provinceNumbers'); const regular = provinces.filter(p => p.kind !== 'roma').length;
+    if (!pn || !Array.isArray(pn.values) || !isInt(pn.timesEach) || pn.values.length * pn.timesEach !== regular) err(mapFile, null, `provinceNumbers (${pn?.values?.length} numbers x ${pn?.timesEach}) must cover the ${regular} provinces besides Roma (16.h, 21.c)`);
+    const minD = R('startProvinceMinDistance') ?? 0;
+    const eligible = id => provinces.find(p => p.id === id)?.startingEligible === true;
+    const sides = R('twoPlayerSides');   // 4.g, 21.g
+    if (sides) for (const k of ['west', 'east']) for (const id of sides[k] || []) if (!eligible(id)) err(mapFile, null, `twoPlayerSides.${k}: ${id} is not a start-eligible province of this map`);
+    for (const [n, ids] of Object.entries(R('fixedStarts') || {})) {   // 21.f: fixed starts exist, are eligible and keep 20.o
+      if (!Array.isArray(ids) || ids.length !== Number(n) || new Set(ids).size !== ids.length) { err(mapFile, null, `fixedStarts.${n} needs ${n} different provinces`); continue; }
+      for (const id of ids) if (!eligible(id)) err(mapFile, null, `fixedStarts.${n}: ${id} is not a start-eligible province`);
+      for (const [i, a] of ids.entries()) { const d = bfs(provinces, a); for (const b of ids.slice(i + 1)) if (!(d[b] >= minD)) err(mapFile, null, `fixedStarts.${n}: ${a}-${b} is ${d[b]} step(s) apart, 20.o needs ${minD}`); }
+    }
+    if (R('fixedStartPickOrder') !== undefined && !['rollOffHighestFirst', 'reverseTurnOrder'].includes(R('fixedStartPickOrder'))) err(mapFile, null, 'fixedStartPickOrder must be rollOffHighestFirst or reverseTurnOrder');
   }
 
   // ---- generals
@@ -149,11 +193,12 @@ export function buildData(raw, opts = {}) {
   const errs = validateData(raw, opts);
   if (errs.length) throw new Error('Invalid game data:\n  ' + errs.join('\n  '));
   const rules = {};
-  for (const [k, e] of Object.entries(raw.ruleset.values)) rules[k] = e.value;
+  for (const [k, e] of Object.entries(mergedRuleValues(raw))) rules[k] = e.value;
   const provinces = raw.map.provinces;
   const cardDefs = DECKS.flatMap(d => raw.cards[d].cards);
+  const mapId = mapIdOf(raw.map);
   const data = {
-    ruleset: raw.ruleset, rules, map: raw.map, provinces,
+    ruleset: raw.ruleset, rules, map: raw.map, provinces, mapId, mapName: MAPS[mapId].name,
     provincesById: Object.fromEntries(provinces.map(p => [p.id, p])),
     provinceIds: provinces.map(p => p.id).sort(),
     generals: raw.generals.generals,

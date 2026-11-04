@@ -2,14 +2,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildData, DECKS } from './data.js';
+import { buildData, DECKS, DEFAULT_MAP } from './data.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-export function readRawData(root = ROOT) {
+/** v31: `map` = 'small1' (data/map.json, the default) or another id (data/maps/<id>.json, rules 21.a). */
+export function readRawData(root = ROOT, { map = DEFAULT_MAP } = {}) {
   const j = rel => JSON.parse(fs.readFileSync(path.join(root, 'data', rel), 'utf8'));
   return {
-    ruleset: j('ruleset.json'), map: j('map.json'), generals: j('generals.json'), items: j('items.json'),
+    ruleset: j('ruleset.json'), map: j(map === DEFAULT_MAP ? 'map.json' : `maps/${map}.json`), generals: j('generals.json'), items: j('items.json'),
     cards: Object.fromEntries(DECKS.map(d => [d, j(`cards/${d}.json`)])),
   };
 }
@@ -24,6 +25,6 @@ export function readRuleLabels(root = ROOT) {
   return labels;
 }
 
-export function loadData(root = ROOT, { checkRules = true } = {}) {
-  return buildData(readRawData(root), checkRules ? { ruleLabels: readRuleLabels(root) } : {});
+export function loadData(root = ROOT, { checkRules = true, map = DEFAULT_MAP } = {}) {
+  return buildData(readRawData(root, { map }), checkRules ? { ruleLabels: readRuleLabels(root) } : {});
 }

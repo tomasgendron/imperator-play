@@ -111,7 +111,14 @@ const defKind = (state, target) => {
 export const defForce = (state, b) => (b.def.kind === 'natives' ? state.provinces[b.target].native.present ?? 0 : state.provinces[b.target].troops);
 function setDefForce(state, b, n) {
   const p = state.provinces[b.target];
+  const before = defForce(state, b);
   if (b.def.kind === 'natives') p.native.present = n; else p.troops = n;
+  // Horn troops (18.y) die after the province's own garrison, so survivors can be sent home
+  const horn = b.def.horn;
+  if (horn && n < before) {
+    const home = Math.max(0, before - horn.left);
+    horn.left = Math.max(0, horn.left - Math.max(0, before - n - home));
+  }
 }
 export const attForce = b => b.att.own + b.att.borrowed;
 export const wallsActive = (state, data, b) => {
@@ -215,8 +222,10 @@ define('CHOOSE_BATTLE_CARDS', {
     const { state, data } = ctx; const b = state.battle; const f = topFrame(state);
     const uids = pickCards(data, battleCardsHeld(state, data, f.player), a.cards ?? {});
     popFrame(ctx);
-    if (f.role === 'attacker') b.att.cards = uids; else { b.def.cards = uids; }
-    emit(ctx, uids.length ? 'battleCardsCommitted' : 'battleCardsSkipped', { actor: f.player, rule: '18.i', pub: { battleId: b.id, player: f.player, role: f.role, n: uids.length, reason: uids.length ? undefined : 'none' } });
+    const defs = uids.map(uid => state.cards[uid].def);
+    if (f.role === 'attacker') { b.att.cards = uids; b.att.revealed = defs; }   // names, not uids: the defender may see which cards are committed (v31.4)
+    else b.def.cards = uids;
+    emit(ctx, uids.length ? 'battleCardsCommitted' : 'battleCardsSkipped', { actor: f.player, rule: '18.i', pub: { battleId: b.id, player: f.player, role: f.role, n: uids.length, ...(defs.length ? { cards: defs } : { reason: 'none' }) } });
   },
 });
 define('CHOOSE_PERK', {
@@ -243,6 +252,7 @@ define('CALL_REINFORCEMENTS', {
     emit(ctx, 'cardPlayed', { actor: f.player, rule: '18.y', pub: { battleId: b.id, player: f.player, def: 'horn_of_titus_pullus', uid: f.card, source: 'defenceAnnounced' } });
     changeTroops(ctx, a.from, -a.troops); changeTroops(ctx, b.target, a.troops, 'reinforcements');
     if (a.withGeneral) { pl.general.at = b.target; b.def.general = true; }
+    b.def.horn = { from: a.from, sent: a.troops, left: a.troops, general: !!a.withGeneral };
     emit(ctx, 'reinforcementsCalled', { actor: f.player, rule: '18.y', pub: { battleId: b.id, player: f.player, from: a.from, to: b.target, troops: a.troops, general: !!a.withGeneral } });
   },
 });
@@ -276,6 +286,51 @@ define('PLACE_SURVIVORS', {
     if (a.back) { changeTroops(ctx, f.target, -a.back); changeTroops(ctx, f.origin, a.back); }
     if (f.general && a.generalBack) mustPlayer(ctx.state, f.player).general.at = f.origin;   // the attacker's choice after a win (17.y)
     emit(ctx, 'survivorsPlaced', { actor: f.player, rule: '17.y', pub: { player: f.player, target: f.target, stay: f.own - a.back, back: a.back, origin: f.origin, general: !!f.general, generalBack: !!(f.general && a.generalBack) } });
+  },
+});
+/** Where `pid`'s general can join the battle in progress: the attacker's origin, or the defender's battle province, along a chain of their own provinces (15.j, 17.z). */
+export function summonGeneralTarget(state, data, pid) {
+  const b = state.battle;
+  if (!b || b.mode !== 'attack') return null;
+  const side = pid === b.att.player ? 'att' : pid === b.def.player ? 'def' : null;
+  if (!side || b[side].general) return null;
+  const pl = playerOf(state, pid);
+  const at = pl?.general?.at;
+  if (!at || !S.generalPerksActive(state, pid)) return null;
+  const dest = side === 'att' ? b.att.from : b.target;
+  if (!dest || !S.controls(state, pid, dest)) return null;
+  if (at === dest) return { side, dest, from: at, already: true };
+  const route = S.moveRoute(state, data, pid, at, dest);
+  if (!route) return null;
+  return { side, dest, from: at, path: route.path, already: false };
+}
+define('SUMMON_GENERAL', {
+  frame: ['roll', 'battleContinue', 'chooseBattleCards', 'chooseBorrow', 'choosePerk', 'responseWindow'],
+  run(ctx, a) {
+    const { state, data } = ctx; const b = state.battle;
+    const opt = summonGeneralTarget(state, data, a.playerId);
+    check(opt, 'NO_ROUTE', 'Your general is already in the battle, or no chain of your provinces reaches it (15.j, 17.z).', '15.j');
+    const pl = mustPlayer(state, a.playerId);
+    const from = pl.general.at;
+    pl.general.at = opt.dest;
+    b[opt.side].general = true;
+    if (opt.side === 'att' && !b.rounds.length && perksOn(state, a.playerId, 'scipio') && (b.att.perk === null || b.att.perk === 'none')) {
+      b.att.perk = 'extraDie';
+      emit(ctx, 'perkChosen', { actor: a.playerId, rule: '15.c', pub: { battleId: b.id, player: a.playerId, perk: 'extraDie', auto: true } });
+    }
+    emit(ctx, 'generalSummoned', { actor: a.playerId, rule: '15.j', pub: { battleId: b.id, player: a.playerId, side: opt.side === 'att' ? 'attacker' : 'defender', from, to: opt.dest, general: pl.general.id } });
+  },
+});
+define('RETURN_REINFORCEMENTS', {
+  frame: ['returnReinforcements'],
+  run(ctx, a) {
+    const { state, data } = ctx; const f = topFrame(state);
+    check(isInt(a.back) && a.back >= 0 && a.back <= f.max, 'BAD_TROOPS', `Send 0 to ${f.max} troop(s) back to ${nm(data, f.from)} (18.y).`, '18.y');
+    check(!a.generalBack || f.general, 'GENERAL_NOT_THERE', 'Your general did not come with the Horn (18.y).', '18.y');
+    popFrame(ctx);
+    if (a.back) { changeTroops(ctx, f.target, -a.back); changeTroops(ctx, f.from, a.back); }
+    if (f.general && a.generalBack) mustPlayer(state, f.player).general.at = f.from;
+    emit(ctx, 'reinforcementsReturned', { actor: f.player, rule: '18.y', pub: { player: f.player, from: f.target, to: f.from, back: a.back, stay: Math.max(0, f.left - a.back), generalBack: !!(f.general && a.generalBack) } });
   },
 });
 for (const t of ['APPLY_PLUS_ONE', 'BATTLE_CARDS_DONE']) define(t, { run: () => fail('OBSOLETE', `${t} no longer exists: ${t === 'APPLY_PLUS_ONE' ? "Scipio's +1 is placed automatically (15.g, 2026-10-21)" : 'battle cards are committed before round 1 (18.i, Q17)'}.`) });
@@ -332,7 +387,7 @@ function advance(ctx) {
       if (b.att.cards === null) {
         const held = battleCardsHeld(state, data, b.att.player);
         if (Object.keys(held).length) { pushFrame(ctx, { kind: CARDS, player: b.att.player, role: 'attacker', battleId: b.id, held: Object.fromEntries(Object.entries(held).map(([k, v]) => [k, v.length])) }); return; }
-        b.att.cards = [];
+        b.att.cards = []; b.att.revealed = [];
       }
       b.stage = 'perk'; return;
     case 'perk':
@@ -485,6 +540,18 @@ defineRoll('battleRound', (ctx, f) => {
 
 // ------------------------------------------------------------------ end of a battle (PLAN 4.4 conquest, Q28, Q29)
 const healAt = state => state.turn.number + state.players.filter(p => !p.out).length;   // one full round (17.v)
+/** After a held defence, Horn troops that are still alive may go home. The player chooses; 0 keeps them (18.y). */
+function hornReturnFrame(state, data, b, outcome) {
+  const horn = b.def?.horn; const D = b.def.player;
+  if (!horn || !D || outcome === 'conquered') return null;
+  if (!S.controls(state, D, b.target) || !S.controls(state, D, horn.from)) return null;
+  const p = state.provinces[b.target];
+  const floor = p.status === 'held' ? data.rules.romaFloorOnHold : data.rules.provinceFloor;
+  const max = Math.min(horn.left, Math.max(0, p.troops - floor));
+  const general = !!(horn.general && generalOf(state, D)?.at === b.target);
+  if (max < 1 && !general) return null;
+  return { kind: 'returnReinforcements', player: D, from: horn.from, target: b.target, max, left: horn.left, sent: horn.sent, general, options: { min: 0, max, general } };
+}
 function finish(ctx, outcome) {
   const { state, data } = ctx; const b = state.battle;
   if (b.mode === 'decree') { finishDecree(ctx, b, outcome); return; }
@@ -514,6 +581,8 @@ function finish(ctx, outcome) {
   }
   if (state.phase !== 'turn') { state.battle = null; return; }
   if (b.att.borrowedDead > 0) after.unshift(extraRevoltFrame(ctx, A, exclude));
+  const hornBack = hornReturnFrame(state, data, b, outcome);
+  if (hornBack) after.push(hornBack);   // on top: the defender chooses before the draw
   state.battle = null;
   for (const f of after) if (f) pushFrame(ctx, f);
 }

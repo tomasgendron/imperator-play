@@ -349,7 +349,7 @@
     "scope": "player",
     "onDuplicate": "reshuffleAndRedraw"
    },
-   "text": "When your province is attacked, before the first roll: call reinforcements from ONE bordering province of yours (an allied one too, but from an ally only your own troops there, never its natives; no Road needed), any number of troops (no cap) leaving at least 1 behind (a held Roma keeps its 10, and Roma never goes above 20); your general may come. They fight as defenders and stay if the defence holds. Only one Horn per battle.",
+   "text": "When your province is attacked, before the first roll: call reinforcements from ONE bordering province of yours (an allied one too, but from an ally only your own troops there, never its natives; no Road needed), any number of troops (no cap) leaving at least 1 behind (a held Roma keeps its 10, and Roma never goes above 20); your general may come. They fight as defenders. If the defence holds, you choose whether the survivors go back where they came from or stay. Only one Horn per battle.",
    "art": {
     "front": "cards/game/horn_of_titus_pullus.png"
    },
@@ -364,7 +364,8 @@
      "leaveAtLeast": 1,
      "oncePerBattle": true,
      "generalMayCome": true,
-     "stayAfterDefence": true
+     "stayAfterDefence": true,
+     "returnOptional": true
     }
    }
   }

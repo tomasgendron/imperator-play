@@ -808,6 +808,15 @@ async function playEvents(events, before = null) {
         break;
       }
       case 'attackDeclared': startBattleView(e, s, before); drawArrow(e.pub.from, e.pub.target, '#ffdf7a'); break;
+      case 'generalSummoned': {
+        if (bv) {
+          const name = data.generalsById[e.pub.general]?.name ?? 'General';
+          const line = `General ${name} summoned to the battle`;
+          if (e.pub.side === 'defender') bv.dGen = line; else bv.aGen = line;
+          renderPerks();
+        }
+        break;
+      }
       case 'decreeBattle': clearBattle(); bv = { title: `SENATE DECREE · ${e.pub.legions} legion(s) attack Carthage`, att: 'Senate legions', attCls: 'p1', def: 'Carthage', defCls: 'nat', rounds: [], aCount: e.pub.legions, dCount: e.pub.carthage, borrowed: 0, attId: null, defId: null, aGen: 'no general (Senate legions, 16.n)', dGen: 'natives: no general', perks: { a: new Map(), d: new Map() }, decree: true }; renderBattleHead(); openBattlePop(); break;
       case 'decreeResolved': if (bv?.decree && $('#ovBattle').classList.contains('on')) { const r = e.pub; $('#bSum').className = 'b-sum on'; $('#bSum').innerHTML = `<b>${r.result === 'destroyed' ? 'CARTHAGE DESTROYED' : r.result === 'held' ? 'CARTHAGE HOLDS' : 'NO BATTLE'}</b>${r.result === 'destroyed' ? ` · ${r.survivors} legion(s) return to Roma` : r.result === 'held' ? ` · Carthage has ${r.carthage} troop(s) left` : ''}`; await battleResult(null, false); } break;
       case 'battleStarted': if (!bv) startBattleView({ pub: { player: s.battle?.att.player, from: s.battle?.att.from, target: e.pub.target, general: s.battle?.att.general } }, s, before);
@@ -923,7 +932,12 @@ async function flipCard(deck, def, caption, mine = true, who = null) {
 function flashToken(id) { const t = $(`.tok[data-id="${id}"]`); if (t) { t.classList.remove('hit'); void t.offsetWidth; t.classList.add('hit'); } }
 
 // ------------------------------------------------------------------ battle panel (animated from events)
-function clearBattle() { bv = null; $('#bTitle').textContent = 'No battle yet'; $('#bChips').innerHTML = ''; $('#rt tbody').innerHTML = ''; $('#bSum').className = 'b-sum'; $('#bSum').innerHTML = ''; ['#aCount', '#dCount'].forEach(x => { $(x).textContent = '-'; }); ['#aTok', '#dTok', '#aCards', '#dCards'].forEach(x => { $(x).innerHTML = ''; }); $('#aNote').innerHTML = '&nbsp;'; $('#dNote').innerHTML = '&nbsp;'; ['#aGen', '#dGen', '#aPerks', '#dPerks'].forEach(x => { $(x).innerHTML = ''; }); $('#bDot').style.display = 'none'; }
+function clearBattle() { bv = null; $('#bTitle').textContent = 'No battle yet'; $('#bChips').innerHTML = ''; $('#rt tbody').innerHTML = ''; $('#bSum').className = 'b-sum'; $('#bSum').innerHTML = ''; ['#aCount', '#dCount'].forEach(x => { $(x).textContent = '-'; }); ['#aTok', '#dTok', '#aCards', '#dCards'].forEach(x => { $(x).innerHTML = ''; }); $('#aNote').innerHTML = '&nbsp;'; $('#dNote').innerHTML = '&nbsp;'; ['#aGen', '#dGen', '#aPerks', '#dPerks'].forEach(x => { $(x).innerHTML = ''; }); $('#bDot').style.display = 'none'; const inc = $('#incoming'); if (inc) { inc.hidden = true; inc.innerHTML = ''; } }
+function incomingHtml(viewer) {
+  const info = G.incomingAttack(st(), data, viewer ?? C.viewer);
+  if (!info) return '';
+  return `<b class="n" id="attTroops">${esc(info.troopText)}</b> attacking ${info.you ? 'you' : esc(G.nameOf(st(), info.defender))} from ${esc(prov(info.from))}. <span class="cards" id="attCards">Cards against ${info.you ? 'you' : esc(G.nameOf(st(), info.defender))}: ${esc(info.cardText)}.</span>`;
+}
 function startBattleView(e, s, before = null) {
   clearBattle();
   const t = e.pub.target, defP = e.pub.defender ?? s.provinces[t]?.owner ?? null;
@@ -977,6 +991,8 @@ async function battleResult(sum, sticky) {
 function renderBattleHead(tokens = false) {
   if (!bv) return;
   $('#bDot').style.display = 'inline-block';
+  const inc = $('#incoming');
+  if (inc) { const html = incomingHtml(bv.defId); if (html) { inc.hidden = false; inc.innerHTML = html; } else { inc.hidden = true; inc.innerHTML = ''; } }
   $('#bTitle').textContent = bv.title;
   $('#aName').textContent = bv.att + ' (attacker)'; $('#aName').style.color = `var(--${bv.attCls})`;
   $('#dName').textContent = bv.def; $('#dName').style.color = bv.defCls === 'nat' ? 'var(--native)' : `var(--${bv.defCls})`;
@@ -1110,7 +1126,8 @@ function renderTop() {
 function renderPhase(legal) {
   const s = st(); const f = topFrame(s); const a = s.phase === 'turn' ? s.turn.activePlayerId : whoActs(s);
   $('#phasebar').style.setProperty('--pc', `var(--${col(a)})`);
-  $('#phWho').innerHTML = s.phase === 'setup' ? 'Setup' : s.phase === 'finished' ? `Game over: ${esc(pn(s.winner))} wins` : `${esc(pn(a))}'s turn<span class="turnflag" style="background:var(--${col(a)})">turn ${s.turn.number}</span>`;
+  const used = s.phase === 'turn' ? G.actionsUsedLabel(s, data) : null;
+  $('#phWho').innerHTML = s.phase === 'setup' ? 'Setup' : s.phase === 'finished' ? `Game over: ${esc(pn(s.winner))} wins` : `${esc(pn(a))}'s turn<span class="turnflag" style="background:var(--${col(a)})">turn ${s.turn.number}</span>${used ? `<span class="actcount" id="actCount" title="Actions used this turn">${used}</span>` : ''}`;
   const si = G.stepIndex(s);
   $('#phChips').innerHTML = s.phase === 'setup' ? '<span class="chip cur"><b>0</b>Setup</span>' : G.STEP_CHIPS.map(([, n], i) => `<span class="chip ${i < si ? 'done' : i === si ? 'cur' : ''}"><b>${i < si ? '✓' : i + 1}</b>${n}</span>`).join('<span class="arrow">▸</span>');
   const w = whoActs(s); let html = ''; let prompt = esc(G.describePrompt(s, data));
@@ -1120,7 +1137,7 @@ function renderPhase(legal) {
   } else if (!f) {
     // batch 4 item 4: the turn's action buttons sit in the active player's panel; the phase bar only hints
     html = `<span class="small phhint">◂ Your actions: in ${esc(pn(w))}'s panel, on the left</span>`;
-    prompt = `<b class="you">${esc(pn(w))}</b>: actions ${s.turn.actionsUsed}/2 used. Attack, Ally or Move, buy or build, play a card, or click a province. ${ab ? '<em>Builder open: see the Builder tab.</em>' : ''}`;
+    prompt = `<b class="you">${esc(pn(w))}</b>: actions <b class="actcount">${G.actionsUsedLabel(s, data)}</b>. Attack, Ally or Move, buy or build, play a card, or click a province. ${ab ? '<em>Builder open: see the Builder tab.</em>' : ''}`;
   } else {
     // M7 item 10: the roll and draw buttons sit in the active player's panel, next to the die
     if (f.kind === 'roll' && (f.purpose === 'battleRound' || f.purpose === 'loyalty')) html = `<span class="small phhint">▸ in the battle window</span>`;
@@ -1248,6 +1265,7 @@ function openCardMenu(legal) {
     + hand.filter(c => !byUid[c.uid] && data.cardDefsById[s.cards[c.uid].def]?.type !== 'battle').filter((c, i, a) => a.findIndex(x => s.cards[x.uid].def === s.cards[c.uid].def) === i).map(c => { const def = s.cards[c.uid].def; const why = G.cardBlockReason(s, data, me, c.uid); if (!why || Object.keys(byUid).some(u => s.cards[u].def === def)) return ''; return `<div class="btn off cardoff" data-off="${c.uid}"><img src="${img('card.' + def)}" alt="" style="height:64px;border-radius:4px;vertical-align:middle;margin-right:6px;filter:grayscale(1)">${esc(data.cardDefsById[def]?.name ?? def)} <span class="small whynot">${esc(why)}</span></div>`; }).join('');
   openModal(`<div class="ask menu" style="display:flex;flex-direction:column;gap:8px;min-width:380px"><h2>Play a card</h2><div class="opts">${rows || '<p class="small">No card in your hand.</p>'}</div><div class="foot"><span class="small">Playing a card is not an action; one such card per turn (18.h).</span><button class="btn" data-close>Cancel</button></div></div>`);
   $$('#modalBox [data-card]').forEach(b => b.onclick = () => { SND.play('card_flip'); openCardTargets(b.dataset.card); });
+  $$('#modalBox [data-off]').forEach(b => b.onclick = () => { SND.play('error_denied'); toast(b.querySelector('.whynot')?.textContent || "Can't play that card now."); });
 }
 function targetRow(d) {
   const s = st(); const a = d.action; const def = s.cards[a.cardUid].def;
@@ -1350,8 +1368,9 @@ function renderPlayers() {
     const active = s.phase === 'turn' && s.turn.activePlayerId === p.id;
     const recalled = p.generalRecalledThroughTurn !== null && p.generalRecalledThroughTurn !== undefined && s.turn.number <= p.generalRecalledThroughTurn;
     const tags = tag(p.savedResources) + tag(p.inPlay) + (p.items?.catapult ? `<span class="tag">Catapult ×${p.items.catapult}</span>` : '');
+    const used = s.phase === 'turn' ? G.actionsUsedLabel(s, data) : '';
     return `<div class="player ${active ? 'active' : ''} ${p.out ? 'out' : ''}" data-pid="${p.id}" style="--pc:var(--${c})">
-      <div class="ph"><span class="nm">${esc(p.name)}</span><span class="gn">${esc(gen?.name ?? 'no general yet')}</span><span class="ctl ${p.controller === 'ai' ? 'ai' : ''}">${p.controller === 'ai' ? 'AI' : 'Human'}</span>${netBadge(p.id)}<span class="turnbadge">▶ ACTIVE TURN</span></div>
+      <div class="ph"><span class="nm">${esc(p.name)}</span><span class="gn">${esc(gen?.name ?? 'no general yet')}</span><span class="ctl ${p.controller === 'ai' ? 'ai' : ''}">${p.controller === 'ai' ? 'AI' : 'Human'}</span>${netBadge(p.id)}<span class="turnbadge">▶ ${active && used ? used : 'TURN'}</span></div>
       <div class="pbody2">
         <div class="gcard" title="${attr(gen ? gen.name + ': ' + gen.text + ' (click for every perk in detail)' : 'General not chosen yet')}"><img src="${img(gen ? 'general.' + gen.id : 'back.blank')}" alt="${attr(gen?.name ?? '')}">${recalled ? '<div class="oldtext">recalled to Rome</div>' : ''}</div>
         <div class="pstats">
@@ -1607,7 +1626,15 @@ function renderHand(legal) {
     body.innerHTML = (h.cards.length ? h.cards.map(c => tile(c)).join('') : '<span class="handnote">No cards in hand.</span>')
       + (h.inPlay.length || h.saved.length ? `<div class="inplay">${h.inPlay.map(c => tile(c, 'in play: ')).join('')}${h.saved.map(c => tile(c, 'saved: ')).join('')}</div>` : '')
       + (others ? `<span class="handnote">Others hold: ${others} (hidden)</span>` : '');
-    $$('#handBody .htile[data-uid]').forEach(t => t.onclick = () => { SND.play('card_flip'); openCardView(t.dataset.uid); });
+    $$('#handBody .htile[data-uid]').forEach(t => t.onclick = () => {
+      const f = topFrame(st());
+      if (f && (f.kind === 'roll' || f.kind === 'draw')) {
+        const why = G.cardBlockReason(st(), data, h.owner, t.dataset.uid);
+        SND.play('error_denied');
+        toast(why || `Can't play a card now: the game is waiting for a ${f.kind === 'roll' ? 'roll' : 'draw'}.`);
+      }
+      SND.play('card_flip'); openCardView(t.dataset.uid);
+    });
   }
   $('#hideCover').classList.toggle('on', hidden && !!h.owner);
   $('#hideWho').textContent = h.owner ? `Only ${G.nameOf(s, h.owner)} may look` : '';
@@ -1685,7 +1712,7 @@ function renderBuilder(legal) {
       if (ab.type === 'ATTACK' && gv && ng) mid = `<label class="bd-gen"><input type="checkbox" id="abGen" ${v?.action.withGeneral ? 'checked' : ''}> Attack WITH ${esc(gName)} (he is in ${esc(prov(ab.from))})</label>`;
       else if (vars.length > 1) mid = `<div class="opts" style="display:flex;flex-direction:column;gap:3px">${vars.map(x => `<label class="small"><input type="radio" name="abv" value="${attr(G.descKey(x))}" ${G.descKey(x) === ab.key ? 'checked' : ''}> ${esc(x.label)}</label>`).join('')}</div>`;
       else mid = `<div class="small">${esc(v?.label ?? '')}</div>`;
-      if (v?.range) { const n = Math.max(v.range.min, Math.min(v.range.max, ab.n ?? v.range.max)); ab.n = n; mid += `<div class="bd-row"><label>Troops</label><button class="bd-pm" data-d="-1">−</button><input type="range" id="abN" min="${v.range.min}" max="${v.range.max}" value="${n}" data-range-for="${attr(ab.key)}" style="--bc:var(--${c})"><button class="bd-pm" data-d="1">+</button><b class="bd-num v">${n}</b></div><div class="small">${v.range.min} to ${v.range.max} may go.</div>`; }
+      if (v?.range) { const n = Math.max(v.range.min, Math.min(v.range.max, ab.n ?? v.range.max)); ab.n = n; const stay = [G.garrisonStayText(s, data, ab.from), ab.type !== 'ATTACK' && ab.to ? G.garrisonStayText(s, data, ab.to) : ''].filter(Boolean).join(' '); mid += `<div class="bd-row"><label>Troops</label><button class="bd-pm" data-d="-1">−</button><input type="range" id="abN" min="${v.range.min}" max="${v.range.max}" value="${n}" data-range-for="${attr(ab.key)}" style="--bc:var(--${c})"><button class="bd-pm" data-d="1">+</button><b class="bd-num v">${n}</b></div><div class="small garrison-note" id="garStay">${v.range.min} to ${v.range.max} may go. ${esc(stay)}</div>`; }
       if (ab.type === 'ATTACK' && v) {
         const pv = G.attackPreview(s, data, { ...v.action, troops: ab.n ?? v.action.troops });
         // item 3: Borrow on the same screen (19.c: optional, locked before the first roll)
@@ -1757,7 +1784,15 @@ function renderBattleCtl(legal) {
   }
   if (st().battle && !bv) { const b = st().battle; const gn = pid => { const g = G.playerById(st(), pid)?.general; return g ? data.generalsById[g.id]?.name : null; }; bv = { title: `BATTLE for ${prov(b.target)}`, att: pn(b.att.player), attCls: col(b.att.player), def: b.def.player ? pn(b.def.player) : 'natives', defCls: b.def.player ? col(b.def.player) : 'nat', rounds: [], aCount: b.att.own + b.att.borrowed, dCount: null, borrowed: b.att.borrowed, attId: b.att.player, defId: b.def.player, aGen: b.att.general ? `General ${gn(b.att.player) ?? ''} leads the army` : 'no general', dGen: b.def.general ? `General ${gn(b.def.player) ?? ''} defends` : b.def.player ? 'no general here' : 'natives: no general', perks: { a: new Map(), d: new Map() } }; renderBattleHead(true); }
   $('#bCtl').innerHTML = h;
-  $$('#bCtl [data-key]').forEach(b => b.onclick = () => { const d = legal.find(x => G.descKey(x) === b.dataset.key); if (d) human(d); });
+  $$('#bCtl [data-key]').forEach(b => b.onclick = () => {
+    const d = legal.find(x => G.descKey(x) === b.dataset.key); if (!d) return;
+    if (d.type === 'BATTLE_RETREAT' && b.dataset.confirm !== 'yes') {
+      b.dataset.confirm = 'yes'; b.textContent = 'Confirm retreat?';
+      SND.play('error_denied'); toast('Retreat sends your survivors home. Click Confirm retreat to go ahead.');
+      return;
+    }
+    human(d);
+  });
 }
 
 // ------------------------------------------------------------------ the decision prompt (every other pending frame a human answers)
@@ -1771,7 +1806,7 @@ function renderAsk(legal) {
   const w = whoActs(s);
   let body;
   if (f.kind === 'setupGeneral') body = `<div class="cards">${legal.map(d => { const g = data.generalsById[d.action.general]; return `<button class="pickcard" data-key="${attr(G.descKey(d))}"><img src="${img(g ? 'general.' + g.id : 'back.blank')}" alt=""><b>${esc(g?.name ?? 'Random')}</b><span class="small">${esc(g ? G.generalCaption(data, g.id) : 'a random free general')}</span></button>`; }).join('')}</div>`;
-  else if (f.kind === 'chooseBattleCards') body = `<div class="opts">${cardChoiceHtml(legal, f)}</div>`;
+  else if (f.kind === 'chooseBattleCards') body = `${f.role === 'defender' ? `<div class="incoming" id="incomingAsk">${incomingHtml(f.player)}</div>` : ''}<div class="opts">${cardChoiceHtml(legal, f)}</div>`;
   else if (f.kind === 'resourceBuild') {          // item 9: the same step-by-step screen for a Bonus Road / Wall card just drawn
     if (!bs || bs.frame !== f.id) bs = { frame: f.id, piece: f.piece, province: null, facing: null };
     box.innerHTML = buildHtml(G.buildSteps(s, data, legal), true) + `<div class="foot"><button class="btn sm" id="askPeek">${askPeek ? 'Back to the choice' : 'Look at the map'}</button></div>`;
@@ -1783,8 +1818,11 @@ function renderAsk(legal) {
   else {
     const shown = f.kind === 'responseWindow' && f.window === 'displeasedResponse' ? `<div class="cards"><div class="pickcard"><img src="${img('card.' + f.def)}" alt=""><span class="small">${esc(data.cardDefsById[f.def]?.name)}</span></div></div>` : '';
     // batch 5 item 5: the Horn has no troop cap; the slider already stops at what may leave (1 stays, a held Roma keeps 10, Roma holds 20 at most)
-    const horn = f.kind === 'responseWindow' && f.window === 'defenceAnnounced' ? `<p class="small" id="hornNote">Horn of Titus Pullus: bring <b>any number</b> of troops from ONE bordering province of yours, allied ones included (no cap); at least 1 stays there${f.sources?.some(x => x.province === 'roma') ? ', and a held Roma keeps its 10' : ''}${f.target === 'roma' ? '; Roma holds 20 troops at most' : ''}. Only one Horn per battle (18.y).</p>` : '';
-    body = shown + horn + `<div class="opts">${optionsHtml(legal)}</div>`;
+    const horn = f.kind === 'responseWindow' && f.window === 'defenceAnnounced' ? `<p class="small" id="hornNote">Horn of Titus Pullus: bring <b>any number</b> of troops from ONE bordering province of yours, allied ones included (no cap); at least 1 stays there${f.sources?.some(x => x.province === 'roma') ? ', and a held Roma keeps its 10' : ''}${f.target === 'roma' ? '; Roma holds 20 troops at most' : ''}. Only one Horn per battle (18.y). If the defence holds, sending the survivors home is optional.</p>` : '';
+    const threat = (f.player && st().battle?.def?.player === f.player) || (f.kind === 'chooseBattleCards' && f.role === 'defender') ? incomingHtml(f.player) : '';
+    const threatBox = threat ? `<div class="incoming" id="incomingAsk">${threat}</div>` : '';
+    const backNote = f.kind === 'returnReinforcements' || f.kind === 'placeSurvivors' ? `<p class="small garrison-note" id="garStay">${f.kind === 'returnReinforcements' ? 'Sending them home is optional: 0 leaves every survivor in the defended province (18.y). ' : ''}${esc([f.target, f.origin, f.from].filter(Boolean).map(id => G.garrisonStayText(s, data, id)).filter(Boolean).join(' '))}</p>` : '';
+    body = shown + threatBox + horn + backNote + `<div class="opts">${optionsHtml(legal)}</div>`;
   }
   box.innerHTML = `<h2>${esc(G.frameTitle(s, data))}</h2><div><b style="color:var(--${col(w)})">${esc(pn(w))}</b>: ${esc(G.describePrompt(s, data).replace(/^.*?: /, ''))}</div>${body}<div class="foot"><button class="btn sm" id="askPeek">${askPeek ? 'Back to the choice' : 'Look at the map'}</button><span class="small">${pickTargets(legal).size ? 'You can also click a glowing province on the map.' : ''}</span></div>`;
   ov.classList.add('on'); ov.classList.toggle('peek', askPeek);

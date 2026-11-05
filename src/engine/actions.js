@@ -10,6 +10,7 @@ export const ACTION_TYPES = Object.freeze([
   'CHOOSE_START_PROVINCE', 'CHOOSE_SIDE', 'CHOOSE_GENERAL', 'BUY_CATAPULT', 'CALL_REINFORCEMENTS', 'PLACE_SURVIVORS',
   'DISCARD_CARDS',   // M3: Emperor taxes you! (18.u, Q44)
   'MOVE_GENERAL', 'SELL_CARD',   // M7: free general move (15.j), selling cards (20.p)
+  'SUMMON_GENERAL', 'RETURN_REINFORCEMENTS',   // v31.4: bring a general into a battle he can reach; Horn troops may go home (18.y)
 ]);
 
 const MILESTONE = {

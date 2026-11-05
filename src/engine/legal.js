@@ -7,11 +7,28 @@ import { applyAction } from './apply.js';
 import { sideLabel } from './setup.js';
 import { topFrame } from './core.js';
 import * as S from './selectors.js';
-import { attackTargets } from './battle.js';
+import { attackTargets, summonGeneralTarget } from './battle.js';
 import { generalMoveTargets, sellableCards } from './turn.js';
 import { TURN_PLAYS, heldLongEnough, revoltTargets, bribeTargets, bribeOwnTargets, assassinTargets, assassinKills, strikeTroops } from './cards.js';
 
 const nm = (data, id) => data.provincesById[id]?.name ?? id;
+/** How many troops must stay so the province remains at its minimum (and the global floor). Shown wherever troops are asked to move. */
+function stayNote(state, data, id) {
+  const p = state.provinces[id];
+  if (!p?.owner) return '';
+  const min = S.minGarrison(state, data, id).min;
+  const floor = p.status === 'held' ? data.rules.romaFloorOnHold : data.rules.provinceFloor;
+  const must = Math.max(min, floor);
+  const may = Math.max(0, p.troops - must);
+  return p.troops < min ? `${nm(data, id)} minimum ${min}, already under it (${p.troops} here; at least ${floor} must stay)` : `${nm(data, id)} minimum ${min}: keep ${must} to stay at minimum (${may} may leave)`;
+}
+function maybeSummon(state, data, who, add) {
+  const g = summonGeneralTarget(state, data, who);
+  if (!g) return;
+  const pl = state.players.find(p => p.id === who);
+  const name = data.generalsById[pl?.general?.id]?.name ?? 'General';
+  add({ type: 'SUMMON_GENERAL' }, `Summon ${name} to battle${g.already ? '' : ` (from ${nm(data, g.from)})`}`);
+}
 
 /** Who has to act now: the top frame's player, else the active player (null when the game is over). */
 export function whoActs(state) {
@@ -40,6 +57,7 @@ export function legalActions(state, data) {
         // Q142: the attacker may retreat once the cards are committed, before round 1 is rolled (the defender takes its cards back, 18.i)
         if (f.purpose === 'battleRound' && f.round === 1 && state.battle?.mode === 'attack' && !state.battle.rounds?.length && data.rules.earlyRetreatCardsBack?.retreatBeforeRound1 !== false)
           add({ type: 'BATTLE_RETREAT' }, `Retreat before rolling (survivors go home${keepsCards(state, data) ? '; the defender keeps its battle cards' : ''})`);
+        maybeSummon(state, data, who, add);
         break;
       case 'setupGeneral': {
         const taken = new Set(state.players.filter(p => p.general).map(p => p.general.id));
@@ -66,7 +84,10 @@ export function legalActions(state, data) {
       }
       case 'chooseProvince': for (const id of f.options) add({ type: 'CHOOSE_PROVINCE', province: id }, `${{ taxTroop: 'Pay the tax troop from', decreeLegion: 'Send the Decree legion from', removedProvince: 'The Emperor restores', removedTroops: 'Move the troops to' }[f.purpose] ?? 'Send the survivors to'} ${nm(data, id)}`); break;
       // battles (M2)
-      case 'chooseBorrow': add({ type: 'CHOOSE_BORROW', count: f.max }, `Borrow natives from ${nm(data, f.from)} (0-${f.max})`, { field: 'count', min: 0, max: f.max }); break;
+      case 'chooseBorrow':
+        add({ type: 'CHOOSE_BORROW', count: f.max }, `Borrow natives from ${nm(data, f.from)} (0-${f.max})`, { field: 'count', min: 0, max: f.max });
+        maybeSummon(state, data, who, add);
+        break;
       case 'chooseBattleCards': {
         const kinds = Object.keys(f.held); let combos = [{}];
         for (const k of kinds) combos = combos.flatMap(c => Array.from({ length: f.held[k] + 1 }, (_, n) => ({ ...c, ...(n ? { [k]: n } : {}) })));
@@ -74,10 +95,12 @@ export function legalActions(state, data) {
           const txt = Object.entries(c).map(([k, n]) => `${n} ${data.cardDefsById[k]?.name ?? k}`).join(' + ');
           add({ type: 'CHOOSE_BATTLE_CARDS', cards: c }, txt ? `Commit ${txt} (${f.role})` : `No battle cards (${f.role})`);
         }
+        maybeSummon(state, data, who, add);
         break;
       }
       case 'choosePerk': for (const o of f.options.filter(x => x === 'extraDie')) add({ type: 'CHOOSE_PERK', perk: o }, 'Scipio: an extra attack die'); break;   // only an old save can still hold this frame (15.c, 2026-10-24)
       case 'responseWindow':
+        maybeSummon(state, data, who, add);
         if (f.window === 'revoltResponse') {
           add({ type: 'PLAY_CARD', cardUid: f.card }, `Kill Revolt leader!: ${nm(data, f.province)} does not revolt`);
           add({ type: 'PASS' }, `Let ${nm(data, f.province)} revolt (keep the card)`);
@@ -91,13 +114,14 @@ export function legalActions(state, data) {
         }
         add({ type: 'PASS' }, 'Pass (no Horn of Titus Pullus)');
         for (const src of f.sources ?? []) {
-          add({ type: 'CALL_REINFORCEMENTS', from: src.province, troops: src.max }, `Horn: reinforce from ${nm(data, src.province)}`, { field: 'troops', min: 1, max: src.max });
-          if (src.general) add({ type: 'CALL_REINFORCEMENTS', from: src.province, troops: src.max, withGeneral: true }, `Horn: reinforce from ${nm(data, src.province)} with the general`, { field: 'troops', min: 1, max: src.max });
+          add({ type: 'CALL_REINFORCEMENTS', from: src.province, troops: src.max }, `Horn: reinforce from ${nm(data, src.province)} (${stayNote(state, data, src.province)})`, { field: 'troops', min: 1, max: src.max });
+          if (src.general) add({ type: 'CALL_REINFORCEMENTS', from: src.province, troops: src.max, withGeneral: true }, `Horn: reinforce from ${nm(data, src.province)} with the general (${stayNote(state, data, src.province)})`, { field: 'troops', min: 1, max: src.max });
         }
         break;
       case 'battleContinue':
         add({ type: 'BATTLE_CONTINUE' }, `Continue the battle (${f.attacker} vs ${f.defender})`);
         add({ type: 'BATTLE_RETREAT' }, `Retreat (survivors go home${keepsCards(state, data) ? '; the defender keeps its unused battle cards' : ''})`);
+        maybeSummon(state, data, who, add);
         break;
       case 'discardCards': {
         const o = f.options; const lbl = u => data.cardDefsById[state.cards[u].def]?.name ?? state.cards[u].def;
@@ -105,13 +129,25 @@ export function legalActions(state, data) {
         else for (let i = 0; i < o.length; i++) for (let j = i + 1; j < o.length; j++) add({ type: 'DISCARD_CARDS', cardUids: [o[i], o[j]] }, `Emperor's tax: lose ${lbl(o[i])} and ${lbl(o[j])}`);
         break;
       }
+      case 'returnReinforcements': {
+        const note = `${stayNote(state, data, f.target)}. ${stayNote(state, data, f.from)}`;
+        const rng = f.max >= 1 ? { field: 'back', min: 0, max: f.max } : undefined;
+        const sv = f.max >= 1 ? `send 0-${f.max} back to ${nm(data, f.from)} (optional)` : `no troop can go back`;
+        if (!f.general) add({ type: 'RETURN_REINFORCEMENTS', back: 0 }, `Horn troops: ${sv}. ${note}`, rng);
+        else {
+          add({ type: 'RETURN_REINFORCEMENTS', back: 0, generalBack: false }, `General stays in ${nm(data, f.target)}; ${sv}. ${note}`, rng);
+          add({ type: 'RETURN_REINFORCEMENTS', back: 0, generalBack: true }, `General goes back to ${nm(data, f.from)}; ${sv}. ${note}`, rng);
+        }
+        break;
+      }
       case 'placeSurvivors': {
         const rng = f.maxBack >= 1 ? { field: 'back', min: 0, max: f.maxBack } : undefined;
         const sv = f.maxBack >= 1 ? `send 0-${f.maxBack} survivor(s) back to ${nm(data, f.origin)}` : `no survivor can go back`;
-        if (!f.general) add({ type: 'PLACE_SURVIVORS', back: 0 }, `Survivors: ${sv}`, rng);
+        const mins = `${stayNote(state, data, f.target)}. ${stayNote(state, data, f.origin)}`;
+        if (!f.general) add({ type: 'PLACE_SURVIVORS', back: 0 }, `Survivors: ${sv}. ${mins}`, rng);
         else {   // 17.y: after a win the general stays in the conquered province or goes back to the origin
-          add({ type: 'PLACE_SURVIVORS', back: 0, generalBack: false }, `General stays in ${nm(data, f.target)}; ${sv}`, rng);
-          add({ type: 'PLACE_SURVIVORS', back: 0, generalBack: true }, `General goes back to ${nm(data, f.origin)}; ${sv}`, rng);
+          add({ type: 'PLACE_SURVIVORS', back: 0, generalBack: false }, `General stays in ${nm(data, f.target)}; ${sv}. ${mins}`, rng);
+          add({ type: 'PLACE_SURVIVORS', back: 0, generalBack: true }, `General goes back to ${nm(data, f.origin)}; ${sv}. ${mins}`, rng);
         }
         break;
       }
@@ -156,9 +192,9 @@ export function legalActions(state, data) {
     if (act) for (const from of mine) for (const to of mine) {
       if (from === to) continue;
       const max = S.maxMove(state, data, from);
-      if (max >= 1) add({ type: 'MOVE', from, to, troops: max }, `Move troops ${nm(data, from)} → ${nm(data, to)}`, { field: 'troops', min: 1, max });
+      if (max >= 1) add({ type: 'MOVE', from, to, troops: max }, `Move troops ${nm(data, from)} → ${nm(data, to)} (${stayNote(state, data, from)}; ${stayNote(state, data, to)})`, { field: 'troops', min: 1, max });
       if (gen?.at === from) {
-        if (max >= 1) add({ type: 'MOVE', from, to, troops: max, withGeneral: true }, `Move the general with troops ${nm(data, from)} → ${nm(data, to)}`, { field: 'troops', min: 1, max });
+        if (max >= 1) add({ type: 'MOVE', from, to, troops: max, withGeneral: true }, `Move the general with troops ${nm(data, from)} → ${nm(data, to)} (${stayNote(state, data, from)}; ${stayNote(state, data, to)})`, { field: 'troops', min: 1, max });
       }
     }
     // free, not actions: the general's own move (15.j) and selling cards for 2 Gold (20.p)
@@ -176,8 +212,8 @@ export function legalActions(state, data) {
       if (max < 1) continue;
       for (const t of attackTargets(state, data, who, from)) {
         const what = `${nm(data, t.id)}${state.provinces[t.id].owner ? '' : ' (natives)'} from ${nm(data, from)}${t.via ? ' via ' + nm(data, t.via) : ''}`;
-        add({ type: 'ATTACK', from, target: t.id, troops: max }, `ATTACK ${what}`, { field: 'troops', min: 1, max });
-        if (gen?.at === from) add({ type: 'ATTACK', from, target: t.id, troops: max, withGeneral: true }, `ATTACK ${what} with the general`, { field: 'troops', min: 1, max });
+        add({ type: 'ATTACK', from, target: t.id, troops: max }, `ATTACK ${what} (${stayNote(state, data, from)})`, { field: 'troops', min: 1, max });
+        if (gen?.at === from) add({ type: 'ATTACK', from, target: t.id, troops: max, withGeneral: true }, `ATTACK ${what} with the general (${stayNote(state, data, from)})`, { field: 'troops', min: 1, max });
       }
     }
     for (const target of data.provinceIds) {
@@ -187,7 +223,7 @@ export function legalActions(state, data) {
       if (target === 'carthage' || t.native.rolled === null) continue;
       if (act) for (const from of mine) {
         const room = state.provinces[from].troops - 1, need = t.native.present + 1;
-        if (room >= need) add({ type: 'ALLY', from, target, troops: need }, `Ally with ${nm(data, target)} from ${nm(data, from)}`, { field: 'troops', min: need, max: room });
+        if (room >= need) add({ type: 'ALLY', from, target, troops: need }, `Ally with ${nm(data, target)} from ${nm(data, from)} (${stayNote(state, data, from)})`, { field: 'troops', min: need, max: room });
       }
     }
   }

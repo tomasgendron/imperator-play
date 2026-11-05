@@ -597,7 +597,7 @@ function renderPlayers(s) {
     return `<button class="pl${on ? ' active' : ''}${p.out ? ' out' : ''}" style="--c:var(--${col(p.id)})" data-pid="${p.id}" aria-label="${attr(p.name)}${g ? ', ' + attr(g.name) : ''}: open the General">
     <span class="tag ${on ? '' : p.controller === 'ai' ? 'ai' : ''}" ${!on && p.controller !== 'ai' ? 'hidden' : ''}>${on ? '▶ TURN' : 'AI'}</span>${netDot(s, p)}
     <span class="r1"><span class="av" style="background-image:url('${attr(img(g ? 'general.' + g.id : 'back.game'))}');background-position:center 15%"></span><span class="nm">${esc(p.name)}<small>${esc(g?.name ?? 'no general yet')}</small>${g ? `<small class="cap" data-caption="${g.id}">${esc(G.generalCaption(data, g.id))}</small>` : ''}</span></span>
-    <span class="r2"><span title="Gold">💰${p.gold}</span><span title="Prestige">⭐${p.prestige}<small style="color:var(--muted)">/${data.rules.winPrestige}</small></span><span title="Cards">🂠${G.handCount(p)}</span><span title="Troops">⚔${totalTroops(s, p.id)}</span></span>
+    <span class="r2"><span title="Gold">💰${p.gold}</span><span title="Prestige">⭐${p.prestige}<small style="color:var(--muted)">/${data.rules.winPrestige}</small></span><span title="Cards">🂠${G.handCount(p)}</span><span title="Troops">⚔${totalTroops(s, p.id)}</span>${on && s.phase === 'turn' ? `<span class="actcount" title="Actions used this turn">${G.actionsUsedLabel(s, data)}</span>` : ''}</span>
     <span class="pbar"><b style="width:${Math.min(100, p.prestige / data.rules.winPrestige * 100)}%"></b></span></button>`; }).join(''))) return;
   $$('#players .pl').forEach(b => b.onclick = () => openPlayer(b.dataset.pid));
 }
@@ -605,16 +605,25 @@ function renderSteps(s, legal) {
   const act = s.phase === 'turn' ? s.turn.activePlayerId : whoActs(s); const si = G.stepIndex(s);
   const el = $('#steps'); el.style.setProperty('--pc', `var(--${col(act)})`);
   const names = { resources: 'Resources', gameRoll: 'Game', revoltRoll: 'Revolt', actions: 'Actions' };
+  const used = s.phase === 'turn' ? G.actionsUsedLabel(s, data) : null;
   setHTML(el, s.phase === 'setup' ? '<span class="step cur"><i>0</i>Setup</span>' : s.phase === 'finished' ? `<span class="step cur"><i>★</i>${esc(pn(s.winner))} wins</span>`
-    : G.STEP_CHIPS.map(([k], i) => `<span class="step ${i < si ? 'done' : i === si ? 'cur' : ''}"><i>${i < si ? '✓' : i + 1}</i>${names[k]}${k === 'actions' && i === si ? ` ${s.turn.actionsUsed}/2` : ''}</span>`).join('<span class="step-sep">›</span>'));
+    : G.STEP_CHIPS.map(([k], i) => `<span class="step ${i < si ? 'done' : i === si ? 'cur' : ''}"><i>${i < si ? '✓' : i + 1}</i>${names[k]}</span>`).join('<span class="step-sep">›</span>') + (used ? `<span class="actcount" id="actCount" title="Actions used this turn">${used}</span>` : ''));
   const f = topFrame(s); const w = whoActs(s); let p;
   if (s.phase === 'finished') p = `<b>${esc(pn(s.winner))} wins the game.</b> Menu → New game to play again.`;
   else if (!legal.length) p = G.isHuman(s, w) ? `Waiting for <b>${esc(pn(w))}</b>…` : `<b>${esc(pn(w))}</b> (AI) is thinking…${C.aiPaused ? ' (AI paused: Menu → Resume AI)' : ''}`;
-  else if (!f) p = `<b>Your turn, ${esc(pn(w))}.</b> Attack, Ally or Move, buy or build, play a card, or tap a province.`;
+  else if (!f) p = `<b>Your turn, ${esc(pn(w))}.</b> <b class="actcount">${esc(G.actionsUsedLabel(s, data) ?? '')}</b> actions. Attack, Ally or Move, buy or build, play a card, or tap a province.`;
   else p = `<b>${esc(pn(w))}: ${esc(G.frameTitle(s, data))}.</b> ${esc(G.describePrompt(s, data).replace(/^.*?: /, ''))}`;
   setHTML($('#prompt'), p);
   const h = G.handFor(s, data, C.viewer);
-  if (setHTML($('#handmini'), h.owner && h.cards.length ? `<span>Hand</span>${h.cards.slice(0, 4).map(c => `<button data-card="${c.uid}" style="background-image:url('${attr(img(c.art))}')" aria-label="${attr(c.name)}"></button>`).join('')}` : '')) $$('#handmini [data-card]').forEach(b => b.onclick = () => openCards());
+  if (setHTML($('#handmini'), h.owner && h.cards.length ? `<span>Hand</span>${h.cards.slice(0, 4).map(c => `<button data-card="${c.uid}" style="background-image:url('${attr(img(c.art))}')" aria-label="${attr(c.name)}"></button>`).join('')}` : '')) $$('#handmini [data-card]').forEach(b => b.onclick = () => {
+    const f = topFrame(st());
+    if (h.owner && f && (f.kind === 'roll' || f.kind === 'draw')) {
+      const why = G.cardBlockReason(st(), data, h.owner, b.dataset.card);
+      SND.play('error_denied');
+      toast(why || `Can't play a card now: the game is waiting for a ${f.kind === 'roll' ? 'roll' : 'draw'}.`);
+    }
+    openCards();
+  });
 }
 const pickFrames = ['chooseProvince', 'setupStartProvince', 'placeTroops', 'resourceBuild', 'placeSurvivors'];
 function pickSet(s, legal) {
@@ -783,13 +792,15 @@ function openMoves(type, from = null) {
     const origins = Object.keys(tree);
     if (origins.length === 1) { openMoves(type, origins[0]); return; }
     openSheet('moves', `<div class="sh-head"><h2>${TITLES[type]}: from where?<small>Tap a province here or on the map</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
-      <div class="sh-body"><div class="alist">${origins.map(o => `<button class="arow" data-from="${o}"><span class="ic"><span class="sw" style="--c:${cvar(st().provinces[o].owner)};width:16px;height:16px"></span></span><span class="t"><b>${esc(prov(o))}</b><small>${st().provinces[o].troops} troops · to ${Object.keys(tree[o]).map(prov).map(esc).join(', ')}</small></span><span class="go">›</span></button>`).join('')}</div></div>`, { half: true });
+      <div class="sh-body"><div class="alist">${origins.map(o => `<button class="arow" data-from="${o}"><span class="ic"><span class="sw" style="--c:${cvar(st().provinces[o].owner)};width:16px;height:16px"></span></span><span class="t"><b>${esc(prov(o))}</b><small>${st().provinces[o].troops} troops · ${esc(G.garrisonStayText(st(), data, o))} · to ${Object.keys(tree[o]).map(prov).map(esc).join(', ')}</small></span><span class="go">›</span></button>`).join('')}</div></div>`, { half: true });
     $$('#sheet [data-from]').forEach(b => b.onclick = () => openMoves(type, b.dataset.from));
     return;
   }
   const list = Object.values(tree[from] ?? {}).flat();
+  const dests = [...new Set(list.map(d => d.action.to ?? d.action.target).filter(Boolean))];
+  const stay = [G.garrisonStayText(st(), data, from), ...dests.map(id => G.garrisonStayText(st(), data, id))].filter(Boolean).join(' ');
   openSheet('moves', `<div class="sh-head"><h2>${TITLES[type]} from ${esc(prov(from))}<small>${list.length} possible · the engine's legal moves only</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
-    <div class="sh-body">${rowsHtml(list)}</div>`, { half: true });
+    <div class="sh-body">${stay ? `<p class="note garrison-note" id="garStay">${esc(stay)}</p>` : ''}${rowsHtml(list)}</div>`, { half: true });
   wireRows($('#sheet'), list);
 }
 function openCards() {
@@ -805,6 +816,13 @@ function openCards() {
   openSheet('cards', `<div class="sh-head"><h2>${p ? `${esc(p.name)}'s hand` : 'Hands'}<small>${p ? `Only ${esc(p.name)} may look · ${h.cards.length} card(s)` : 'AI hands are always hidden'}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body">${h.cards.length ? h.cards.map(c => row(c)).join('') : '<p class="note">No cards in hand.</p>'}${h.saved.map(c => row(c, 'saved: ')).join('')}${h.inPlay.map(c => row(c, 'in play: ')).join('')}
     <p class="note">${s.players.filter(x => x.id !== h.owner).map(x => `${esc(x.name)}: ${G.handCount(x)} card(s), hidden`).join(' · ')}</p></div>`);
+  $$('#sheet .cardrow').forEach(row => row.onclick = ev => {
+    if (ev.target.closest('button')) return;
+    const why = row.querySelector('.note')?.textContent;
+    if (!why) return;
+    const f = topFrame(st());
+    if (f && (f.kind === 'roll' || f.kind === 'draw')) { SND.play('error_denied'); toast(why); }
+  });
   $$('#sheet [data-play]').forEach(b => b.onclick = () => { const uid = b.dataset.play; const ds = mineNow().filter(d => (d.type === 'PLAY_CARD' || d.type === 'USE_SAVED_RESOURCE') && d.action.cardUid === uid); if (ds.length === 1) { closeSheet(true); act(ds[0]); } else openCardTargets(uid, ds); });
   $$('#sheet [data-sell]').forEach(b => b.onclick = () => { const d = mineNow().find(x => x.type === 'SELL_CARD' && x.action.cardUid === b.dataset.sell); if (d) { closeSheet(true); SND.play('gold_gain'); act(d); } });
 }
@@ -1046,8 +1064,15 @@ function askBody(s, f, legal, g) {
     const card = f.def ? G.cardView(data, f.def) : null;
     return `${card ? `<div class="cardrow" id="dispAsk"><img src="${attr(img(card.art))}" alt=""><div class="t"><b>${esc(card.name)}</b>${esc(card.text)}</div></div>` : ''}<p class="note">You may answer with Busy Little Bee (18.p), or let it happen.</p>${rowsHtml(legal, !g.live)}`;
   }
-  if (f.kind === 'discardCards' || f.kind === 'chooseBattleCards' || legal.every(d => d.action.cardUid)) return rowsHtml(legal, !g.live);
-  return rowsHtml(legal, !g.live);
+  const threat = (s.battle?.def?.player && (f.player === s.battle.def.player || (f.kind === 'chooseBattleCards' && f.role === 'defender'))) ? incomingHtml(f.player) : '';
+  const threatBox = threat ? `<div class="incoming" id="incomingAsk">${threat}</div>` : '';
+  if (f.kind === 'returnReinforcements' || f.kind === 'placeSurvivors' || f.kind === 'placeTroops') {
+    const ids = [f.target, f.origin, f.from, ...(f.allowed ?? [])].filter(Boolean);
+    const note = [...new Set(ids)].map(id => G.garrisonStayText(s, data, id)).filter(Boolean).join(' ');
+    return `${note ? `<p class="note garrison-note" id="garStay">${esc(note)}</p>` : ''}${f.kind === 'returnReinforcements' ? '<p class="note">Sending them home is optional: 0 leaves every survivor in the defended province (18.y).</p>' : ''}${rowsHtml(legal, !g.live)}`;
+  }
+  if (f.kind === 'discardCards' || f.kind === 'chooseBattleCards' || legal.every(d => d.action.cardUid)) return threatBox + rowsHtml(legal, !g.live);
+  return threatBox + rowsHtml(legal, !g.live);
 }
 /** The Ally confirm (natives, the troops they need, a stepper): opened from the Ally list rows. */
 function openAllyConfirm(d) {
@@ -1164,11 +1189,18 @@ function bvFromState(s) {
     aGen: b.att.general ? `General ${gname(b.att.player)} leads the army` : 'no general', dGen: b.def.general ? `General ${gname(b.def.player)} defends` : b.def.player ? 'no general here' : 'no general', perks: perks(), rounds: [], cards: { a: [], d: [] } };
 }
 const sideCol = cls => (cls === 'nat' ? 'var(--native)' : `var(--${cls})`);
+function incomingHtml(viewer) {
+  const info = G.incomingAttack(st(), data, viewer ?? C.viewer);
+  if (!info) return '';
+  const who = info.you ? 'you' : pn(info.defender);
+  return `<b class="n" id="attTroops">${esc(info.troopText)}</b> attacking ${esc(who)} from ${esc(prov(info.from))}. <span class="cards" id="attCards">Cards against ${esc(who)}: ${esc(info.cardText)}.</span>`;
+}
 function battleHtml() {
   const side = (k, name, cls, count, gen) => `<div class="bside ${k}" style="--c:${sideCol(cls)}"><b class="bname" id="${k}Name">${esc(name)}</b><small>${k === 'a' ? 'attacker' : 'defender'}</small>
     <span class="bcount" id="${k}Count">${count ?? '–'}</span><small id="${k}Gen">${esc(gen)}</small><ul class="bperks" id="${k}Perks"></ul><div class="bcards" id="${k}Cards"></div></div>`;
+  const inc = incomingHtml(bv.defId);
   return `<div class="sh-head"><h2 id="bTitle">⚔ ${esc(bv.title)}<small>${esc(bv.sub ?? '')}</small></h2><div class="spacer"></div><button class="iconbtn" id="bHide" aria-label="Look at the map">▾</button></div>
-    <div class="sh-body bbody"><div class="bsides">${side('a', bv.att, bv.attCls, bv.aCount, bv.aGen)}<div class="bvs">VS</div>${side('d', bv.def, bv.defCls, bv.dCount, bv.dGen)}</div>
+    <div class="sh-body bbody">${inc ? `<div class="incoming" id="incoming">${inc}</div>` : ''}<div class="bsides">${side('a', bv.att, bv.attCls, bv.aCount, bv.aGen)}<div class="bvs">VS</div>${side('d', bv.def, bv.defCls, bv.dCount, bv.dGen)}</div>
     <div class="brounds" id="bRounds">${bv.rounds.length ? '' : '<p class="note" id="bNone">No round rolled yet.</p>'}</div><div class="bask" id="bAsk"></div><div class="bres" id="bRes"></div></div>
     <div class="sh-foot" id="bCtl"></div>`;
 }
@@ -1241,6 +1273,7 @@ function renderBattleCtl() {
   const s = st(); const f = topFrame(s); const ask = $('#bAsk'), ctl = $('#bCtl'); if (!ask || !ctl) return;
   const w = whoActs(s); const g = w ? gateFor(w) : { live: false, why: 'Nobody can act right now.', legal: [] }; const legal = g.legal;
   ask.innerHTML = ''; ctl.innerHTML = '';
+  const inc = $('#incoming'); if (inc && s.battle) { const html = incomingHtml(s.battle.def?.player); if (html) inc.innerHTML = html; }
   if (!f || !s.battle) { ctl.innerHTML = '<span class="waitnote">…</span>'; return; }
   const title = `<div class="sec">${esc(G.frameTitle(s, data))} · <b style="color:${cvar(w)}">${esc(pn(w))}</b></div>`;
   if (!legal.length) { ask.innerHTML = title + gateNote(g); ctl.innerHTML = `<span class="waitnote" id="bWait">${G.isHuman(s, w) ? `Waiting for ${esc(pn(w))}…` : `${esc(pn(w))} (AI) is deciding…`}</span>`; return; }
@@ -1248,7 +1281,15 @@ function renderBattleCtl() {
   if (f.kind === 'roll' || f.kind === 'battleContinue') {
     ask.innerHTML = title + gateNote(g);
     ctl.innerHTML = legal.map((d, i) => `<button class="btn ${d.type === 'BATTLE_RETREAT' ? '' : 'gold'} wide" data-bi="${i}" id="${d.type === 'BATTLE_RETREAT' ? 'bRetreat' : d.type === 'BATTLE_CONTINUE' ? 'bContinue' : 'bRoll'}"${dis}>${d.type === 'ROLL' ? '🎲 ' : ''}${esc(d.type === 'BATTLE_CONTINUE' ? 'Continue' : d.type === 'BATTLE_RETREAT' ? 'Retreat' : d.label)}</button>`).join('');
-    $$('[data-bi]', ctl).forEach(b => b.onclick = () => act(legal[+b.dataset.bi]));
+    $$('[data-bi]', ctl).forEach(b => b.onclick = () => {
+      const d = legal[+b.dataset.bi];
+      if (d?.type === 'BATTLE_RETREAT' && b.dataset.confirm !== 'yes') {
+        b.dataset.confirm = 'yes'; b.textContent = 'Confirm retreat?';
+        SND.play('error_denied'); toast('Retreat sends your survivors home. Tap Confirm retreat to go ahead.');
+        return;
+      }
+      act(d);
+    });
     return;
   }
   if (f.kind === 'chooseBattleCards') {
@@ -1289,6 +1330,15 @@ async function playEvents(events, before = null) {
       }
       case 'provinceRevolted': if (!shownRevolts.has(i)) await deliver(G.revoltPopup(events, i, s, data)); break;
       case 'attackDeclared': bv = null; bv = bvFromState(s) ?? bvFromState(before ?? s); if (bv) openBattle(); break;
+      case 'generalSummoned': {
+        if (bv) {
+          const name = data.generalsById[e.pub.general]?.name ?? 'General';
+          const line = `General ${name} summoned to the battle`;
+          if (e.pub.side === 'defender') bv.dGen = line; else bv.aGen = line;
+          if (popKind === 'battle') { const el = e.pub.side === 'defender' ? $('#dGen') : $('#aGen'); if (el) el.textContent = line; }
+        }
+        break;
+      }
       case 'decreeBattle': bv = bvFromState(s); if (!bv) bv = { title: 'SENATE DECREE', sub: `${e.pub.legions} legion(s) attack Carthage`, att: 'Senate legions', attCls: 'p1', def: 'Carthage', defCls: 'nat', aCount: e.pub.legions, dCount: e.pub.carthage, perks: { a: new Map(), d: new Map() }, rounds: [], cards: { a: [], d: [] }, decree: true }; openBattle(); break;
       case 'decreeResolved': if (bv?.decree) { const r = e.pub; await battleResult({ title: r.result === 'destroyed' ? 'CARTHAGE DESTROYED' : r.result === 'held' ? 'CARTHAGE HOLDS' : 'NO BATTLE', lines: [r.result === 'destroyed' ? `${r.survivors} legion(s) return to Roma.` : r.result === 'held' ? `Carthage has ${r.carthage} troop(s) left.` : 'No legion was sent.'] }, false); } break;
       case 'battleStarted': if (!bv) bv = bvFromState(s) ?? bvFromState(before ?? s); openBattle();

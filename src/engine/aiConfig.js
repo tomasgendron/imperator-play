@@ -11,5 +11,15 @@ export const AI_CONFIG = Object.freeze({
     counterAttack: 0.08,    // + this when a rival army next door (with a Road, 19.b) would then outnumber what stays behind
     maxBar: 0.92,           // the bar never goes above this
   }),
+  // v31.4: a rival this close to the win (public Prestige only) is a threat. Large Map 1 wins at 11, so ≥8; Small Map 1 wins at 8, so ≥5.
+  threat: Object.freeze({
+    within: 3,
+    attackBias: 180,        // prefer that rival's Prestige-earning provinces; the win-chance bar above is not lowered
+  }),
+  // v31.4: surplus Gold with a free action should become troops instead of sitting in the pile
+  spend: Object.freeze({
+    surplusGold: 20,
+    troopBias: 6,
+  }),
 });
 export const aiConfig = (opts = {}) => (opts.config ? { ...AI_CONFIG, ...opts.config, attack: { ...AI_CONFIG.attack, ...(opts.config.attack ?? {}) } } : AI_CONFIG);

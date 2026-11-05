@@ -196,7 +196,8 @@ function randomStartOptions(state, data, pid) {
 function placeStart(ctx, pid, id) {
   const { state, data } = ctx;
   const p = state.provinces[id]; const pl = mustPlayer(state, pid);
-  Object.assign(p, { owner: pid, status: 'starting', startingOf: pid, troops: data.rules.startingTroops });
+  // v31.4: a start is 5 troops and no native roll (20.n). Other provinces still roll natives when first attacked (17.h).
+  Object.assign(p, { owner: pid, status: 'starting', startingOf: pid, troops: data.rules.startingTroops, native: { rolled: 0, count: 0, present: 0 } });
   pl.startProvince = id;
   if (pl.general) pl.general.at = id;
   emit(ctx, 'startProvinceChosen', { actor: pid, rule: '4.b, 20.n', pub: { player: pid, province: id, troops: data.rules.startingTroops } });
@@ -382,6 +383,7 @@ onSettle(ctx => {
     return true;
   }
   if (su.stage === 'natives') {
+    // v31.4: new games set native.rolled to 0 in placeStart, so this roll is skipped. An old save still on this step (rolled === null) still rolls.
     const next = state.turnOrder.find(id => state.provinces[playerOf(state, id).startProvince].native.rolled === null);
     if (next) { pushFrame(ctx, { kind: 'roll', die: 'd' + data.rules.dice.native, purpose: 'startNative', player: next, province: playerOf(state, next).startProvince }); return true; }
     startFirstTurn(ctx);

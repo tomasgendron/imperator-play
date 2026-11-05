@@ -79,6 +79,7 @@ export function describePrompt(state, data) {
     chooseBorrow: `chooses how many natives to borrow (0-${f.max})`, chooseBattleCards: 'chooses battle cards', choosePerk: 'chooses a general perk',
     responseWindow: { revoltResponse: `may play Kill Revolt leader! to stop the revolt in ${f.province}`, displeasedResponse: `may play Busy Little Bee! to redirect ${f.def}` }[f.window] ?? 'may sound the Horn of Titus Pullus or pass',
     discardCards: `loses ${f.count} saved card(s) to the Emperor's tax`, battleContinue: 'continues the battle or retreats', placeSurvivors: `places the survivors (up to ${f.maxBack} back)`,
+    returnReinforcements: `chooses whether the Horn troops go back to ${prov(data, f.from)} (0-${f.max}, optional)`,
   }[f.kind] ?? f.kind;
   return `${head}: ${who} ${what}.`;
 }
@@ -148,12 +149,14 @@ const T = {
   catapultBought: (e, st) => `${pn(st, e.pub.player)} buys a Catapult (now ${e.pub.catapults}).`,
   attackDeclared: (e, st, d) => `${pn(st, e.pub.player)} ATTACKS ${prov(d, e.pub.target)}${e.pub.defender ? ' (' + pn(st, e.pub.defender) + ')' : ''} from ${prov(d, e.pub.from)} with ${e.pub.troops} troop(s)${e.pub.general ? ' and the general' : ''}${e.pub.sea ? ' by sea' : ''}${e.pub.via ? ' through ' + prov(d, e.pub.via) : ''}.`,
   borrowDecided: (e, st, d) => `${pn(st, e.pub.player)} borrows ${e.pub.count} of up to ${e.pub.max} native(s) of ${prov(d, e.pub.from)}.`,
-  battleCardsCommitted: (e, st) => `${pn(st, e.pub.player)} (${e.pub.role}) commits ${e.pub.n} battle card(s).`,
+  battleCardsCommitted: (e, st, d) => `${pn(st, e.pub.player)} (${e.pub.role}) commits ${e.pub.n} battle card(s)${e.pub.cards?.length ? ': ' + e.pub.cards.map(id => d.cardDefsById[id]?.name ?? id).join(', ') : ''}.`,
   battleCardsSkipped: (e) => `The ${e.pub.role} plays no battle cards (${e.pub.reason}).`,
   perkChosen: (e, st) => `${pn(st, e.pub.player)} uses ${e.pub.perk}.`,
   generalPerkTriggered: (e) => `General perk (${e.pub.general}): ${e.pub.effect}${e.pub.reason ? ' (' + e.pub.reason + ')' : ''}.`,
   enemyFled: (e, st, d) => `${e.pub.n} ${e.pub.side} troop(s) of ${pn(st, e.pub.owner) === 'nobody' ? 'the natives' : pn(st, e.pub.owner)} flee from ${prov(d, e.pub.province)} before the battle (Caesar).`,
   reinforcementsCalled: (e, st, d) => `${pn(st, e.pub.player)} sounds the Horn: ${e.pub.troops} troop(s)${e.pub.general ? ' and the general' : ''} from ${prov(d, e.pub.from)} reinforce ${prov(d, e.pub.to)}.`,
+  reinforcementsReturned: (e, st, d) => `${pn(st, e.pub.player)} sends ${e.pub.back} Horn troop(s) back to ${prov(d, e.pub.to)}${e.pub.generalBack ? ' with the general' : ''} (${e.pub.stay} stay).`,
+  generalSummoned: (e, st, d) => `${pn(st, e.pub.player)} summons ${d.generalsById[e.pub.general]?.name ?? 'the general'} to the battle${e.pub.from && e.pub.from !== e.pub.to ? ` from ${prov(d, e.pub.from)}` : ''}.`,
   hornSkipped: (e, st, d) => !e.priv ? `${pn(st, e.pub.player)}: no reinforcements (18.y).` : `${pn(st, e.pub.player)} holds Horn of Titus Pullus but ${e.priv.reason === 'romaFull' ? `Roma already has 20 troops, so no reinforcements can come (12.k)` : e.priv.reason === 'notUnderGarrisoned' ? `${prov(d, e.pub.target)} is not under-garrisoned (Q85)` : `no bordering province of theirs can send troops to ${prov(d, e.pub.target)} (each must keep 1 troop; a held Roma keeps 10)`}: the Horn is not offered.`,
   responsePassed: (e, st) => `${pn(st, e.pub.player)} passes (${e.pub.window}).`,
   loyaltyDefected: (e) => `Ingrained Loyalty d6 ${e.pub.d6}: ${e.pub.defected} troop(s) defect (${e.pub.own} own, ${e.pub.borrowed} borrowed)${e.pub.wholeArmy ? ': the whole army is gone' : ''}.`,

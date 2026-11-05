@@ -192,6 +192,7 @@ export function frameTitle(state, data) {
     roll: 'Roll the dice', draw: 'Draw a card', setupGeneral: 'Choose your general', setupSide: 'Choose your side (west or east)', setupStartProvince: 'Choose your start province',
     placeTroops: 'Place troops', resourceBuild: 'Build now or save the card', chooseProvince: 'Choose a province', chooseBorrow: 'Borrow natives?',
     chooseBattleCards: 'Battle cards', choosePerk: 'General perk', battleContinue: 'Continue the battle?', placeSurvivors: 'Place the survivors',
+    returnReinforcements: 'Send the Horn troops home?',
     discardCards: "The Emperor's tax", responseWindow: { revoltResponse: 'A province revolts!', displeasedResponse: 'Rome is displeased with you', defenceAnnounced: 'You are attacked!' }[f.window] ?? 'Your answer',
   };
   return T[f.kind] ?? f.kind;
@@ -397,6 +398,37 @@ export function cardsBack(events, i, data) {
   }
   return '';
 }
+/**
+ * What the defender should see the moment they are attacked (v31.4 item 10): how many troops are coming, and which
+ * battle cards are committed against them. Card names are the public `revealed` list (committed defs, not hidden uids).
+ * `viewerId` the defender (or null on a shared screen) is addressed as "you".
+ * Returns null when nobody is being attacked. cardsPending is true until the attacker has committed.
+ */
+export function incomingAttack(state, data, viewerId = null) {
+  const b = state.battle;
+  if (!b || b.mode !== 'attack' || !b.def?.player) return null;
+  const own = b.att.own ?? 0; const borrowed = b.att.borrowed ?? 0; const troops = own + borrowed;
+  let pending = false; let defs = [];
+  if (Array.isArray(b.att.revealed)) defs = b.att.revealed.filter(Boolean);
+  else if (b.att.cards == null) pending = true;
+  else {
+    for (const uid of b.att.cards) { const def = state.cards?.[uid]?.def; if (def) defs.push(def); }
+    for (const p of b.att.played ?? []) if (p.def && !b.att.cards.includes(p.uid)) defs.push(p.def);
+  }
+  const counts = new Map();
+  for (const def of defs) counts.set(def, (counts.get(def) ?? 0) + 1);
+  const cards = [...counts].map(([def, n]) => ({ def, name: data.cardDefsById[def]?.name ?? def, n }));
+  const you = viewerId == null || viewerId === b.def.player;
+  const who = you ? 'you' : nameOf(state, b.def.player);
+  const troopText = borrowed ? `${troops} troops (${own} own + ${borrowed} borrowed)` : `${troops} troop${troops === 1 ? '' : 's'}`;
+  const cardText = pending ? 'not chosen yet' : cards.length ? cards.map(c => c.n > 1 ? `${c.name} ×${c.n}` : c.name).join(', ') : 'no battle cards';
+  return {
+    defender: b.def.player, attacker: b.att.player, from: b.att.from, target: b.target,
+    troops, own, borrowed, cards, pending, you,
+    troopText, cardText,
+    line: `${troopText} attacking ${who}. Cards against ${who}: ${cardText}.`,
+  };
+}
 /** Batch 6: the rule hint under the battle-card checklist for the defender (from the ruleset, so it follows the flags). */
 export function battleCardsHint(data, role) {
   const R = data.rules.earlyRetreatCardsBack;
@@ -574,6 +606,26 @@ export function buySteps(state, data, legal) {
   return { gold, actionsLeft: left, sellable, items: [troop, card] };
 }
 
+/** Actions used this turn, as "0/2". Null before the first turn. */
+export function actionsUsedLabel(state, data) {
+  if (state.phase !== 'turn' || !state.turn) return null;
+  return `${state.turn.actionsUsed}/${data.rules.actionsPerTurn}`;
+}
+/**
+ * How many troops must stay so `id` remains at its minimum garrison (and the global floor).
+ * `mayLeave` is how many can go and still leave that minimum. Empty string when the province has no owner.
+ */
+export function garrisonStayText(state, data, id) {
+  const p = state.provinces[id];
+  if (!p?.owner) return '';
+  const min = minGarrison(state, data, id).min;
+  const floor = p.status === 'held' ? data.rules.romaFloorOnHold : data.rules.provinceFloor;
+  const must = Math.max(min, floor);
+  const may = Math.max(0, p.troops - must);
+  const name = provName(data, id);
+  if (p.troops < min) return `${name}: minimum ${min}, already under it (${p.troops} here; at least ${floor} must stay).`;
+  return `${name}: minimum ${min} — keep ${must} to stay at minimum (${may} may leave).`;
+}
 /** The minimum garrison the page shows for a province (item 6): conquered AND starting provinces (a start province: flat 1, 17.t); null otherwise. */
 export function shownMin(state, data, id) {
   const p = state.provinces[id];

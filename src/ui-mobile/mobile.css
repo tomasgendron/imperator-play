@@ -40,6 +40,11 @@ button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:poin
 .step.cur{color:#fff;font-weight:700;background:var(--pc,var(--p1));border-radius:20px;padding:3px 9px 3px 4px;box-shadow:0 0 0 2px #c9a34a66}
 .step.cur i{background:#fff;color:var(--pc,var(--p1))}
 .step-sep{color:#5d4e3f;font-size:10px}
+.actcount{margin-left:auto;font-weight:800;font-size:15px;letter-spacing:.03em;color:#1b140c;background:var(--gold2);border-radius:10px;padding:3px 9px;font-variant-numeric:tabular-nums}
+.incoming{margin:0 0 8px;padding:8px 10px;border-radius:10px;background:#3a2e14;border:2px solid var(--gold2);color:var(--ink);font-weight:700;line-height:1.35}
+.incoming .n{font-size:16px;color:var(--gold2)}
+.incoming .cards{display:block;margin-top:3px}
+.prompt .actcount,.r2 .actcount{margin-left:4px;font-size:12px;padding:1px 6px}
 .prompt{flex:none;padding:5px 10px 6px;font-size:12.5px;color:var(--ink2);background:var(--bg2);border-bottom:1px solid var(--line);line-height:1.3}
 .prompt b{color:var(--ink)}
 

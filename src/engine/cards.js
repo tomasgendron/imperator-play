@@ -68,6 +68,15 @@ export function cardBlock(state, data, pid, uid) {
     if (def === 'busy_little_bee' && !heldLongEnough(state, data, entry)) return B('HOLD_A_TURN', `drawn on turn ${entry.drawnOnTurn}: you must hold it a turn`, '18.h');
     return null;   // the window waiting for this card (any copy of it answers, 18.f / 18.x)
   }
+  // v31.4: a click during a roll or a draw must say why, not look like a dead button
+  if (f?.kind === 'roll') {
+    const what = f.purpose === 'battleRound' ? `battle round ${f.round}` : f.purpose === 'gameRoll' ? 'the Game Roll' : f.purpose === 'revoltRoll' || f.purpose === 'extraRevoltRoll' ? 'the Revolt Roll' : `the ${f.die} roll`;
+    return B('WAITING_FOR_ROLL', `waiting for ${what}`, '18.h', `Can't play a card now: the game is waiting for ${what}.`);
+  }
+  if (f?.kind === 'draw') {
+    const deck = f.deck === 'game' ? 'a Game Card' : f.deck === 'resource' ? 'a Resource card' : f.deck === 'displeased' ? 'a Rome Is Displeased card' : 'a card';
+    return B('WAITING_FOR_DRAW', `waiting to draw ${deck}`, '18.h', `Can't play a card now: the game is waiting for ${deck} to be drawn.`);
+  }
   if (d.type === 'battle') return B('USE_IN_BATTLE', 'a battle card: commit it when you attack or are attacked', '18.i', `${name} is a battle card: commit it when you attack or are attacked (18.i).`);
   if (def === 'battlefield_imperator') return B('USE_WITH_ATTACK', 'used by attacking Roma: choose Roma as your target', '18.w', 'Battlefield Imperator is used by attacking Roma (ATTACK on Roma, 18.w).');
   if (def === 'kill_revolt_leader') return B('ONLY_AGAINST_REVOLT', 'played only when a revolt is aimed at you', '18.f', 'Kill Revolt leader! is played when a revolt is aimed at you (18.f).');
@@ -112,7 +121,8 @@ define('PLAY_CARD', {
   run(ctx, a) {
     const { state, data } = ctx; const f = topFrame(state);
     if (f) {                                                     // the answer to a response window
-      check(f.kind === 'responseWindow' && responseWindows[f.window]?.play, 'WRONG_FRAME', `No card can be played now: the game waits for ${f.kind}.`);
+      const wait = f.kind === 'roll' ? 'Can\'t play a card now: the game is waiting for a roll.' : f.kind === 'draw' ? 'Can\'t play a card now: the game is waiting for a card to be drawn.' : `No card can be played now: the game waits for ${f.kind}.`;
+      check(f.kind === 'responseWindow' && responseWindows[f.window]?.play, 'WRONG_FRAME', wait);
       check(f.resolvableBy.includes(a.playerId), 'NOT_YOUR_PROMPT', `The current prompt is for ${f.resolvableBy.join(', ')}.`);
       responseWindows[f.window].play(ctx, f, a);
       return;

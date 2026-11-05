@@ -12,7 +12,7 @@
 import { applyAction } from './apply.js';
 import { topFrame, playerOf } from './core.js';
 import { legalActions, whoActs } from './legal.js';
-import { defForce, attackTargets } from './battle.js';
+import { defForce, attackTargets, summonGeneralTarget } from './battle.js';
 import * as S from './selectors.js';
 import { attackOdds, liveOdds } from './odds.js';
 import { aiConfig } from './aiConfig.js';
@@ -93,6 +93,15 @@ function playerScore(state, data, pid, cache) {
   if (p.general && p.general.at && S.generalPerksActive(state, pid)) s += 2;
   return s;
 }
+/** Public Prestige only: a rival at or above winPrestige - within (3) is close enough to win to treat as a threat. */
+export function prestigeThreatLine(data, cfg = aiConfig()) {
+  return data.rules.winPrestige - (cfg.threat?.within ?? 3);
+}
+/** Rivals within `within` Prestige of the win. Troop counts and Prestige are public; hands are never read. */
+export function prestigeThreats(state, data, pid, cfg = aiConfig()) {
+  const line = prestigeThreatLine(data, cfg);
+  return state.players.filter(p => p.id !== pid && !p.out && p.prestige >= line);
+}
 /** Score of the position for `pid` (higher is better): own score minus 0.7 x the average rival score; a win/loss is decisive. */
 export function evaluate(state, data, pid) {
   if (state.winner) return state.winner === pid ? 1e6 : -1e6;
@@ -100,7 +109,8 @@ export function evaluate(state, data, pid) {
   const own = playerScore(state, data, pid);
   const rv = rivals.length ? rivals.reduce((t, p) => t + playerScore(state, data, p.id), 0) / rivals.length : 0;
   const lead = rivals.length ? Math.max(...rivals.map(p => p.prestige)) : 0;
-  return own - 0.7 * rv - (lead >= data.rules.winPrestige - 2 ? 15 * lead : 0);
+  const line = prestigeThreatLine(data);
+  return own - 0.7 * rv - (lead >= line ? 15 * lead : 0);
 }
 
 // ------------------------------------------------------------------ helpers
@@ -129,14 +139,27 @@ export function attackBar(state, data, pid, action, cfg = aiConfig()) {
 function attackValue(state, data, pid, action, base, cfg) {
   const t = state.provinces[action.target];
   const o = attackOdds(state, data, { ...action, playerId: pid });
-  if (!o.ok || o.p < attackBar(state, data, pid, action, cfg).bar) return -Infinity;   // only a battle with a good chance of winning
+  if (!o.ok || o.p < attackBar(state, data, pid, action, cfg).bar) return -Infinity;   // under-strength stays banned; Roma and Carthage stay at 70%+
+  const meP = playerOf(state, pid);
+  const line = prestigeThreatLine(data, cfg);
+  const selfClose = meP.prestige >= line;
+  const threat = !!(t.owner && t.owner !== pid && playerOf(state, t.owner).prestige >= line);
+  const earning = threat && (S.earnsReward(state, data, action.target) || S.earnsBonusTroop(state, data, action.target));
+  const gainP = action.target === 'roma' ? data.rules.prestige.roma : action.target === 'carthage' ? data.rules.prestige.carthage : data.rules.prestige.conquest;
+  // Close to winning: hold the troops, unless this battle would win the game or a rival who is level or ahead is the target.
+  if (selfClose) {
+    const clinch = meP.prestige + gainP >= data.rules.winPrestige;
+    const rivalAhead = threat && playerOf(state, t.owner).prestige >= meP.prestige;
+    if (!clinch && !rivalAhead) return -Infinity;
+  }
   const s1 = after(state, data, { ...action, borrow: 0, battleCards: {}, perk: undefined });
   const s2 = s1 ?? after(state, data, action);
   if (!s2 || !s2.battle) return -Infinity;
   const d = t.owner === null && action.target !== 'roma' ? (t.native.present ?? 0) : t.troops;
-  const gainP = action.target === 'roma' ? data.rules.prestige.roma : action.target === 'carthage' ? data.rules.prestige.carthage : data.rules.prestige.conquest;
   let gain = gainP * W.prestige + W.province + W.bonusTroop;
   if (t.owner) gain += 0.7 * (W.prestige * data.rules.prestige.loss + W.province + d * W.troop) / Math.max(1, state.players.filter(p => !p.out && p.id !== pid).length);
+  if (earning) gain += cfg.threat?.attackBias ?? 180;
+  else if (threat) gain += (cfg.threat?.attackBias ?? 180) * 0.35;
   const v = evaluate(s2, data, pid) - base;   // the origin is emptied, the action is spent
   return v + o.p * gain + o.surv * W.troop - (1 - o.p) * 4 + (o.p < 0.45 ? -40 : 0);
 }
@@ -156,6 +179,14 @@ export function chooseAction(state, data, opts = {}) {
   if (legal.length === 1) return legal[0].action;
   const me = whoActs(state); const f = topFrame(state);
   const st = lite(state);
+  const summon = legal.find(d => d.type === 'SUMMON_GENERAL');
+  if (summon && state.battle && summonGeneralTarget(state, data, me)) {
+    const before = liveOdds(state, data, state.battle).p;
+    const s2 = after(st, data, summon.action);
+    const afterP = s2?.battle ? liveOdds(s2, data, s2.battle).p : before;
+    const att = state.battle.att.player === me;
+    if (att ? afterP > before + 0.02 : before > afterP + 0.02) return summon.action;
+  }
   const jitter = (i, x) => hash(`${seed}|${state.eventSeq}|${i}|${x.type}`) * 0.05;
   const pickBest = scored => { let best = null; scored.forEach((x, i) => { const v = x.v + jitter(i, x.a); if (!best || v > best.v) best = { v, a: x.a }; }); return best.a; };
   const byType = t => legal.filter(d => d.type === t);
@@ -179,14 +210,16 @@ export function chooseAction(state, data, opts = {}) {
     }
     case 'chooseBorrow': {
       const b = state.battle;
+      const borrow = legal.find(x => x.type === 'CHOOSE_BORROW') ?? legal[0];
       const p0 = liveOdds(state, data, b, { a: b.att.own }).p, p1 = liveOdds(state, data, b, { a: b.att.own + f.max }).p;
-      return { ...legal[0].action, count: p0 >= 0.9 || p1 - p0 < 0.04 ? 0 : f.max };
+      return { ...borrow.action, count: p0 >= 0.9 || p1 - p0 < 0.04 ? 0 : f.max };
     }
     case 'chooseBattleCards': {   // commit every battle card when the exact odds move enough (18.b, 18.c, 18.i)
       const b = state.battle;
-      const n = x => Object.values(x.action.cards).reduce((t, k) => t + k, 0);
-      const all = legal.reduce((m, x) => (n(x) > n(m) ? x : m), legal[0]);
-      const none = legal.find(x => !n(x)) ?? legal[0];
+      const cards = legal.filter(x => x.type === 'CHOOSE_BATTLE_CARDS');
+      const n = x => Object.values(x.action.cards ?? {}).reduce((t, k) => t + k, 0);
+      const all = cards.reduce((m, x) => (n(x) > n(m) ? x : m), cards[0]);
+      const none = cards.find(x => !n(x)) ?? cards[0];
       const el = all.action.cards.elephants ?? 0, mo = all.action.cards.moral_boost ?? 0;
       const p0 = liveOdds(state, data, b).p;
       const p1 = liveOdds(state, data, b, f.role === 'attacker' ? { attBonus: b.att.elephants + el, attMoralUntil: mo } : { defBonus: b.def.elephants + el, defMoralUntil: mo }).p;
@@ -195,6 +228,17 @@ export function chooseAction(state, data, opts = {}) {
       return swing * stakes > 0.1 ? all.action : none.action;
     }
     case 'choosePerk': return legal[0].action;   // Scipio (15.c): only the extra die is left (an old save)
+    case 'returnReinforcements': {
+      const tries = [...new Set([0, f.max, Math.ceil((f.max ?? 0) / 2)])].filter(n => n >= 0 && n <= (f.max ?? 0));
+      const gens = f.general ? [false, true] : [undefined];
+      let best = null;
+      for (const back of tries) for (const g of gens) {
+        const a = { type: 'RETURN_REINFORCEMENTS', playerId: me, back, ...(g === undefined ? {} : { generalBack: g }) };
+        const v = oneply(a);
+        if (!best || v > best.v) best = { v, a };
+      }
+      return best?.a ?? legal[0].action;
+    }
     case 'battleContinue': {
       const b = state.battle;
       const o = liveOdds(state, data, b);
@@ -205,7 +249,7 @@ export function chooseAction(state, data, opts = {}) {
       if (f.window === 'defenceAnnounced') {
         const b = state.battle;
         const horn = byType('CALL_REINFORCEMENTS');
-        if (!horn.length) return legal[0].action;
+        if (!horn.length) return byType('PASS')[0]?.action ?? legal[0].action;
         const p0 = liveOdds(state, data, b).p;
         const best = horn.reduce((m, x) => (x.action.troops > m.action.troops ? x : m), horn[0]);
         const p1 = liveOdds(state, data, b, { d: defForce(state, b) + best.action.troops }).p;
@@ -241,6 +285,11 @@ export function chooseAction(state, data, opts = {}) {
       }
       case 'BUY_GAME_CARD': {    // never peek at the card it draws: pay the price, gain an average card
         v = -data.rules.costs.gameCardGold * W.gold - data.rules.costs.gameCardTroops * W.troop + W.card * 0.75 + (2 / 31) * W.prestige + cost;   // 2 of 31 are Prestige! (18.a)
+        break;
+      }
+      case 'BUY_TROOP': {    // surplus Gold (about 20+) and a free action: buy the troop instead of sitting on the pile. Gold and troop counts are public.
+        v = oneply(a, cost);
+        if (unused > 0 && playerOf(state, me).gold >= (cfg.spend?.surplusGold ?? 20)) v += cfg.spend?.troopBias ?? 6;
         break;
       }
       case 'ATTACK': {

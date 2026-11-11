@@ -5,7 +5,7 @@
 // = the legal moves the host sent). The desktop page is not changed and never loads this file.
 import { GuestClient, HOST_AWAY_MS, JOIN_END_TEXT, whyText } from '../net/guest.js';
 import { rememberSeat, forgetSeat, seatFor, tokensFor, parseJoin } from '../net/seats.js';
-import { createPeerTransport, createBroadcastTransport } from '../net/transport.js';
+import { createPeerTransport, createBroadcastTransport, loadIceServers } from '../net/transport.js';
 import { normCode } from '../net/protocol.js';
 
 export const SEAT_TOKEN_KEY = 'imperator.online.seat';   // the desktop's key: a seat joined on this browser is kept across reloads
@@ -24,7 +24,12 @@ function loadPeer() {
     document.head.append(sc);
   });
 }
-export async function makeTransport(opts) { return netMode() === 'local' ? createBroadcastTransport() : netMode() === 'fakepeer' ? createPeerTransport((await import('../net/fakepeer.js')).FakePeer, opts) : createPeerTransport(await loadPeer(), opts); }   // v30.5.1: fakepeer = the PeerJS path's size rule, between tabs (tests)
+export async function makeTransport(opts) {
+  if (netMode() === 'local') return createBroadcastTransport();
+  if (netMode() === 'fakepeer') return createPeerTransport((await import('../net/fakepeer.js')).FakePeer, opts);   // v30.5.1: fakepeer = the PeerJS path's size rule, between tabs (tests)
+  const iceServers = opts?.iceServers ?? await loadIceServers();
+  return createPeerTransport(await loadPeer(), { ...opts, iceServers });
+}
 export { whyText };
 
 /**

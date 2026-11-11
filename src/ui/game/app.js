@@ -10,7 +10,7 @@ import { createSound } from './sound.js';
 import { HostRoom, PING_MS } from '../../net/host.js';
 import { GuestClient, HOST_AWAY_MS, JOIN_END_TEXT, whyText } from '../../net/guest.js';
 import { rememberSeat, forgetSeat, seatFor, tokensFor, parseJoin } from '../../net/seats.js';
-import { createPeerTransport, createBroadcastTransport } from '../../net/transport.js';
+import { createPeerTransport, createBroadcastTransport, loadIceServers } from '../../net/transport.js';
 import { roomCode, normCode } from '../../net/protocol.js';
 import { createController } from '../core/controller.js';
 
@@ -402,7 +402,12 @@ function loadPeer() {
     document.head.append(sc);
   });
 }
-async function makeTransport(opts) { return netMode() === 'local' ? createBroadcastTransport() : netMode() === 'fakepeer' ? createPeerTransport((await import('../../net/fakepeer.js')).FakePeer, opts) : createPeerTransport(await loadPeer(), opts); }   // v30.5.1: fakepeer = the PeerJS path's size rule, between tabs (tests)
+async function makeTransport(opts) {
+  if (netMode() === 'local') return createBroadcastTransport();
+  if (netMode() === 'fakepeer') return createPeerTransport((await import('../../net/fakepeer.js')).FakePeer, opts);   // v30.5.1: fakepeer = the PeerJS path's size rule, between tabs (tests)
+  const iceServers = opts?.iceServers ?? await loadIceServers();
+  return createPeerTransport(await loadPeer(), { ...opts, iceServers });
+}
 const joinLink = (code, was = null) => `${location.origin}${location.pathname}?join=${code}${was ? '&was=' + was : ''}${netMode() ? '&net=' + netMode() : ''}`;
 const SEAT_TOKEN_KEY = 'imperator.online.seat';
 let joinWas = '';   // M14: ?was=OLD in a join link: the host resumed the game under a new code

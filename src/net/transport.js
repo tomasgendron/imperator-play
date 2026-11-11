@@ -107,6 +107,7 @@ export function createBroadcastTransport(BC = globalThis.BroadcastChannel) {
   };
 }
 
+// Fallback ICE list, used only if the Cloudflare relay service cannot be reached.
 // STUN plus the TURN relays bundled with PeerJS 1.5.5 (src/vendor/peerjs.min.js defaultConfig). That default is
 // stun.l.google.com plus turn:eu-0.turn.peerjs.com:3478 and turn:us-0.turn.peerjs.com:3478 (user peerjs, credential peerjsp).
 // It has no TCP or port-443 TURN URLs; 443 there is only the signalling port. Cloudflare's STUN server stays as well.
@@ -115,6 +116,8 @@ export const ICE_SERVERS = [
   { urls: 'stun:stun.cloudflare.com:3478' },
   { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
 ];
+/** Short-lived Cloudflare TURN credentials. The secret stays on this service; the public game only gets temporary usernames. */
+export const ICE_CREDENTIALS_URL = 'https://imperator-ice.pages.dev/ice';
 /** Shown when 0.peerjs.com itself cannot be reached (before the peer id opens). */
 export const SIGNALLING_TEXT = 'Could not reach the online service: check the internet connection and try again.';
 /** Shown when signalling succeeded and the WebRTC link to the host did not. */
@@ -150,6 +153,29 @@ export function peerFrames(s, id, max = MAX_FRAME_BYTES) {
 }
 
 const logNet = (what, detail) => { try { console.warn('[net]', what, detail ?? ''); } catch { /* */ } };
+
+/** Fetch short-lived Cloudflare TURN credentials. Falls back to ICE_SERVERS if the relay service is unreachable. */
+export async function loadIceServers({ url = ICE_CREDENTIALS_URL, timeoutMs = 5000, fallback = ICE_SERVERS, fetchFn } = {}) {
+  const fetchImpl = fetchFn ?? globalThis.fetch;
+  if (!url || typeof fetchImpl !== 'function') return fallback;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const r = await fetchImpl(url, { cache: 'no-store', signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!r.ok) throw new Error('ice ' + r.status);
+    const data = await r.json();
+    const servers = data.iceServers;
+    if (!Array.isArray(servers) || !servers.length) throw new Error('empty ice');
+    const hasTurn = servers.some(s => [].concat(s.urls).some(u => /^turns?:/i.test(String(u))));
+    if (!hasTurn) throw new Error('no turn');
+    logNet('ice-loaded', { n: servers.length });
+    return servers;
+  } catch (e) {
+    logNet('ice-fetch-failed', e?.message ?? e);
+    return fallback;
+  }
+}
 /** PeerJS puts the RTCPeerConnection on the DataConnection. Log its ICE state: a failed relay used to look like "the host is unreachable". */
 function watchIce(conn, onDead) {
   const arm = () => {

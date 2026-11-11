@@ -3,7 +3,7 @@
 // (GuestClient: hello with the seat token, reconnect with retries, host-away, heartbeat resync), src/net/transport.js (PeerJS, or the
 // BroadcastChannel loopback with ?net=local) and the controller (src/ui/core/controller.js: C.NET, apply -> view.guestSend, mineNow
 // = the legal moves the host sent). The desktop page is not changed and never loads this file.
-import { GuestClient, HOST_AWAY_MS, JOIN_END_TEXT } from '../net/guest.js';
+import { GuestClient, HOST_AWAY_MS, JOIN_END_TEXT, whyText } from '../net/guest.js';
 import { rememberSeat, forgetSeat, seatFor, tokensFor, parseJoin } from '../net/seats.js';
 import { createPeerTransport, createBroadcastTransport } from '../net/transport.js';
 import { normCode } from '../net/protocol.js';
@@ -25,7 +25,7 @@ function loadPeer() {
   });
 }
 export async function makeTransport() { return netMode() === 'local' ? createBroadcastTransport() : netMode() === 'fakepeer' ? createPeerTransport((await import('../net/fakepeer.js')).FakePeer) : createPeerTransport(await loadPeer()); }   // v30.5.1: fakepeer = the PeerJS path's size rule, between tabs (tests)
-export const whyText = w => ({ LINK_LOST: 'the link dropped', HOST_LEFT: 'the host left the game', NO_ROOM: 'the room is not open', NETWORK: 'network error', TIMEOUT: 'no answer', RETRY: 'retrying' })[w] ?? String(w ?? 'no link').toLowerCase().replace(/_/g, ' ');
+export { whyText };
 
 /**
  * page: { C, data, inGame(), say(msg, bad), lobby(m), enter(), render(), schedule(), toast(m), sound(id), freezeControls(),
@@ -100,7 +100,7 @@ export function createGuest(page) {
     C.NET = n; document.body.dataset.online = 'guest';
     n.ping = setInterval(() => { n.client.tick(); try { heal(); } catch (e) { console.warn('heal', e); } }, 2000);
     try { await n.client.join(code); } catch (e) {
-      const why = e?.code === 'NO_ROOM' || e?.code === 'NETWORK' ? JOIN_END_TEXT[e.code] : (e?.message || String(e));
+      const why = JOIN_END_TEXT[e?.code] ?? (e?.message || String(e));
       if (mineNet()) end(why); else page.busyJoin(false);
       return false;
     }

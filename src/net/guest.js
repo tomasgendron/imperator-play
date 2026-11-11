@@ -4,7 +4,7 @@
 // transport, the same room code, the seat token in the hello, with retries (`retryMs`); the host gives the same seat back with the
 // whole current view. A host that stops answering (no ping for HOST_AWAY_MS) is shown as away until it answers again.
 import { PROTO, parse, msg, normCode } from './protocol.js';
-import { HOST } from './transport.js';
+import { HOST, HOST_UNREACHABLE_TEXT, SIGNALLING_TEXT } from './transport.js';
 
 const KEEP = 3;   // views kept (the page only reads the current step and the one before it)
 export const HOST_AWAY_MS = 15000;
@@ -28,8 +28,11 @@ export const STATE_MS = 5000;
 export const JOIN_END_TEXT = {
   NO_ANSWER: 'The host\'s page did not answer (timeout). Check that the host has Imperator open and in front, then tap Join again.',
   NO_ROOM: 'Room not found: check the code. If it is right, the host\'s page is closed or asleep (host offline): ask the host to open it.',
-  NETWORK: 'Could not reach the online service: check the internet connection and try again.',
+  NETWORK: SIGNALLING_TEXT,
+  HOST_UNREACHABLE: HOST_UNREACHABLE_TEXT,
 };
+/** Short reason in the reconnect banner. A failed host link is not called a signalling outage. */
+export const whyText = w => ({ LINK_LOST: 'the link dropped', HOST_LEFT: 'the host left the game', NO_ROOM: 'the room is not open', NETWORK: 'network error', HOST_UNREACHABLE: JOIN_END_TEXT.HOST_UNREACHABLE, TIMEOUT: 'no answer', RETRY: 'retrying' })[w] ?? String(w ?? 'no link').toLowerCase().replace(/_/g, ' ');
 
 export class GuestClient {
   /** hooks: {onWelcome(c), onLobby(c, lobby), onUpdate(c, update), onReject(c, reject), onBye(c, reason), onHostGone(c),

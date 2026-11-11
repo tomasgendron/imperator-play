@@ -549,6 +549,7 @@ define('BUY_MERCHANT_SHIP', {
     check(a.a && a.b && a.a !== a.b, 'BAD_LINK', 'Name the two provinces the sea link joins (22.c).', '22.c');
     const [x, y] = a.a < a.b ? [a.a, a.b] : [a.b, a.a];
     check(S.isSeaLink(data, x, y), 'NOT_A_SEA_LINK', `${nm(data, x)} and ${nm(data, y)} are not joined by sea (22.c).`, '22.c');
+    check(S.shipTouchesOwnCoast(state, data, pid, x, y), 'NEED_OWN_COAST', `One end of the sea link must be one of your own coastal provinces (22.c).`, '22.c');
     check(!S.hasShip(state, pid, x, y), 'SHIP_EXISTS', `You already have a Merchant ship on ${nm(data, x)}–${nm(data, y)} (22.d).`, '22.d');
     check(pl.gold >= cost, 'NEED_GOLD', `A Merchant ship costs ${cost} Gold; you have ${pl.gold}.`, '22.c');
     spendAction(ctx, 'merchantShip');
@@ -568,6 +569,7 @@ define('MOVE_MERCHANT_SHIP', {
     check(S.hasShip(state, pid, x, y), 'NO_SHIP', `You have no Merchant ship on ${nm(data, x)}–${nm(data, y)}.`, '22.d');
     check(!(x === nx && y === ny), 'SAME_LINK', 'The ship is already on that sea link.', '22.c');
     check(S.isSeaLink(data, nx, ny), 'NOT_A_SEA_LINK', `${nm(data, nx)} and ${nm(data, ny)} are not joined by sea (22.c).`, '22.c');
+    check(S.shipTouchesOwnCoast(state, data, pid, nx, ny), 'NEED_OWN_COAST', `One end of the sea link must be one of your own coastal provinces (22.c).`, '22.c');
     check(!S.hasShip(state, pid, nx, ny), 'SHIP_EXISTS', `You already have a Merchant ship on ${nm(data, nx)}–${nm(data, ny)} (22.d).`, '22.d');
     spendAction(ctx, 'moveMerchantShip');
     const i = (state.ships ?? []).findIndex(s => s.player === pid && s.a === x && s.b === y);

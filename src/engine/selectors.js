@@ -199,14 +199,21 @@ export function seaLinks(data) {
 export const isSeaLink = (data, a, b) => !!(data.provincesById[a] && data.provincesById[b] && data.provincesById[a].sea?.includes(b));
 export const shipsOf = (state, pid = null) => (state.ships ?? []).filter(s => !pid || s.player === pid);
 export const hasShip = (state, pid, a, b) => shipsOf(state, pid).some(s => shipKey(s.a, s.b) === shipKey(a, b));
+/** One end of the sea link is a coastal province this player controls (22.c). The other end may be anyone's, Roma included. */
+export function shipTouchesOwnCoast(state, data, pid, a, b) {
+  if (!isSeaLink(data, a, b)) return false;
+  const ownCoast = id => controls(state, pid, id) && isCoastal(data, id);
+  return ownCoast(a) || ownCoast(b);
+}
 /**
  * Buy-a-ship picker (22.c). With no `first`, the coastal provinces this player controls that still
  * have an open sea link (one they do not already have a ship on). With `first`, the other end of
- * each such link. A new `first` is a fresh list, so the previous second pick is not kept.
+ * each such link, whoever owns it. A new `first` is a fresh list, so the previous second pick is not kept.
+ * Moves use the same ownership rule through the legal MOVE_MERCHANT_SHIP list.
  */
 export function shipBuyProvinces(state, data, pid, first = null) {
   const owned = new Set(provincesOf(state, pid).filter(id => isCoastal(data, id)));
-  const open = seaLinks(data).filter(link => !hasShip(state, pid, link.a, link.b));
+  const open = seaLinks(data).filter(link => !hasShip(state, pid, link.a, link.b) && shipTouchesOwnCoast(state, data, pid, link.a, link.b));
   if (!first) {
     const ends = new Set();
     for (const link of open) {

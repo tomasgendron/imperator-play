@@ -19,7 +19,7 @@ export function readRawData(root = ROOT, { map = DEFAULT_MAP } = {}) {
 export function readRuleLabels(root = ROOT) {
   const labels = new Set();
   for (const line of fs.readFileSync(path.join(root, 'rules.md'), 'utf8').split('\n')) {
-    const m = line.match(/^\*\*(\d{1,2}\.[a-z]{1,2})\*\*/);
+    const m = line.match(/^\*\*(\d{1,2}\.[a-z]{1,2})(?:\*\*|\s)/);   // the export sometimes bolds the whole heading, so the label is followed by a space
     if (m) labels.add(m[1]);
   }
   return labels;

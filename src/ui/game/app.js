@@ -8,7 +8,7 @@ import { topFrame, whoActs, minGarrison, isUnderGarrisoned, totalTroops, provinc
 import * as G from './model.js';
 import { createSound } from './sound.js';
 import { HostRoom, PING_MS } from '../../net/host.js';
-import { GuestClient, HOST_AWAY_MS, JOIN_END_TEXT } from '../../net/guest.js';
+import { GuestClient, HOST_AWAY_MS, JOIN_END_TEXT, whyText } from '../../net/guest.js';
 import { rememberSeat, forgetSeat, seatFor, tokensFor, latestSeat, parseJoin } from '../../net/seats.js';
 import { createPeerTransport, createBroadcastTransport } from '../../net/transport.js';
 import { roomCode, normCode } from '../../net/protocol.js';
@@ -630,7 +630,6 @@ async function joinGame() {
   n.ping = setInterval(() => { n.client.tick(); try { guestHeal(); } catch (e) { console.warn('heal', e); } }, 2000);
   try { await n.client.join(code); } catch (e) { if (C.NET === n) netLeave(); say(JOIN_END_TEXT[e?.code] ?? e.message, true); $('#joinGo').disabled = false; return; }
 }
-const whyText = w => ({ LINK_LOST: 'the link dropped', HOST_LEFT: 'the host left the game', NO_ROOM: 'the room is not open', NETWORK: 'network error', TIMEOUT: 'no answer', RETRY: 'retrying' })[w] ?? String(w ?? 'no link').toLowerCase().replace(/_/g, ' ');
 /** M14: the online strip in the game: for the host, the room code and its link; for a guest, the link to the host (reconnecting,
  *  the host away, given up, or the seat played by the AI for now). body[data-net-status] is for tests. */
 function renderNetBanner() {

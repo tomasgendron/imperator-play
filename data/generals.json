@@ -15,7 +15,7 @@
    ]
   },
   {
-   "text": "Once per turn, during the Actions step (after the Revolt Roll), you may move your general to another of your own provinces, along the same routes as a troop Move: neutral Carthage is passable, and he pays no Gold for crossing an ally. This is free: it is not an action, and no troops need to go with him. A Move action carrying only the general is not allowed, but a troop Move can still take him along.",
+   "text": "As many times as you want in a turn, during the Actions step (after the Revolt Roll), you may move your general to another of your own provinces, along the same routes as a troop Move: neutral Carthage is passable, and he pays no Gold for crossing an ally. This is free: it is not an action, and no troops need to go with him. A Move action carrying only the general is not allowed, but a troop Move can still take him along. When leaving Roma, he may move to any province you control, with or without a direct link (Roma escorts him).",
    "rule": [
     "15.j",
     "17.z",
@@ -23,7 +23,7 @@
    ]
   },
   {
-   "text": "Setup offers all four generals; a random draw uses all four. Two players cannot have the same general.",
+   "text": "Setup offers all five generals: Caesar, Scipio, Pompey, Germanicus and Augustus. A random draw uses all five. Two players cannot have the same general.",
    "rule": [
     "15.i"
    ]
@@ -360,7 +360,7 @@
        ]
       },
       {
-       "text": "This stacks with Catapults. Germanicus already ignores the Wall for the whole battle; each Catapult still adds its own ignored rolls on top.",
+       "text": "Catapult Wall suppression is redundant while Disciplined Advance applies: the Wall is already ignored for the whole battle, so a Catapult is not an additional effect.",
        "rule": [
         "15.h",
         "19.u"
@@ -395,7 +395,7 @@
      "id": "treasury",
      "needsWithArmy": false,
      "modifiers": [],
-     "name": "Perk 1: Treasury",
+     "name": "Perk 1: Master of the Treasury",
      "when": "At the Resources step, when a Merchant Bonus is earned",
      "detail": [{ "text": "+1 Gold is added to an earned Merchant Bonus. It is never granted without a qualifying Road network.", "rule": ["22.b"] }]
     },
@@ -403,7 +403,7 @@
      "id": "builder",
      "needsWithArmy": false,
      "modifiers": [],
-     "name": "Perk 2: Builder",
+     "name": "Perk 2: The Builder",
      "when": "Buying a Road",
      "detail": [{ "text": "Roads cost 1 Gold instead of 2.", "rule": ["19.j"] }]
     }

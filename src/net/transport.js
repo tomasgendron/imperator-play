@@ -5,13 +5,14 @@
 //   open({role: 'host'|'guest', code}) -> Promise<{code}>
 //        host: claim the room `code`; guest: connect to the host of room `code`.
 //        Rejects with an Error whose `.code` is 'ROOM_TAKEN' (host: the code is in use), 'NO_ROOM' (guest: no host with that code),
-//        or 'NETWORK' (the signalling server cannot be reached / the connection failed).
+//        or 'NETWORK' (the signalling server cannot be reached), or 'HOST_UNREACHABLE' (signalling worked, the host's
+//        WebRTC link did not).
 //   send(peer, obj)          host: peer = a guest's id; guest: peer = HOST. obj is plain JSON.
 //   onMessage(fn(peer, obj)) every message from a peer, in order.
 //   onPeer(fn(peer))         host: a guest connected.            onPeerClose(fn(peer)) a peer went away (guest: HOST went away).
 //   close()                  leave the room / drop every connection.
 // Implementations: createMemoryNet().transport() (in-memory, tests), createBroadcastTransport() (two tabs of one browser, tests and
-// a no-network fallback), createPeerTransport(Peer) (PeerJS on the free PeerJS Cloud signalling server, STUN only, no TURN).
+// a no-network fallback), createPeerTransport(Peer) (PeerJS on the free PeerJS Cloud signalling server, STUN plus PeerJS TURN).
 import { peerIdOf, normCode } from './protocol.js';
 
 export const HOST = 'host';
@@ -106,8 +107,29 @@ export function createBroadcastTransport(BC = globalThis.BroadcastChannel) {
   };
 }
 
-// STUN only (no TURN account, decision 2026-10-25): Google's and Cloudflare's free public STUN servers.
-export const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }];
+// STUN plus the TURN relays bundled with PeerJS 1.5.5 (src/vendor/peerjs.min.js defaultConfig). That default is
+// stun.l.google.com plus turn:eu-0.turn.peerjs.com:3478 and turn:us-0.turn.peerjs.com:3478 (user peerjs, credential peerjsp).
+// It has no TCP or port-443 TURN URLs; 443 there is only the signalling port. Cloudflare's STUN server stays as well.
+export const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+];
+/** Shown when 0.peerjs.com itself cannot be reached (before the peer id opens). */
+export const SIGNALLING_TEXT = 'Could not reach the online service: check the internet connection and try again.';
+/** Shown when signalling succeeded and the WebRTC link to the host did not. */
+export const HOST_UNREACHABLE_TEXT = 'Couldn\'t connect to the host\'s game. Make sure the host\'s page is open and awake, then try again. On different networks this can take a moment.';
+const SIGNALLING_TYPES = new Set(['server-error', 'socket-error', 'socket-closed']);
+/** Map a PeerJS error, or the open() timer, to ROOM_TAKEN / NO_ROOM / NETWORK / HOST_UNREACHABLE.
+ *  `signalled` is true once the peer id has opened. A webrtc error is the host link, not the signalling server. */
+export function classifyPeerFailure(e, { signalled = false, timedOut = false } = {}) {
+  if (e?.type === 'unavailable-id') return err('ROOM_TAKEN', 'That room code is already in use.');
+  if (e?.type === 'peer-unavailable') return err('NO_ROOM', 'No game with that code was found (is the host\'s page still open?).');
+  if (!timedOut && (SIGNALLING_TYPES.has(e?.type) || (e?.type === 'network' && !signalled))) return err('NETWORK', SIGNALLING_TEXT);
+  if (timedOut && !signalled) return err('NETWORK', SIGNALLING_TEXT);
+  if (e?.type === 'webrtc' || (timedOut && signalled) || signalled) return err('HOST_UNREACHABLE', HOST_UNREACHABLE_TEXT);
+  return err('NETWORK', SIGNALLING_TEXT);
+}
 // v30.5.1: PeerJS's JSON channel DROPS (a "Message too big" error, nothing sent) any message of util.chunkedMTU = 16300 bytes or more,
 // counted as the UTF-8 of JSON.stringify(frame). A frame's text is a JSON string inside the frame, so its quotes are escaped again
 // and non-ASCII letters take 2-3 bytes: frames are cut by their real size (the old 16000-character chunks were ~19000 bytes, so
@@ -144,29 +166,30 @@ export function createPeerTransport(Peer, { iceServers = ICE_SERVERS, timeoutMs 
     conn.on('close', () => { if (conns.get(who) === conn) { conns.delete(who); ev.emitClose(who); } });
     conn.on('error', e => { if (e?.type !== 'peer-unavailable') console.warn('data channel', e?.type ?? e?.message ?? e); });   // a close follows a real failure
   };
-  const mapErr = e => (e?.type === 'unavailable-id' ? err('ROOM_TAKEN', 'That room code is already in use.')
-    : e?.type === 'peer-unavailable' ? err('NO_ROOM', 'No game with that code was found (is the host\'s page still open?).')
-    : err('NETWORK', `Could not reach the online service (${e?.type ?? e?.message ?? 'unknown error'}). Check the internet connection and try again.`));
   return {
     get id() { return peer?.id ?? null; },
     open({ role, code }) {
       return new Promise((resolve, reject) => {
-        let done = false; const finish = (f, v) => { if (!done) { done = true; clearTimeout(timer); f(v); } };
-        const timer = setTimeout(() => { finish(reject, err('NETWORK', 'The connection timed out. Check the code and the internet connection, then try again.')); try { peer?.destroy(); } catch { /* */ } }, timeoutMs);
+        let done = false; let signalled = false;
+        const finish = (f, v) => { if (!done) { done = true; clearTimeout(timer); f(v); } };
+        const timer = setTimeout(() => { finish(reject, classifyPeerFailure(null, { signalled, timedOut: true })); try { peer?.destroy(); } catch { /* */ } }, timeoutMs);
         const opts = { debug, config: { iceServers } };
+        const fail = e => { if (!done) { finish(reject, classifyPeerFailure(e, { signalled })); try { peer.destroy(); } catch { /* */ } } else if (debug > 1) console.warn('peer', e); };
         if (role === 'host') {
           peer = new Peer(peerIdOf(code), opts);
-          peer.on('open', () => finish(resolve, { code: normCode(code) }));
+          peer.on('open', () => { signalled = true; finish(resolve, { code: normCode(code) }); });
           peer.on('connection', conn => { conn._who = conn.peer; conn.on('open', () => { const old = conns.get(conn.peer); conns.set(conn.peer, conn); if (old && old !== conn) try { old.close(); } catch { /* */ } wire(conn); ev.emitPeer(conn.peer); }); });
           peer.on('disconnected', () => { try { peer.reconnect(); } catch { /* */ } });   // lost the signalling server: existing games keep running
         } else {
           peer = new Peer(opts);
           peer.on('open', () => {
+            signalled = true;
             const conn = peer.connect(peerIdOf(code), { reliable: true, serialization: 'json' }); conn._who = HOST;
             conn.on('open', () => { conns.set(HOST, conn); wire(conn); finish(resolve, { code: normCode(code) }); });
           });
         }
-        peer.on('error', e => { if (!done) { finish(reject, mapErr(e)); try { peer.destroy(); } catch { /* */ } } else if (debug > 1) console.warn('peer', e); });
+        // A single webrtc error is often one bad ICE candidate (PeerJS emits it and keeps negotiating). Do not abort; the timer decides.
+        peer.on('error', e => { if (e?.type === 'webrtc') { if (debug > 1) console.warn('webrtc', e); return; } fail(e); });
       });
     },
     send(to, obj) {

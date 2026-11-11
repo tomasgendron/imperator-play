@@ -163,10 +163,13 @@ export function legalActions(state, data) {
     const act = unused > 0;
     if (act && gold >= data.itemsById.catapult.cost.gold) add({ type: 'BUY_CATAPULT' }, `Buy a Catapult (${data.itemsById.catapult.cost.gold} Gold)`);
     if (act && gold >= c.prestige) add({ type: 'BUY_PRESTIGE' }, `Buy 1 Prestige (${c.prestige} Gold)`);
-    if (act && gold >= c.merchantShip) for (const link of S.seaLinks(data)) if (!S.hasShip(state, who, link.a, link.b)) add({ type: 'BUY_MERCHANT_SHIP', a: link.a, b: link.b }, `Merchant ship ${nm(data, link.a)}–${nm(data, link.b)} (${c.merchantShip} Gold)`);
+    if (act && gold >= c.merchantShip) for (const link of S.seaLinks(data)) {
+      if (S.hasShip(state, who, link.a, link.b) || !S.shipTouchesOwnCoast(state, data, who, link.a, link.b)) continue;
+      add({ type: 'BUY_MERCHANT_SHIP', a: link.a, b: link.b }, `Merchant ship ${nm(data, link.a)}–${nm(data, link.b)} (${c.merchantShip} Gold)`);
+    }
     if (act) for (const ship of S.shipsOf(state, who)) for (const link of S.seaLinks(data)) {
       if (ship.a === link.a && ship.b === link.b) continue;
-      if (S.hasShip(state, who, link.a, link.b)) continue;
+      if (S.hasShip(state, who, link.a, link.b) || !S.shipTouchesOwnCoast(state, data, who, link.a, link.b)) continue;
       add({ type: 'MOVE_MERCHANT_SHIP', a: ship.a, b: ship.b, toA: link.a, toB: link.b }, `Move Merchant ship ${nm(data, ship.a)}–${nm(data, ship.b)} → ${nm(data, link.a)}–${nm(data, link.b)} (free)`);
     }
     if (act) for (const id of mine) {

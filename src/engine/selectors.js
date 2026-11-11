@@ -4,6 +4,8 @@ import { OWNED_STATUSES } from './state.js';
 export const neighbours = (data, id) => [...data.provincesById[id].land, ...data.provincesById[id].sea];
 export const isNeighbour = (data, a, b) => neighbours(data, a).includes(b);
 export const linkType = (data, a, b) => (data.provincesById[a].land.includes(b) ? 'land' : data.provincesById[a].sea.includes(b) ? 'sea' : null);
+/** Does this province have a sea link? Germanica and Swiss are the only landlocked provinces (18.z). */
+export const isCoastal = (data, id) => (data.provincesById[id]?.sea?.length ?? 0) > 0;
 
 export const provincesOf = (state, pid) => Object.keys(state.provinces).sort().filter(id => state.provinces[id].owner === pid);
 export const conqueredOf = (state, pid) => provincesOf(state, pid).filter(id => state.provinces[id].status === 'conquered');
@@ -19,10 +21,22 @@ export function distances(data, from) {
   return dist;
 }
 
+/** Is `pid`'s general recalled to Rome right now (18.o, v31.17)? True while the current turn is at or before the recall's\n * through-turn. A player with no general is never recalled. */
+export const generalRecalled = (state, pid) => {
+  const p = state.players.find(x => x.id === pid);
+  return !!p?.general && p.generalRecalledThroughTurn !== null && p.generalRecalledThroughTurn !== undefined && state.turn.number <= p.generalRecalledThroughTurn;
+};
 export const generalPerksActive = (state, pid) => {
   const p = state.players.find(x => x.id === pid);
-  return !!p?.general && !(p.generalRecalledThroughTurn !== null && state.turn.number <= p.generalRecalledThroughTurn);   // 18.o
+  return !!p?.general && !generalRecalled(state, pid);   // 18.o
 };
+/** Route for the general's free move (15.j). Leaving Roma, after a recall or whenever he is there, is an escort:
+ * Roma takes him to any province his owner controls, linked or not (18.o, Vidi's ruling t641u). */
+export function generalMoveRoute(state, data, pid, from, to) {
+  if (from !== 'roma') return moveRoute(state, data, pid, from, to);
+  if (!controls(state, pid, to) || to === 'roma') return null;
+  return { cost: 0, path: ['roma', to] };
+}
 export const hasGarrisonCard = (state, pid) => state.players.find(x => x.id === pid)?.inPlay.some(c => state.cards[c.uid].def === 'garrison_requirement') ?? false;
 export const pompeyLowers = (state, pid) => state.players.find(x => x.id === pid)?.general?.id === 'pompey' && generalPerksActive(state, pid);
 
@@ -137,8 +151,20 @@ export function nearestOwned(state, data, pid, from) {
 
 /** Room left under Roma's cap of 20 (12.k). */
 export const romaRoom = (state, data) => Math.max(0, data.rules.romaMaxTroops - state.provinces.roma.troops);
+/** A province is protected from revolt and from being bribed when its OWNER'S general is stationed there (muse batch, 2026-11-07).
+ * A recalled general protects nothing (18.o, v31.17): his perks are off AND his token is in Roma — the perks check here is the
+ * second layer, so a recalled general left on a province by an old save still protects nothing. */
+export const generalProtects = (state, id) => {
+  const p = state.provinces[id];
+  if (!p || p.owner === null) return false;
+  return state.players.find(x => x.id === p.owner)?.general?.at === id && generalPerksActive(state, p.owner);
+};
 /** Can this conquered province revolt right now? 10+ troops never revolts (17.c, 18.m, 19.d); it still counts toward the threshold. */
-export const canRevolt = (state, data, id) => state.provinces[id].troops < data.rules.revoltImmuneAtTroops;
+export const canRevolt = (state, data, id) => state.provinces[id].troops < data.rules.revoltImmuneAtTroops && !generalProtects(state, id);
+/** Why a province cannot revolt right now (for the log): the general's protection, or the 10+ rule. */
+export const revoltImmuneReason = (state, data, id) => generalProtects(state, id)
+  ? 'the general is stationed here, so it cannot revolt'
+  : `${data.rules.revoltImmuneAtTroops} or more troops never revolt`;
 /** Max-1-held cards: Garrison Requirement (in play) and Battlefield Imperator (in hand) (18.t, 18.w). */
 export const holdsUnique = (state, pid, defId) => { const p = state.players.find(x => x.id === pid); return [...p.hand, ...p.inPlay].some(c => state.cards[c.uid].def === defId); };
 /**
@@ -156,6 +182,133 @@ export function maxBorrow(state, data, id) {
   if (!p || p.owner === null || !['conquered', 'starting'].includes(p.status) || id === 'roma') return 0;
   if (isUnderGarrisoned(state, data, id)) return 0;
   return Math.floor((p.native.count ?? 0) / 2);
+}
+
+/** Canonical key for an undirected sea link (22.c). `a` and `b` are province ids. */
+export const shipKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+/** Every sea link on the map, each once, endpoints sorted. */
+export function seaLinks(data) {
+  const seen = new Set(); const out = [];
+  for (const p of data.provinces) for (const q of p.sea || []) {
+    const key = shipKey(p.id, q); if (seen.has(key)) continue; seen.add(key);
+    const [a, b] = p.id < q ? [p.id, q] : [q, p.id];
+    out.push({ a, b, key });
+  }
+  return out.sort((x, y) => (x.key < y.key ? -1 : 1));
+}
+export const isSeaLink = (data, a, b) => !!(data.provincesById[a] && data.provincesById[b] && data.provincesById[a].sea?.includes(b));
+export const shipsOf = (state, pid = null) => (state.ships ?? []).filter(s => !pid || s.player === pid);
+export const hasShip = (state, pid, a, b) => shipsOf(state, pid).some(s => shipKey(s.a, s.b) === shipKey(a, b));
+/**
+ * Buy-a-ship picker (22.c). With no `first`, the coastal provinces this player controls that still
+ * have an open sea link (one they do not already have a ship on). With `first`, the other end of
+ * each such link. A new `first` is a fresh list, so the previous second pick is not kept.
+ */
+export function shipBuyProvinces(state, data, pid, first = null) {
+  const owned = new Set(provincesOf(state, pid).filter(id => isCoastal(data, id)));
+  const open = seaLinks(data).filter(link => !hasShip(state, pid, link.a, link.b));
+  if (!first) {
+    const ends = new Set();
+    for (const link of open) {
+      if (owned.has(link.a)) ends.add(link.a);
+      if (owned.has(link.b)) ends.add(link.b);
+    }
+    return [...ends].sort();
+  }
+  if (!owned.has(first)) return [];
+  const seconds = [];
+  for (const link of open) {
+    if (link.a === first) seconds.push(link.b);
+    else if (link.b === first) seconds.push(link.a);
+  }
+  return seconds.sort();
+}
+/**
+ * The player's Roads that form one connected network reaching Roma (22.b, 22.e).
+ * A node is a province this player still controls that has a Road. A revolt or a loss drops that province out of the
+ * network even though the Road piece stays on the board (17.c): the piece is not a bridge for the old owner.
+ * Land borders connect two of those provinces. A sea hop connects them only when THIS player has a Merchant ship on
+ * that sea link and still owns both ends. A ship is not a Road and is not counted.
+ * The network counts only when some province in it still reaches Roma (it is Roma, it borders Roma by land, or it has
+ * this player's ship on its sea link to Roma). Returns the single longest such network (two equal ones count once).
+ */
+export function roadNetwork(state, data, pid) {
+  const ownedRoad = id => {
+    const p = state.provinces[id];
+    return !!p && p.owner === pid && p.road && OWNED_STATUSES.includes(p.status);
+  };
+  const mine = Object.keys(state.provinces).filter(ownedRoad).sort();
+  const neighbours = id => {
+    const def = data.provincesById[id]; const out = [];
+    for (const q of def.land || []) if (ownedRoad(q)) out.push(q);
+    for (const q of def.sea || []) if (ownedRoad(q) && hasShip(state, pid, id, q)) out.push(q);
+    return out;
+  };
+  const reachesRoma = id => id === 'roma'
+    || (data.provincesById[id].land || []).includes('roma')
+    || ((data.provincesById[id].sea || []).includes('roma') && hasShip(state, pid, id, 'roma') && ownedRoad(id));
+  let best = [];
+  const seen = new Set();
+  for (const start of mine) {
+    if (seen.has(start)) continue;
+    const comp = []; const q = [start]; seen.add(start);
+    while (q.length) {
+      const c = q.shift(); comp.push(c);
+      for (const n of neighbours(c)) if (!seen.has(n)) { seen.add(n); q.push(n); }
+    }
+    if (!comp.some(reachesRoma)) continue;
+    if (comp.length > best.length) best = comp;
+  }
+  return { roads: best.length, provinces: best.slice().sort() };
+}
+/** Merchant Bonus Gold (22.b): 0 below 2 Roads; from 2 up, Gold = Roads − 1 (2 → 1, 3 → 2, 4 → 3, 5 → 4, …). No cap. */
+export function merchantBonusGold(roads, data) {
+  const rule = data?.rules?.merchantBonus;
+  const min = rule?.minRoads ?? 2;
+  const per = rule?.perExtraRoad ?? 1;
+  const n = roads ?? 0;
+  if (n < min) return 0;
+  return (n - min + 1) * per;
+}
+/** Augustus adds +1 only to a Merchant Bonus that was actually earned. */
+export function merchantBonusFor(state, data, pid, roads) {
+  const base = merchantBonusGold(roads, data);
+  const pl = state.players?.find(p => p.id === pid);
+  if (base > 0 && pl?.general?.id === 'augustus' && generalPerksActive(state, pid)) return base + 1;
+  return base;
+}
+/** Augustus builds Roads for 1 Gold. Everyone else pays the ruleset price. */
+export function roadCost(state, data, pid) {
+  const pl = state.players?.find(p => p.id === pid);
+  if (pl?.general?.id === 'augustus' && generalPerksActive(state, pid)) return 1;
+  return data.rules.costs.road;
+}
+/** Gold Prestige at end of turn (22.f): one per full 20 Gold, Gold is not spent. */
+export function goldPrestige(gold, data) {
+  const per = data?.rules?.goldPrestigeGold ?? 20;
+  return per > 0 ? Math.floor((gold ?? 0) / per) : 0;
+}
+/** Merchant ships to draw, offset so several players on one sea link stay visible (22.d). Coordinates are token-space. */
+export function shipSegments(state, data) {
+  const groups = new Map();
+  for (const s of shipsOf(state)) {
+    const key = shipKey(s.a, s.b);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+  const out = [];
+  for (const list of groups.values()) {
+    list.sort((p, q) => (p.player < q.player ? -1 : 1));
+    const A = data.provincesById[list[0].a]?.token; const B = data.provincesById[list[0].b]?.token;
+    if (!A || !B) continue;
+    const dx = B.x - A.x, dy = B.y - A.y; const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    list.forEach((s, i) => {
+      const off = (i - (list.length - 1) / 2) * 8;
+      out.push({ player: s.player, a: s.a, b: s.b, x1: A.x + nx * off, y1: A.y + ny * off, x2: B.x + nx * off, y2: B.y + ny * off, mx: (A.x + B.x) / 2 + nx * off, my: (A.y + B.y) / 2 + ny * off });
+    });
+  }
+  return out;
 }
 
 export const holdsCard = (state, pid, defId) => state.players.find(p => p.id === pid).hand.some(c => state.cards[c.uid].def === defId);

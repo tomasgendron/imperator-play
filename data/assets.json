@@ -103,6 +103,14 @@
    "path": "tokens/general_germanicus.png",
    "kind": "token"
   },
+  "general.augustus": {
+   "path": "generals/augustus.png",
+   "kind": "card"
+  },
+  "token.general.augustus": {
+   "path": "tokens/general_augustus.png",
+   "kind": "token"
+  },
   "card.elephants": {
    "path": "cards/game/elephants.png",
    "kind": "card"
@@ -145,6 +153,10 @@
   },
   "card.horn_of_titus_pullus": {
    "path": "cards/game/horn_of_titus_pullus.png",
+   "kind": "card"
+  },
+  "card.sneak_attack_sea": {
+   "path": "cards/game/sneak_attack_sea.png",
    "kind": "card"
   },
   "card.gold_2": {

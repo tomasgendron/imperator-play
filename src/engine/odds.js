@@ -39,8 +39,9 @@ function roundTable(nA, nD, net) {
 /**
  * Exact odds of a battle fought to the end. p: {a, d, round (next round to roll, 1 = first), maxA (attacker dice before the force
  * limit), defDice, wall, ignore (rolls 1..ignore have the Wall cancelled), defWallDice, attBonus/defBonus (Elephants, all rounds),
- * attMoralUntil/defMoralUntil (+1 in rounds <= this), germAtt/germDef (+delta on a lone last die, only once that side has lost troops in the battle,
- * Q113: below its count at the start of these odds, or attLost/defLost already before them), delta}.
+ * attMoralUntil/defMoralUntil (+1 in rounds <= this), germAtt/germDef (Fight to the Death: +1 to the highest die at 2 troops, +2 at 1).
+ * An attacker qualifies only after starting at 3 or more (attStart, default the troop count these odds begin with) and then falling to 2 or 1.
+ * A defender qualifies at 2 or 1 even if the battle started there. delta is unused; the +1/+2 are fixed.
  * Returns {p: P(conquest), surv: E[attacker survivors on a conquest] (not conditional), lose: 1 - p}.
  */
 export function fightOdds(q) {
@@ -56,8 +57,9 @@ export function fightOdds(q) {
     const nA = Math.min(P.maxA, a);
     const nD = Math.min(P.wall && rc > P.ignore ? P.defWallDice : P.defDice, d);
     let net = P.attBonus - P.defBonus + (rc <= P.attMoralUntil ? 1 : 0) - (rc <= P.defMoralUntil ? 1 : 0);
-    if (P.germAtt && a === 1 && nA === 1 && (P.attLost || a < a0)) net += P.delta;   // Q113: never for an army that started at 1
-    if (P.germDef && d === 1 && nD === 1 && (P.defLost || d < d0)) net -= P.delta;
+    const attStart = P.attStart ?? a0;
+    if (P.germAtt && attStart >= 3 && a < attStart) { if (a === 2) net += 1; else if (a === 1) net += 2; }
+    if (P.germDef) { if (d === 2) net -= 1; else if (d === 1) net -= 2; }
     net = Math.max(-7, Math.min(7, net));
     let pw = 0, sv = 0;
     for (const o of roundTable(nA, nD, net)) {
@@ -98,7 +100,7 @@ export function attackOdds(state, data, action, opts = {}) {
   const R = data.rules.battle; const t = state.provinces[action.target];
   const withGeneral = !!action.withGeneral && gen(state, pid)?.at === action.from;
   const on = id => withGeneral && perksOn(state, pid, id);
-  const borrow = opts.borrow ?? borrowLimit(state, data, action.from, action.troops);
+  const borrow = action.sneak ? 0 : (opts.borrow ?? borrowLimit(state, data, action.from, action.troops));
   let a = action.troops + borrow;
   let d = t.owner === null && action.target !== 'roma' ? (t.native.present ?? t.native.count ?? 0) : t.troops;
   if (opts.extraDefenders) d += opts.extraDefenders;
@@ -139,6 +141,7 @@ export function liveOdds(state, data, b = state.battle, over = {}) {
     wall: wallsActive(state, data, b), ignore: b.wallRollsIgnored, attBonus: b.att.elephants, defBonus: b.def.elephants,
     attMoralUntil: nextRound - 1 + moralLeft('att'), defMoralUntil: nextRound - 1 + moralLeft('def'),
     germAtt: b.mode === 'attack' && on('germanicus'), germDef: b.mode === 'attack' && !!(dp && b.def.general && perksOn(state, dp, 'germanicus')), delta,
+    attStart: b.att.started ?? attForce(b), defStart: b.def.started ?? defForce(state, b),
     attLost: b.rounds.some(r => r.attackerLoss > 0), defLost: b.rounds.some(r => r.defenderLoss > 0), ...over,
   };
   return fightOdds(q);

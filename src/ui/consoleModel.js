@@ -11,7 +11,7 @@ const prov = (data, id) => data.provincesById[id]?.name ?? id;
  */
 export function newSession(data, { seed = 'console', names = ['Vidi', 'Boardicca'], seats = null, mode = 'random' } = {}) {
   // v29.1: 'random' and startSide are passed on (they were dropped: a "Random general" human was asked again, a chosen side was lost)
-  const players = seats ? seats.map(x => ({ name: x.name, controller: x.controller ?? 'human', ...(x.general ? { general: x.general } : {}), ...(x.startProvince ? { startProvince: x.startProvince } : {}), ...(x.startSide ? { startSide: x.startSide } : {}) }))
+  const players = seats ? seats.map(x => ({ name: x.name, controller: x.controller ?? 'human', ...(x.difficulty ? { difficulty: x.difficulty } : {}), ...(x.general ? { general: x.general } : {}), ...(x.startProvince ? { startProvince: x.startProvince } : {}), ...(x.startSide ? { startSide: x.startSide } : {}) }))
     : names.map(name => ({ name }));
   const { state, events } = createGame(data, { seed, players, options: { startProvinceMode: mode } });
   return { data, seed, steps: [{ state, events, action: null, error: null }] };
@@ -23,7 +23,7 @@ export const setupChoices = data => ({
   generals: data.generals.map(g => ({ id: g.id, name: g.name })),
   starts: data.provinceIds.filter(id => data.provincesById[id].startingEligible).map(id => ({ id, name: data.provincesById[id].name })),
 });
-export const checkSetup = (data, seats, mode) => validateSetup(data, { players: seats.map(x => ({ name: x.name, controller: x.controller, general: x.general, startProvince: x.startProvince || undefined, startSide: x.startSide || undefined })), startProvinceMode: mode });
+export const checkSetup = (data, seats, mode) => validateSetup(data, { players: seats.map(x => ({ name: x.name, controller: x.controller, difficulty: x.difficulty, general: x.general, startProvince: x.startProvince || undefined, startSide: x.startSide || undefined })), startProvinceMode: mode });
 /** Is it an AI seat's turn to answer (or an automatic deal with nobody to ask)? */
 export function aiToMove(s) {
   const state = stateOf(s);
@@ -97,6 +97,7 @@ const T = {
   startProvinceChosen: (e, st, d) => `${pn(st, e.pub.player)} starts in ${prov(d, e.pub.province)} with ${e.pub.troops} troops.`,
   startNativesRolled: (e, st, d) => `${prov(d, e.pub.province)} natives: d6 ${e.pub.d6}, ${e.pub.count}.`,
   senateDecree: (e) => `Senate Decree ${e.pub.number}: every player sends a legion against Carthage.`,
+  senateSatisfied: (e) => e.pub.message || 'The Senate is satisfied with Carthage’s destruction! No decrees for now.',
   revoltRollSkipped: (e, st) => `${pn(st, e.pub.player)} has no Revolt Roll (${e.pub.reason}).`,
   displeasedSkipped: (e, st) => `${pn(st, e.pub.player)} does not draw a Rome Is Displeased card (${e.pub.reason}).`,
   displeasedDrawn: (e, st) => `${pn(st, e.pub.player)} draws Rome Is Displeased: ${e.pub.def}.`,
@@ -133,7 +134,8 @@ const T = {
   prestigeChanged: (e, st) => `${pn(st, e.pub.player)} Prestige ${e.pub.from} → ${e.pub.to} (${e.pub.reason}).`,
   cardPlayed: (e, st) => `${pn(st, e.pub.player)} plays ${e.pub.def}${e.pub.inPlay ? ' (in play)' : ''}.`,
   troopsMoved: (e, st, d) => `${pn(st, e.pub.player)} moves ${e.pub.troops} troop(s)${e.pub.general ? ' and the general' : ''}: ${e.pub.path.map(p => prov(d, p)).join(' → ')}.`,
-  troopsBought: (e, st, d) => `${pn(st, e.pub.player)} buys a troop in ${prov(d, e.pub.province)}.`,
+  troopsBought: (e, st, d) => { const n = e.pub.n ?? 1; return `${pn(st, e.pub.player)} buys ${n} troop${n === 1 ? '' : 's'} in ${prov(d, e.pub.province)} for ${G(e.pub.gold)} (1 action, 17.p).`; },
+  prestigeBought: (e, st) => `${pn(st, e.pub.player)} buys 1 Prestige for ${G(e.pub.gold)} (1 action, 22.g).`,
   gameCardBought: (e, st, d) => `${pn(st, e.pub.player)} buys a Game Card (troop from ${prov(d, e.pub.from)}).`,
   nativesRolled: (e, st, d) => `${prov(d, e.pub.province)}: d6 ${e.pub.d6}, ${e.pub.count} natives.`,
   provinceAllied: (e, st, d) => `${pn(st, e.pub.player)} allies with ${prov(d, e.pub.province)} using ${e.pub.troops} troops.`,
@@ -141,7 +143,7 @@ const T = {
   unusedActionGold: (e, st) => `${pn(st, e.pub.player)} left ${e.pub.unused} action(s) unused: +${G(e.pub.gold)}.`,
   startProvinceGold: (e, st, d) => `${pn(st, e.pub.player)}'s unbeaten start province ${prov(d, e.pub.province)} pays +${G(e.pub.gold)}.`,
   gameRollRerolled: (e) => `Early-game protection: ${e.pub.value} is rolled again (Game Roll ${e.pub.rollNo} of this player).`,
-  revoltImmune: (e, st, d) => `${prov(d, e.pub.province)} has ${e.pub.troops} troops and does not revolt.`,
+  revoltImmune: (e, st, d) => e.pub.general ? `${prov(d, e.pub.province)} is protected by the general and does not revolt.` : `${prov(d, e.pub.province)} has ${e.pub.troops} troops and does not revolt.`,
   romaCapLost: (e) => `Roma is full (${e.pub.cap}): ${e.pub.lost} troop(s) lost${e.pub.reason ? ' (' + e.pub.reason + ')' : ''}.`,
   deckReshuffled: (e) => `The ${e.pub.deck} discard pile is shuffled into a new draw pile (${e.pub.cards} cards).`,
   cardReshuffled: (e, st) => `${pn(st, e.pub.player)} may hold only one ${e.pub.def}: it is shuffled back and ${pn(st, e.pub.player)} draws again.`,
@@ -193,18 +195,22 @@ const T = {
   revoltBlocked: (e, st, d) => `${pn(st, e.pub.player)} kills the revolt leader: ${prov(d, e.pub.province)} does not revolt.`,
   troopsAssassinated: (e, st, d) => `${pn(st, e.pub.player)}'s assassins kill ${e.pub.n} of ${e.pub.owner ? pn(st, e.pub.owner) + "'s troops" : 'the natives'} in ${prov(d, e.pub.province)} (${e.pub.left} left).`,
   cardSold: (e, st, d) => `${pn(st, e.pub.player)} sells ${d.cardDefsById[e.pub.card]?.name ?? e.pub.card} for ${e.pub.gold} Gold (from the bank, not an action).`,
-  generalMoved: (e, st, d) => `${pn(st, e.pub.player)}'s general moves from ${prov(d, e.pub.from)} to ${prov(d, e.pub.to)} (free, once per turn).`,
-  allyMadeConquered: (e, st, d) => `${pn(st, e.pub.player)} pays ${G(e.pub.gold)} to the bank: allied ${prov(d, e.pub.province)} becomes a conquered province (keeps its ${e.pub.troops} troops, no Prestige, 18.v).`,
+  generalMoved: (e, st, d) => `${pn(st, e.pub.player)}'s general moves from ${prov(d, e.pub.from)} to ${prov(d, e.pub.to)} (free, 15.j).`,
+  allyMadeConquered: (e, st, d) => `${pn(st, e.pub.player)} pays ${G(e.pub.gold)} to the bank: allied ${prov(d, e.pub.province)} becomes a conquered province (keeps its ${e.pub.troops} troops, +${e.pub.prestige ?? 1} Prestige, 18.v).`,
   allyBribed: (e, st, d) => `${pn(st, e.pub.player)} bribes ${prov(d, e.pub.province)} away from ${pn(st, e.pub.from)} for ${G(e.pub.gold)}: ${e.pub.switched} troop switches sides, ${e.pub.lost} lost, ${e.pub.fled} flee.`,
   displeasedRedirected: (e, st) => `${pn(st, e.pub.player)} plays Busy Little Bee! (${G(e.pub.gold)} to ${e.pub.goldTo === 'roma' ? 'Roma' : pn(st, e.pub.goldTo)}): ${pn(st, e.pub.to)} suffers ${e.pub.def} instead.`,
   displeasedNoEffect: (e, st) => `${e.pub.def}: no effect on ${pn(st, e.pub.player)} (${e.pub.reason}).`,
-  generalRecalled: (e, st) => `${pn(st, e.pub.player)}'s general is recalled to Rome: no general perks through turn ${e.pub.throughTurn}.`,
+  generalRecalled: (e, st, d) => `${pn(st, e.pub.player)}'s general is recalled to Rome${e.pub.from ? ` from ${prov(d, e.pub.from)}` : ''}: no general perks through turn ${e.pub.throughTurn}.`,
   goldConfiscated: (e, st) => `The Emperor confiscates ${G(e.pub.lost)} from ${pn(st, e.pub.player)} (${e.pub.left} left)${e.pub.poverty ? '; poverty costs 1 Prestige' : ''}.`,
   provinceRemoved: (e, st, d) => `The Emperor removes ${pn(st, e.pub.player)} from ${prov(d, e.pub.province)}: it is unconquered again (no Prestige lost)${e.pub.carthageRegainedSpirit ? '; Carthage regains its spirit' : ''}.`,
   troopsStolen: (e, st) => `The Emperor steals ${e.pub.total} bonus troop(s) from ${pn(st, e.pub.player)}: ${e.pub.toRoma} go to Roma.`,
   cardsTaxed: (e, st) => `The Emperor taxes ${pn(st, e.pub.player)}: ${e.pub.n} card(s) lost (${e.pub.defs.join(', ')}).`,
   turnEnded: (e, st) => `${pn(st, e.pub.player)} ends turn ${e.pub.number}.`,
-  gameWon: (e, st) => e.pub.lastStanding ? `*** ${pn(st, e.pub.player)} WINS as the last player standing ***` : `*** ${pn(st, e.pub.player)} WINS with ${e.pub.prestige} Prestige ***`,
+  gameWon: (e, st) => e.pub.lastStanding ? `*** ${pn(st, e.pub.player)} WINS as the last player standing ***` : e.pub.goldPrestige ? `*** ${pn(st, e.pub.player)} WINS with ${e.pub.prestige} Prestige + ${e.pub.goldPrestige} Gold Prestige (${e.pub.gold} Gold) = ${e.pub.total} ***` : `*** ${pn(st, e.pub.player)} WINS with ${e.pub.prestige} Prestige ***`,
+  merchantBonus: (e, st) => `${pn(st, e.pub.player)}: Merchant Bonus, ${e.pub.roads} Roads reaching Roma, +${e.pub.gold} Gold (22.b).`,
+  merchantShipBought: (e, st, d) => `${pn(st, e.pub.player)} buys a Merchant ship on ${prov(d, e.pub.a)}–${prov(d, e.pub.b)} for ${e.pub.gold} Gold (22.c).`,
+  merchantShipMoved: (e, st, d) => `${pn(st, e.pub.player)} moves a Merchant ship from ${prov(d, e.pub.fromA)}–${prov(d, e.pub.fromB)} to ${prov(d, e.pub.a)}–${prov(d, e.pub.b)} (free, 1 action).`,
+  goldPrestige: (e, st) => `${pn(st, e.pub.player)}: Gold Prestige ${e.pub.goldPrestige} from ${e.pub.gold} Gold (board Prestige ${e.pub.board}, ${e.pub.total} toward ${e.pub.win}) (22.f).`,
 };
 export const FORMATTED_EVENT_TYPES = Object.keys(T);
 export function formatEvent(e, state, data) {
@@ -229,7 +235,7 @@ export function battlePanel(state, data) {
   if (b.att.perk && b.att.perk !== 'none') extras.push('Scipio perk: ' + b.att.perk);
   if (b.att.elephants || b.def.elephants) extras.push(`Elephants: attacker ${b.att.elephants}, defender ${b.def.elephants}`);
   if (b.att.queue.length || b.def.queue.length) extras.push(`Moral boosts waiting: attacker ${b.att.queue.length}, defender ${b.def.queue.length}`);
-  if (b.wallRollsIgnored) extras.push(`Walls ignored for rolls 1-${b.wallRollsIgnored}`);
+  if (b.wallRollsIgnored) extras.push(b.wallRollsIgnored >= 99 ? 'Walls ignored for the whole battle' : `Walls ignored for rolls 1-${b.wallRollsIgnored}`);
   if (b.fled) extras.push(`a ${b.fled.side === 'def' ? 'defender' : 'attacker'} has fled (Caesar)`);
   if (extras.length) lines.push(extras.join(' · ') + '.');
   for (const r of b.rounds.slice(-3)) lines.push(`Round ${r.round}: ${r.attackerFinal.join(',')} vs ${r.defenderFinal.join(',')} → attacker -${r.attackerLoss}, defender -${r.defenderLoss}.`);

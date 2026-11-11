@@ -10,6 +10,8 @@ export const AI_CONFIG = Object.freeze({
     revoltRisk: 0.05,       // + this when it leaves a conquered origin open to a revolt (under 10 troops, 2+ conquered, 17.c, 19.h) ...
     counterAttack: 0.08,    // + this when a rival army next door (with a Road, 19.b) would then outnumber what stays behind
     maxBar: 0.92,           // the bar never goes above this
+    burnBar: 0.1,           // v31.14: keep fighting (instead of retreating) while the defender has Elephants/Moral boosts an early retreat would refund (17.k) — v31.15: only when the AI's reserves cover the expected bleed, see ai.js battleContinue
+    burnLossPerRound: 2,    // v31.15: expected attacker losses per round while fighting on to round 4 to burn the defender's cards — Tomas's own number: 8 troops over 4 rounds
   }),
   // v31.4: a rival this close to the win (public Prestige only) is a threat. Large Map 1 wins at 11, so ≥8; Small Map 1 wins at 8, so ≥5.
   threat: Object.freeze({
@@ -20,6 +22,14 @@ export const AI_CONFIG = Object.freeze({
   spend: Object.freeze({
     surplusGold: 20,
     troopBias: 6,
+  }),
+  // v31.12: Easy (a gentler AI for a human opponent): the same bars and scores as Normal, but it holds back against HUMAN
+  // players only — never Revolt!/Assassin! in the first 10 rounds, then a 50% coin flip each time it would play one, and at
+  // most one attack on a human-owned province per turn. Against AI rivals it plays exactly like Normal.
+  easy: Object.freeze({
+    cardRestraintRounds: 10,   // no Revolt!/Assassin! vs a human before round 11 (a round = every player having had a turn)
+    cardCoinFlip: 0.5,         // after that, half the time it holds the card instead
+    maxHumanAttacksPerTurn: 1, // at most one attack on a human-owned province per turn (one battle = one attack)
   }),
 });
 export const aiConfig = (opts = {}) => (opts.config ? { ...AI_CONFIG, ...opts.config, attack: { ...AI_CONFIG.attack, ...(opts.config.attack ?? {}) } } : AI_CONFIG);

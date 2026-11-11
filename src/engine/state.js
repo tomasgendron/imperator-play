@@ -78,13 +78,13 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
     config: { ruleset: data.ruleset.id, map: data.mapId ?? 'small1', winPrestige: data.rules.winPrestige, startGold: data.rules.startingGold, startTroops: data.rules.startingTroops,
       actionsPerTurn: data.rules.actionsPerTurn, unusedActionGold: data.rules.unusedActionGold, seed, hideHandDefault: false },
     rng, phase: 'setup',
-    players: players.map(p => ({ id: p.id, name: p.name, color: p.color ?? null, controller: p.controller ?? 'human', general: p.general ? { id: p.general, at: null } : null, startProvince: null,
+    players: players.map(p => ({ id: p.id, name: p.name, color: p.color ?? null, controller: p.controller ?? 'human', difficulty: p.difficulty ?? 'normal', general: p.general ? { id: p.general, at: null } : null, startProvince: null,
       gold: data.rules.startingGold, prestige: 0, hand: [], inPlay: [], savedResources: [], generalRecalledThroughTurn: null,
       items: { catapult: 0 }, out: false, gameRollsTaken: 0, startIncome: true })),
     turnOrder: [],
-    turn: { number: 0, round: 0, activePlayerId: null, step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, sub: {} },
+    turn: { number: 0, round: 0, activePlayerId: null, step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} },
     provinces, roma: { goldPile: 0, holder: null, heldSinceTurn: null }, carthage: { defeated: false, neutral: false, decreeLegionsLost: 0 },
-    cards, decks, discards: { game: [], resource: [], displeased: [] }, pending: [], winner: null, eventSeq: 0, frameSeq: 0, setup: null, log: [],
+    cards, decks, discards: { game: [], resource: [], displeased: [] }, throwaway: { game: [], resource: [], displeased: [] }, ships: [], pending: [], winner: null, eventSeq: 0, frameSeq: 0, setup: null, log: [],
   };
 }
 
@@ -155,6 +155,7 @@ export function validateState(state, data, opts = {}) {
     if (pl.startProvince !== null && !data.provincesById[pl.startProvince]) err(`${pl.id}: startProvince ${pl.startProvince} unknown`);
     if (pl.startProvince !== null && data.provincesById[pl.startProvince]?.startingEligible === false) err(`${pl.id}: ineligible start province ${pl.startProvince}`);
     if (!isNat(pl.gold)) err(`${pl.id}: gold ${pl.gold}`);
+    if (pl.difficulty !== undefined && !['normal', 'easy'].includes(pl.difficulty)) err(`${pl.id}: difficulty ${pl.difficulty} (normal or easy, v31.12)`);
     if (!isNat(pl.prestige)) err(`${pl.id}: prestige ${pl.prestige}`);
     if (pl.general && pl.general.at !== null && !data.provincesById[pl.general.at]) err(`${pl.id}: general at unknown ${pl.general.at}`);
     if (pl.general && !data.generalsById[pl.general.id]) err(`${pl.id}: unknown general ${pl.general.id}`);
@@ -184,6 +185,12 @@ export function validateState(state, data, opts = {}) {
     see(uid, 'discard:' + deck);
     if (state.cards[uid] && state.cards[uid].deck !== deck) err(`card ${uid} sits in discard ${deck} but belongs to ${state.cards[uid].deck}`);
   }
+  // v31.11 (18.z): the throwaway pile — Sneak Attack from the Sea! cards played to attack. Saves from before it have no
+  // field at all (readSave fills an empty one); a state without it still validates, it just has nothing thrown away.
+  for (const [deck, list] of Object.entries(state.throwaway ?? { game: [], resource: [], displeased: [] })) for (const uid of list) {
+    see(uid, 'throwaway:' + deck);
+    if (state.cards[uid] && state.cards[uid].deck !== deck) err(`card ${uid} sits in throwaway ${deck} but belongs to ${state.cards[uid].deck}`);
+  }
   for (const pl of state.players) {
     for (const c of pl.hand) see(c.uid, 'hand:' + pl.id);
     for (const c of pl.inPlay) see(c.uid, 'inPlay:' + pl.id);
@@ -206,9 +213,28 @@ export function validateState(state, data, opts = {}) {
   // turn / winner
   if (state.turn.actionsUsed > data.rules.actionsPerTurn) err(`actionsUsed ${state.turn.actionsUsed} > ${data.rules.actionsPerTurn}`);
   if (state.turn.step !== undefined && !STEPS.includes(state.turn.step)) err('bad turn.step ' + state.turn.step);
+  const ships = state.ships ?? [];
+  if (!Array.isArray(ships)) err('ships must be a list (22.c)');
+  else {
+    const seenShip = new Set();
+    for (const s of ships) {
+      if (!s || !playerById[s.player]) { err('ship has no player (22.c)'); continue; }
+      if (!data.provincesById[s.a] || !data.provincesById[s.b]) { err(`ship ${s.a}-${s.b} is not on the map`); continue; }
+      if (!(s.a < s.b)) err(`ship ${s.a}-${s.b} must be stored with the endpoints sorted (22.c)`);
+      if (!data.provincesById[s.a].sea?.includes(s.b)) err(`ship ${s.a}-${s.b} is not a sea link (22.c)`);
+      const key = s.player + '|' + s.a + '|' + s.b;
+      if (seenShip.has(key)) err(`${s.player} has two Merchant ships on ${s.a}-${s.b} (22.d)`);
+      seenShip.add(key);
+    }
+  }
   if (state.winner !== null) {
     if (!playerById[state.winner]) err('winner is not a player');
-    else if (playerById[state.winner].prestige < data.rules.winPrestige && !state.players.every(p => p.id === state.winner || p.out)) err(`winner has ${playerById[state.winner].prestige} Prestige < ${data.rules.winPrestige} and is not the last player standing (12.m, Q76)`);
+    else {
+      const w = playerById[state.winner];
+      const per = data.rules.goldPrestigeGold ?? 20;
+      const effective = w.prestige + (per > 0 ? Math.floor(w.gold / per) : 0);
+      if (effective < data.rules.winPrestige && !state.players.every(p => p.id === state.winner || p.out)) err(`winner has ${w.prestige} Prestige + Gold Prestige < ${data.rules.winPrestige} and is not the last player standing (12.m, 22.f)`);
+    }
     if (state.phase !== 'finished') err('winner set but phase is not finished');
   } else if (state.phase === 'finished') err('phase finished without a winner');
   const top = state.players.filter(p => p.prestige >= data.rules.winPrestige);

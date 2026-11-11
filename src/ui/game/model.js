@@ -1,10 +1,28 @@
 // Pure model of the M5 game page: no DOM, so `node --test` drives exactly what the page shows and clicks.
 // The page keeps a console session (src/ui/consoleModel.js) and asks this module who looks at the screen, what a human may do
 // now (grouped for the phase bar, the map and the builder), what a card looks like, which sounds an event plays, and how a save file reads.
-import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock } from '../../engine/index.js';
+import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets } from '../../engine/index.js';
 import { newSession, play, aiToMove, aiMove, stateOf, formatEvent, describePrompt } from '../consoleModel.js';
 
 export { newSession, play, aiToMove, aiMove, stateOf, describePrompt };
+export { roadNetwork, shipSegments, goldPrestige };
+export const HOW_TO_WIN = {
+  title: 'How to Win',
+  paragraphs: [
+    'Welcome to IMPERATOR! Lead your General to expand Rome’s reach through conquest and alliances, earning Prestige as you bring new provinces into the Empire. Build roads and establish trade routes to Roma to grow your wealth—and turn that wealth into Prestige.',
+    'But power brings danger. Grow too strong and Roma may punish you, costing you valuable assets. Leave your provinces poorly garrisoned and they may revolt, stripping away your gains and Prestige. Fortune can change your standing, for better or worse, so build carefully and protect what you’ve earned.',
+    'Whether through force of arms, shrewd alliances, or clever trade, reach the Prestige target first to become Imperator!',
+  ],
+  prestige: 'How to earn Prestige: 1 per conquered province except Carthage/Roma; Carthage 2 TOTAL; Roma 3 TOTAL; 1 per Prestige Game Card; 1 per 20 Gold held counted at end of turn.',
+};
+export function fullLogText(state, data) {
+  const events = state?.log ?? [];
+  const lines = events.map(e => {
+    const f = formatEvent(e, state, data);
+    return `T${e.turn ?? 0}\t#${e.seq}\t${e.type}\t${f.text}${e.rule ? ' (' + e.rule + ')' : ''}`;
+  });
+  return { count: events.length, text: lines.join('\n') + (lines.length ? '\n' : ''), truncated: false };
+}
 export const SAVE_SCHEMA = 'imperator.save.v1';
 /** Rolls every seat's roll-off die (Q2, ties again) in a new session; the game then goes on to the generals and the starts. */
 export function playRollOff(s) {
@@ -70,9 +88,9 @@ export function deadEnd(state, data) {
 export const withValue = (d, v) => (d.range ? { ...d.action, [d.range.field]: Math.max(d.range.min, Math.min(d.range.max, Number(v))) } : d.action);
 
 const CATS = {
-  ATTACK: 'move', ALLY: 'move', MOVE: 'move', BUY_TROOP: 'buy', BUY_GAME_CARD: 'buy', BUY_CATAPULT: 'build',   // M6: the Catapult is built on the Build screen (item 9)
+  ATTACK: 'move', ALLY: 'move', MOVE: 'move', BUY_TROOP: 'buy', BUY_GAME_CARD: 'buy', BUY_PRESTIGE: 'buy', BUY_CATAPULT: 'build',   // M6: the Catapult is built on the Build screen (item 9)
  
-  BUILD_ROAD: 'build', BUILD_WALL: 'build', USE_SAVED_RESOURCE: 'build', PLAY_CARD: 'card', PREVIEW_TARGET: 'scout', END_TURN: 'end',
+  BUILD_ROAD: 'build', BUILD_WALL: 'build', BUY_MERCHANT_SHIP: 'build', MOVE_MERCHANT_SHIP: 'build', USE_SAVED_RESOURCE: 'build', PLAY_CARD: 'card', PREVIEW_TARGET: 'scout', END_TURN: 'end',
   SELL_CARD: 'sell', MOVE_GENERAL: 'general',   // M7: free moves with their own buttons (20.p, 15.j)
 };
 /** Free-step legal moves grouped for the phase-bar buttons: {move, buy, build, card, scout, end, other}. */
@@ -209,6 +227,33 @@ export function saveMapId(input) {
   return o?.snapshot?.config?.map ?? 'small1';
 }
 /** Reads a save (object or JSON text); throws an Error that says what is wrong. Returns a fresh session at the saved state. */
+/** Cards added to a deck after a save was made (18.z, v31.9): mint the missing copies with fresh uids (per-deck prefix + next number,
+ * the same scheme as createBlankState) and shuffle them into that deck's draw pile (v31.11: they used to land at the bottom, where
+ * draws off the top could not reach them until the deck nearly emptied), so the old save keeps loading with its own cards untouched.
+ * The seeded RNG is used (shuffleIn), never Math.random — a save must reload the same way every time. A save that LOST cards
+ * (a def removed or fewer copies) still fails validation below, as before. */
+export function backfillNewCards(state, data) {
+  if (!state || typeof state !== 'object' || !state.cards || !state.decks) return;
+  const have = {};
+  for (const c of Object.values(state.cards)) have[c.def] = (have[c.def] ?? 0) + 1;
+  const nextNum = {};
+  for (const uid of Object.keys(state.cards)) {
+    const m = /^([a-z])(\d+)$/.exec(uid);
+    if (m) nextNum[m[1]] = Math.max(nextNum[m[1]] ?? 0, +m[2]);
+  }
+  for (const deck of ['game', 'resource', 'displeased']) {
+    const prefix = deck[0];
+    for (const def of data.decks[deck]) {
+      const missing = def.copies - (have[def.id] ?? 0);
+      for (let i = 0; i < missing; i++) {
+        const uid = prefix + String((nextNum[prefix] = (nextNum[prefix] ?? 0) + 1)).padStart(2, '0');
+        state.cards[uid] = { def: def.id, deck };
+        (state.decks[deck] ??= []); shuffleIn(state, uid);
+        have[def.id] = (have[def.id] ?? 0) + 1;
+      }
+    }
+  }
+}
 export function readSave(input, data) {
   let o = input;
   if (typeof input === 'string') { try { o = JSON.parse(input); } catch { throw new Error('This is not a JSON file.'); } }
@@ -216,6 +261,11 @@ export function readSave(input, data) {
   const state = o.snapshot; const made = o.meta?.appVersion ? ` It was made by ${o.meta.appVersion}.` : '';
   if (!state || typeof state !== 'object' || !Array.isArray(state.players)) throw new Error('This save has no game in it (the snapshot is missing).' + made);
   if (state.schemaVersion !== SCHEMA_VERSION) throw new Error(`This save was made by ${state.schemaVersion < SCHEMA_VERSION ? 'an older' : 'a newer'} build (game format ${state.schemaVersion}; this build reads format ${SCHEMA_VERSION}), so it cannot be loaded.${made} The file itself is not changed. Start a new game, or run the build that made it.`);
+  if (!Array.isArray(state.ships)) state.ships = [];   // v31.5: saves from before Merchant ships
+  if (!state.throwaway) state.throwaway = { game: [], resource: [], displeased: [] };   // v31.11: saves from before the throwaway pile
+  for (const p of state.players) if (!['normal', 'easy'].includes(p.difficulty)) p.difficulty = 'normal';   // v31.12: saves from before AI difficulty
+  if (!state.turn.aiHumanAttacks) state.turn.aiHumanAttacks = {};   // v31.12: saves from before the Easy attack budget
+  backfillNewCards(state, data);   // v31.9 (18.z): saves from before a card was added to a deck gain the new cards, shuffled into that deck (v31.11)
   let errs;
   try { errs = validateState(state, data); } catch (e) { errs = [e.message]; }
   if (errs.length) throw new Error(`This save does not fit this build's rules data, so it cannot be loaded safely.${made} The file itself is not changed. Details:\n` + errs.slice(0, 5).join('\n'));
@@ -265,6 +315,9 @@ export function gameRollPopup(events, i, state, data) {
     const f = topFrame(state);
     if (f?.kind === 'chooseProvince' && f.purpose === 'taxTroop') lines.push(`${nm(f.player)} has no Gold: choose the province that sends 1 troop to Roma (16.j).`);
     if (f?.kind === 'draw' && f.deck === 'displeased') lines.push(`${nm(f.player)} has 4+ Prestige or 20+ troops: must draw a Rome Is Displeased card (16.m).`);
+  } else if (e.pub.kind === 'satisfied') {
+    title = `Game Roll ${v}`;
+    lines.push('The Senate is satisfied with Carthage’s destruction! No decrees for now.');
   } else if (e.pub.kind === 'decree') {
     title = `Game Roll ${v}: Senate Decree!`; art = 'card.carthage_must_be_destroyed';
     lines.push(`${nm(roller)} rolled ${v}: Carthage must be destroyed! No province rewards this turn (16.n).`);
@@ -282,7 +335,8 @@ export function gameRollPopup(events, i, state, data) {
   // batch 5 item 2 (Vidi 2026-10-24): the popup names the province(s) whose number matches the roll, whoever holds them
   const matched = gameRollMatches(state, data, v);
   lines.unshift(matched.length ? `Number ${v}: ${matched.map(m => `${m.name} (${m.holder})`).join(', ')}.` : `Number ${v}: no province carries this number.`);
-  return { kind: 'gameRoll', value: v, title, lines, art, players: [...players], matched };
+  const rollerHuman = state.players?.find(p => p.id === roller)?.controller !== 'ai';
+  return { kind: 'gameRoll', value: v, title, lines, art, players: [...players], matched, sticky: rollerHuman };
 }
 
 /** Batch 5 item 6: how a card being looked at can be played right now. mode: 'targets' (PLAY_CARD with a target to pick),
@@ -323,7 +377,7 @@ export function revoltRollPopup(events, i, state, data) {
   const lines = [];
   if (e.pub.extra) lines.push(`Borrowed troops died, so ${nm(pid)} makes an extra Revolt Roll (19.d)${e.pub.exempt ? `; ${provName(data, e.pub.exempt)}, just conquered, cannot revolt` : ''}.`);
   const immune = rest.filter(x => x.type === 'revoltImmune');
-  for (const x of immune) lines.push(`${provName(data, x.pub.province)} has number ${v} but ${x.pub.troops} troops: 10 or more never revolt (17.c).`);
+  for (const x of immune) lines.push(x.pub.general ? `${provName(data, x.pub.province)} has number ${v} but the general is stationed there, so it cannot revolt.` : `${provName(data, x.pub.province)} has number ${v} but ${x.pub.troops} troops: 10 or more never revolt (17.c).`);
   const revolted = rest.filter(x => x.type === 'provinceRevolted');
   const blocked = rest.filter(x => x.type === 'revoltBlocked');
   if (!e.pub.provinces.length && !immune.length) lines.push(`None of ${nm(pid)}'s conquered provinces has number ${v}: nothing happens.`);
@@ -473,6 +527,67 @@ export function adjustmentLabel(x, data) {
   const what = x.why ?? data.cardDefsById[x.source]?.name ?? data.generalsById[x.source]?.name ?? (x.source ? String(x.source) : 'Dice bonus');
   return `${what}: ${x.delta > 0 ? '+' : ''}${x.delta}${x.appliesTo === 'all' ? ' on every die' : ''}`;
 }
+
+/**
+ * v31.13: Germanicus, Fight to the Death (15.h), as the battle screen lists it up front. The engine only fires the perk through
+ * battleDiceAdjusted, after a roll; this reads the same state (the same fight() gate: attacker started with 3+ and was reduced,
+ * defender qualifies even starting at 1 or 2) so the panel can list it from the start of the battle, with its live state.
+ * Returns null when it cannot fire on `side` ('a' attacker, 'd' defender): no Germanicus general with the army and perks on, or
+ * (attacker) the battle started with fewer than 3 troops. Otherwise { troops, delta }: delta 0 = not yet (3+ troops),
+ * 1 = live at 2 troops (+1 to the highest die), 2 = live at 1 troop (+2).
+ */
+export function fightToDeath(state, data, side) {
+  const b = state.battle; if (!b || b.mode !== 'attack') return null;
+  const isAtt = side === 'a';
+  const pid = isAtt ? b.att.player : b.def.player;
+  if (!pid) return null;
+  const pl = state.players.find(p => p.id === pid);
+  if (!pl?.general || pl.general.id !== 'germanicus') return null;
+  if (isAtt ? !b.att.general : !b.def.general) return null;
+  if (!generalPerksActive(state, pid)) return null;
+  const started = isAtt ? (b.att.started ?? attForce(b)) : (b.def.started ?? defForce(state, b));
+  const now = isAtt ? attForce(b) : defForce(state, b);
+  if (isAtt && started < 3) return null;
+  if (now > 2) return { troops: now, delta: 0 };
+  if (now === 2) return { troops: 2, delta: 1 };
+  if (now === 1) return { troops: 1, delta: 2 };
+  return null;
+}
+/** v31.13: the Fight to the Death line for the battle panel, from fightToDeath(). */
+export function fightToDeathLine(f) {
+  if (!f) return null;
+  if (f.delta === 1) return 'Germanicus, Fight to the Death: +1 to your highest die at 2 troops — live now: +1 (15.h)';
+  if (f.delta === 2) return 'Germanicus, Fight to the Death: +2 to your highest die at 1 troop — live now: +2 (15.h)';
+  return `Germanicus, Fight to the Death: +1 to your highest die at 2 troops, +2 at 1 troop — not yet (${f.troops} troops) (15.h)`;
+}
+
+/**
+ * v31.13: per-die adjustment badges for the battle table. `raw` = the dice as rolled, `final` = the final dice, sorted
+ * highest-first (as the engine emits them). Returns an array parallel to `final` with the +N added to each die (0 = unchanged),
+ * so the table can mark the die a perk adjusted — ALL adjustments, not just Fight to the Death: Elephants! (18.b) and Moral
+ * Boost! (18.c) add +1 to every die, so every die showing +1 is exactly what happened, not noise.
+ */
+export function dieBadges(raw, final) {
+  if (!Array.isArray(raw) || !Array.isArray(final)) return [];
+  const r = [...raw].sort((x, y) => y - x);
+  return final.map((v, i) => Math.max(0, v - (r[i] ?? 0)));
+}
+
+/**
+ * v31.13: why the general cannot move now (15.j), or null when the move is available. Used for the greyed-out ⚑ General button
+ * (desktop + mobile) and the general-token tap, so the button stays visible until End Turn instead of vanishing when the move
+ * is spent. generalMoveTargets covers "not on the map / no reachable province"; the step is checked here because
+ * the engine only offers MOVE_GENERAL in the Actions step. v31.17: the move is no longer once per turn (as many times as you
+ * want), so there is no "already moved" reason any more; a recalled general is stuck in Rome instead (18.o).
+ */
+export function generalMoveWhy(state, data, pid) {
+  const pl = state.players.find(p => p.id === pid);
+  if (!pl?.general?.at) return 'Your general is not on the map.';
+  if (state.phase !== 'turn' || state.turn.step !== 'actions') return 'Move your general during the Actions step, after the Revolt Roll (15.j).';
+  if (generalRecalled(state, pid)) return `Your general is recalled to Rome until the end of turn ${pl.generalRecalledThroughTurn}: he cannot leave Rome (18.o).`;
+  if (!generalMoveTargets(state, data, pid).length) return 'Your general has no reachable province along your chain (15.j).';
+  return null;
+}
 /**
  * v22 (Vidi 2026-10-24): the Assassin popup for a HUMAN victim (never for an AI or the natives). The strikes of one Assassin play
  * (1 or 2 provinces, 18.e) that hit the same human are one popup; returns one popup per human victim, starting at event i.
@@ -574,7 +689,7 @@ export function buildSteps(state, data, legal) {
   };
   const cat = legal.find(x => x.type === 'BUY_CATAPULT') ?? null; const catCost = data.itemsById.catapult.cost.gold;
   const catalog = { piece: 'catapult', name: 'Catapult', cost: catCost, enabled: !!cat, reason: cat ? '' : left <= 0 ? `no actions left this turn (${data.rules.actionsPerTurn}/${data.rules.actionsPerTurn} used)` : (pl?.gold ?? 0) < catCost ? `needs ${catCost} Gold, you have ${pl?.gold ?? 0}` : 'not possible right now', saved: 0, provinces: [], paid: cat, owned: pl?.items?.catapult ?? 0 };
-  return { frame: false, gold: pl?.gold ?? 0, actionsLeft: left, pieces: [mk('road', 'Road', c.road), mk('wall', 'Wall', c.wall), catalog] };
+  return { frame: false, gold: pl?.gold ?? 0, actionsLeft: left, pieces: [mk('road', 'Road', roadCost(state, data, pid)), mk('wall', 'Wall', c.wall), catalog] };
 }
 
 /**
@@ -589,21 +704,35 @@ export function buySteps(state, data, legal) {
   const noAct = `no actions left this turn (${data.rules.actionsPerTurn}/${data.rules.actionsPerTurn} used)`;
   const sellable = legal.filter(d => d.type === 'SELL_CARD').length;
   const short = cost => `needs ${cost} Gold, you have ${gold}${sellable ? ` (selling a card gives ${data.rules.sellCard?.gold ?? 2} Gold)` : ''}`;
-  const troopProvs = mine.map(id => {
-    const d = legal.find(x => x.type === 'BUY_TROOP' && x.action.province === id) ?? null; const p = state.provinces[id];
-    return { id, name: provName(data, id), troops: p.troops, enabled: !!d, paid: d, reason: d ? '' : id === 'roma' ? `Roma is full (${data.rules.romaMaxTroops} troops at most, 12.k)` : 'not possible right now' };
-  });
+  const why = (list, cost, extra) => (list.some(x => x.enabled) ? '' : left <= 0 ? noAct : gold < cost ? short(cost) : extra() || 'not possible right now');
+  const pack = (n, cost) => {
+    const provs = mine.map(id => {
+      const d = legal.find(x => x.type === 'BUY_TROOP' && (x.action.n ?? 1) === n && x.action.province === id) ?? null;
+      const p = state.provinces[id];
+      const full = id === 'roma' && (data.rules.romaMaxTroops - p.troops) < n;
+      return { id, name: provName(data, id), troops: p.troops, enabled: !!d, paid: d, reason: d ? '' : full ? `Roma is full (${data.rules.romaMaxTroops} troops at most, 12.k)` : 'not possible right now' };
+    });
+    const item = { item: n === 1 ? 'troop' : 'troops' + n, name: n === 1 ? '1 troop' : `${n} troops`, n, cost, costText: `${cost} Gold · 1 action`, provinces: provs };
+    item.reason = why(provs, cost, () => (!mine.length ? 'you control no province' : ''));
+    item.enabled = !item.reason;
+    return item;
+  };
+  const troop = pack(1, c.troop);
+  const troops2 = pack(2, c.troops2);
+  const troops3 = pack(3, c.troops3);
   const cardProvs = mine.map(id => {
     const d = legal.find(x => x.type === 'BUY_GAME_CARD' && x.action.fromProvince === id) ?? null; const p = state.provinces[id];
     return { id, name: provName(data, id), troops: p.troops, enabled: !!d, paid: d, reason: d ? '' : p.troops <= c.gameCardTroops ? `only ${p.troops} troop: at least 1 must stay (17.f)` : p.status === 'held' ? `Roma must keep ${data.rules.romaFloorOnHold} while held` : 'not possible right now' };
   });
-  const why = (list, cost, extra) => (list.some(x => x.enabled) ? '' : left <= 0 ? noAct : gold < cost ? short(cost) : extra() || 'not possible right now');
-  const troop = { item: 'troop', name: 'Troop', cost: c.troop, costText: `${c.troop} Gold · 1 action`, provinces: troopProvs };
-  troop.reason = why(troopProvs, c.troop, () => (!mine.length ? 'you control no province' : '')); troop.enabled = !troop.reason;
   const card = { item: 'gameCard', name: 'Game Card', cost: c.gameCardGold, costText: `${c.gameCardGold} Gold + ${c.gameCardTroops} troop · 1 action · max 1 per turn`, provinces: cardProvs };
   card.reason = state.turn?.gameCardBought ? 'you already bought a Game Card this turn (max 1, 17.s)' : why(cardProvs, c.gameCardGold, () => (mine.every(id => state.provinces[id].troops <= c.gameCardTroops) ? 'no province can pay a troop and keep 1 (17.f)' : ''));
   card.enabled = !card.reason;
-  return { gold, actionsLeft: left, sellable, items: [troop, card] };
+  // v31.14: Buy Prestige (22.g) has no province — it goes straight to the pay step (buyHtml skips "Where" for items with no provinces).
+  const presD = legal.find(x => x.type === 'BUY_PRESTIGE') ?? null;
+  const prestige = { item: 'prestige', name: '1 Prestige', cost: c.prestige, costText: `${c.prestige} Gold · 1 action · banked, permanent`, provinces: [], paid: presD };
+  prestige.reason = left <= 0 ? noAct : gold < c.prestige ? short(c.prestige) : presD ? '' : 'not possible right now';
+  prestige.enabled = !prestige.reason;
+  return { gold, actionsLeft: left, sellable, items: [troop, troops2, troops3, card, prestige] };
 }
 
 /** Actions used this turn, as "0/2". Null before the first turn. */
@@ -626,16 +755,180 @@ export function garrisonStayText(state, data, id) {
   if (p.troops < min) return `${name}: minimum ${min}, already under it (${p.troops} here; at least ${floor} must stay).`;
   return `${name}: minimum ${min} — keep ${must} to stay at minimum (${may} may leave).`;
 }
-/** The minimum garrison the page shows for a province (item 6): conquered AND starting provinces (a start province: flat 1, 17.t); null otherwise. */
+/**
+ * The minimum the province panel shows. Conquered and starting provinces use the garrison minimum.
+ * An allied province shows the perk threshold: natives + 1, with Pompey −1 and Garrison Requirement −1, never below 1 (19.r, 19.g).
+ * Unowned provinces show nothing. The global floor of 1 still limits troops leaving an ally; that is separate from this number.
+ */
 export function shownMin(state, data, id) {
   const p = state.provinces[id];
-  return p?.owner && (p.status === 'conquered' || p.status === 'starting') ? minGarrison(state, data, id) : null;
+  if (!p?.owner) return null;
+  if (p.status === 'allied') {
+    const min = alliedRewardNeed(state, data, id);
+    return { min, lines: [`allied: natives + 1, with Pompey and Garrison Requirement (19.r, 19.g); never below 1. Shown: ${min}`] };
+  }
+  return (p.status === 'conquered' || p.status === 'starting') ? minGarrison(state, data, id) : null;
+}
+export const HIDE_AI_BATTLES_KEY = 'imperator.hideAiBattles';
+/** Remembered in this browser. Default off: every battle shows. */
+export function hideAiBattlesOn() {
+  try { return globalThis.localStorage?.getItem(HIDE_AI_BATTLES_KEY) === '1'; } catch { return false; }
+}
+export function setHideAiBattles(on) {
+  try { globalThis.localStorage?.setItem(HIDE_AI_BATTLES_KEY, on ? '1' : '0'); } catch { /* private mode */ }
+}
+/** True when the full battle screen should be skipped. Natives are not a human. `on` defaults to the saved toggle. */
+export function skipBattleUi(state, attacker, defender, on = hideAiBattlesOn()) {
+  if (!on || !state) return false;
+  const human = id => {
+    if (!id) return false;
+    const p = state.players.find(x => x.id === id);
+    return !!p && p.controller !== 'ai';
+  };
+  return !human(attacker) && !human(defender);
+}
+const BATTLE_FACE = new Set(['attackDeclared', 'battleStarted', 'battleRoundRolled', 'battleRoundResolved', 'battleDiceAdjusted', 'battleEnded', 'enemyFled', 'generalSummoned', 'generalPerkTriggered', 'casualtiesApplied', 'decreeBattle', 'decreeResolved']);
+/** Who is in this battle event, even after the action has cleared state.battle. */
+export function battleParticipants(state, event) {
+  const p = event?.pub ?? {};
+  if (!event) return null;
+  if (event.type === 'attackDeclared') return { att: p.player ?? null, def: p.defender ?? null, target: p.target ?? null, id: p.battleId ?? null };
+  if (event.type === 'battleEnded') return { att: event.actor ?? null, def: p.defender ?? null, target: p.target ?? null, id: p.battleId ?? null };
+  if (event.type === 'battleRoundRolled' || event.type === 'battleDiceAdjusted') {
+    const att = p.attPlayer ?? p.attacker?.player ?? null;
+    const def = p.defPlayer !== undefined ? p.defPlayer : (p.defender && typeof p.defender === 'object' ? p.defender.player ?? null : null);
+    if (att || p.attacker) return { att, def, target: p.target ?? state?.battle?.target ?? null, id: p.battleId ?? state?.battle?.id ?? null };
+  }
+  if (p.attPlayer !== undefined || p.defPlayer !== undefined) return { att: p.attPlayer ?? null, def: p.defPlayer ?? null, target: p.target ?? state?.battle?.target ?? null, id: p.battleId ?? state?.battle?.id ?? null };
+  if (event.type === 'decreeBattle' || event.type === 'decreeResolved') return { att: p.roller ?? event.actor ?? null, def: null, target: 'carthage', id: p.battleId ?? null };
+  if (state?.battle && BATTLE_FACE.has(event.type)) return { att: state.battle.att?.player ?? null, def: state.battle.def?.player ?? null, target: state.battle.target ?? null, id: state.battle.id ?? null };
+  return null;
+}
+/** A battle event whose screen is skipped: AI vs AI, or AI vs natives, and only while the toggle is on. */
+export function battleEventHidden(state, event, on = hideAiBattlesOn()) {
+  if (!on || !event) return false;
+  if (event.type === 'cardPlayed') {
+    if (!state?.battle) return false;
+    return skipBattleUi(state, state.battle.att.player, state.battle.def.player, on);
+  }
+  if (!BATTLE_FACE.has(event.type)) return false;
+  const who = battleParticipants(state, event);
+  if (!who) return false;
+  return skipBattleUi(state, who.att, who.def, on);
+}
+/** Drop a live "attacks X" title and arrow when a battle ends, a hidden battle is skipped, or the next turn begins with no battle. */
+export function battleChromeClear(event, state, on = false) {
+  if (!event) return false;
+  if (event.type === 'turnStarted' && !state?.battle) return true;
+  if (event.type === 'battleEnded') return true;
+  if (battleEventHidden(state, event, on) && ['attackDeclared', 'battleStarted', 'battleRoundRolled', 'battleRoundResolved'].includes(event.type)) return true;
+  return false;
+}
+/** Title and arrow after one event. Used by the battle screen and by the regression tests. */
+export const battleSheetNeedsRebuild = (openId, nextId) => nextId != null && openId !== nextId;
+export function battleChromeStep(chrome, event, state, on = false) {
+  const cur = { title: null, arrow: null, id: null, ...(chrome ?? {}) };
+  if (battleChromeClear(event, state, on)) return { title: null, arrow: null, id: null };
+  if (event.type === 'attackDeclared') return { title: event.pub?.target ?? null, arrow: event.pub?.target ?? null, id: event.pub?.battleId ?? null };
+  return cur;
+}
+/**
+ * The public events of `playerId`'s latest finished turn: from their turnStarted through their turnEnded.
+ * Anything after that turnEnded (the next player's Resources step, which shares the End Turn action) is left out.
+ */
+export function eventsOfTurn(log, playerId) {
+  if (!Array.isArray(log) || !playerId) return [];
+  let end = -1;
+  for (let i = log.length - 1; i >= 0; i--) if (log[i].type === 'turnEnded' && log[i].pub?.player === playerId) { end = i; break; }
+  if (end < 0) return [];
+  let start = 0;
+  for (let i = end; i >= 0; i--) if (log[i].type === 'turnStarted' && log[i].pub?.player === playerId) { start = i; break; }
+  return log.slice(start, end + 1);
+}
+/**
+ * High-level summary of one turn, from that turn's events. Public fields only: a hidden Game Card stays "a Game Card".
+ * Battles are one line each (who, where, result, troop losses), never the dice.
+ * `skip` is true when the turn produced nothing worth reading.
+ */
+export function aiTurnSummary(events, state, data, playerId) {
+  const name = state.players?.find(p => p.id === playerId)?.name ?? playerId ?? 'AI';
+  const prov = id => data.provincesById?.[id]?.name ?? id ?? '?';
+  const card = def => (def && data.cardDefsById?.[def]?.name) || def || 'a card';
+  const mine = e => e.actor === playerId || e.pub?.player === playerId;
+  const turn = (events.find(e => e.type === 'turnStarted' && e.pub?.player === playerId) ?? events.find(e => e.type === 'turnEnded' && e.pub?.player === playerId))?.pub?.number ?? null;
+  const gained = [], rolls = [], actions = [], battles = [];
+  let open = null, sawDecree = false;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  for (const e of events ?? []) {
+    const p = e.pub ?? {};
+    if (e.type === 'attackDeclared' && p.player === playerId) { open = { place: prov(p.target), rounds: [] }; continue; }
+    if (open && e.type === 'battleRoundResolved') { open.rounds.push(p); continue; }
+    if (open && e.type === 'battleEnded') {
+      const aLoss = open.rounds.reduce((t, r) => t + (r.attackerLoss ?? 0), 0);
+      const dLoss = open.rounds.reduce((t, r) => t + (r.defenderLoss ?? 0), 0);
+      const how = p.outcome === 'conquered' ? 'won' : p.outcome === 'retreat' ? 'retreated' : 'lost';
+      battles.push(`${name} attacked ${open.place} and ${how}, lost ${plural(aLoss, 'troop')} (defender lost ${dLoss}).`);
+      open = null; continue;
+    }
+    if (['diceRolled', 'battleRoundRolled', 'battleDiceAdjusted', 'battleStarted', 'actionSpent', 'stepStarted', 'turnStarted', 'turnEnded', 'casualtiesApplied', 'borrowDecided', 'battleCardsCommitted', 'battleCardsSkipped', 'battleCardsSpent', 'battleCardsReturned', 'perkChosen', 'generalPerkTriggered', 'enemyFled'].includes(e.type)) continue;
+    if (e.type === 'senateDecree' && (e.actor === playerId || p.player === playerId)) sawDecree = true;
+    switch (e.type) {
+      case 'bonusTroopsGranted': if (p.player === playerId) gained.push(`+${p.n ?? 1} troop in ${prov(p.province)} (Resources).`); break;
+      case 'startProvinceGold': if (p.player === playerId) gained.push(`+${p.gold} Gold from the start province.`); break;
+      case 'merchantBonus': if (p.player === playerId) gained.push(`Merchant Bonus: +${p.gold} Gold (${p.roads} Roads to Roma).`); break;
+      case 'rewardGranted': if (p.player === playerId) gained.push(`Game Roll reward: ${p.reward} from ${prov(p.province)}.`); break;
+      case 'resourceApplied': if (p.player === playerId) gained.push(`Resource card ${card(p.def)}: +${p.gold ?? 0} Gold, ${plural(p.troops ?? 0, 'troop')} to place.`); break;
+      case 'troopsPlaced': if (p.player === playerId) gained.push(`Placed ${plural(p.n, 'troop')} in ${prov(p.province)}.`); break;
+      case 'cardDrawn': if (p.player === playerId) {
+        if (p.deck === 'game') gained.push(p.def ? `Drew ${card(p.def)}${p.autoPlay ? ' (played at once)' : ''}.` : 'Drew a Game Card.');
+        else if (p.deck === 'resource') gained.push(`Drew a Resource card${p.def ? ': ' + card(p.def) : ''}.`);
+        else gained.push(`Drew a ${p.deck} card.`);
+      } break;
+      case 'unusedActionGold': if (p.player === playerId && p.gold) gained.push(`+${p.gold} Gold for ${plural(p.unused, 'unused action')}.`); break;
+      case 'goldPrestige': if (p.player === playerId && p.goldPrestige) gained.push(`Gold Prestige +${p.goldPrestige} from ${p.gold} Gold (not spent).`); break;
+      case 'prestigeChanged': if (p.player === playerId && p.to !== p.from) gained.push(`Prestige ${p.from} → ${p.to}.`); break;
+      case 'gameRollResolved': if (mine(e)) rolls.push(p.kind === 'rome' ? `Game Roll ${p.value}: Rome Roll.` : p.kind === 'decree' ? `Game Roll ${p.value}: Senate Decree.` : `Game Roll ${p.value}.`); break;
+      case 'gameRollRerolled': if (mine(e)) rolls.push(`Early-game protection: ${p.value} was rolled again.`); break;
+      case 'romeRoll': if (mine(e) || p.roller === playerId) rolls.push(`Rome Roll${p.number != null ? ' ' + p.number : ''}.`); break;
+      case 'romeTaxPaid': if (p.player === playerId) rolls.push(p.nothing ? 'Rome Roll: paid nothing.' : p.troop ? 'Rome Roll: paid a troop.' : `Rome Roll: paid ${p.gold} Gold.`); break;
+      case 'senateDecree': if (e.actor === playerId || p.player === playerId) rolls.push(`Senate Decree ${p.number}: legions against Carthage.`); break;
+      case 'decreeBattle': if (sawDecree || p.roller === playerId) rolls.push(`Senate Decree: ${p.legions} legion${p.legions === 1 ? '' : 's'} attack Carthage.`); break;
+      case 'decreeResolved': if (sawDecree) rolls.push(`Senate Decree result: ${p.result}.`); break;
+      case 'revoltRoll': if (mine(e)) rolls.push(p.provinces?.length ? `Revolt Roll ${p.value}: ${p.provinces.map(prov).join(', ')} revolt.` : `Revolt Roll ${p.value}: nothing revolts.`); break;
+      case 'revoltRollSkipped': if (p.player === playerId) rolls.push('No Revolt Roll.'); break;
+      case 'provinceRevolted': if (p.player === playerId) rolls.push(`${prov(p.province)} revolted (${p.killed} killed, ${p.survivors} survived).`); break;
+      case 'displeasedDrawn': if (p.player === playerId) rolls.push(`Drew Rome Is Displeased: ${card(p.def)}.`); break;
+      case 'troopsMoved': if (p.player === playerId) actions.push(`Moved ${plural(p.troops, 'troop')} ${prov(p.from)} → ${prov(p.to)}.`); break;
+      case 'provinceAllied': if (p.player === playerId) actions.push(`Allied with ${prov(p.province)}.`); break;
+      case 'roadBuilt': if (p.player === playerId) actions.push(`Built a Road in ${prov(p.province)}.`); break;
+      case 'wallBuilt': if (p.player === playerId) actions.push(`Built a Wall in ${prov(p.province)}.`); break;
+      case 'catapultBought': if (p.player === playerId) actions.push('Bought a Catapult.'); break;
+      case 'merchantShipBought': if (p.player === playerId) actions.push(`Bought a Merchant ship on ${prov(p.a)}–${prov(p.b)}.`); break;
+      case 'troopsBought': if (p.player === playerId) actions.push(`Bought ${plural(p.n ?? 1, 'troop')} in ${prov(p.province)} for ${p.gold} Gold.`); break;
+      case 'prestigeBought': if (p.player === playerId) actions.push(`Bought 1 Prestige for ${p.gold} Gold.`); break;
+      case 'gameCardBought': if (p.player === playerId) actions.push('Bought a Game Card.'); break;
+      case 'cardPlayed': if (p.player === playerId) actions.push(`Played ${card(p.def)}.`); break;
+      case 'cardSold': if (p.player === playerId) actions.push(`Sold ${card(p.card)}.`); break;
+      case 'generalMoved': if (p.player === playerId) actions.push(`Moved the general to ${prov(p.to)}.`); break;
+      case 'nativesRolled': if (mine(e)) actions.push(`Scouted ${prov(p.province)}: ${p.count} natives.`); break;
+      case 'resourceSaved': if (p.player === playerId) actions.push(`Saved a ${p.piece} card.`); break;
+      case 'resourceCardUsed': if (p.player === playerId) actions.push(`Built a free ${p.piece} in ${prov(p.province)}.`); break;
+      default: break;
+    }
+  }
+  const sections = [
+    { title: 'Gained', lines: gained },
+    { title: 'Rolls', lines: rolls },
+    { title: 'Actions', lines: actions },
+    { title: 'Battles', lines: battles },
+  ].filter(s => s.lines.length);
+  return { player: playerId, name, turn, sections, skip: sections.length === 0 };
 }
 /** Attack Builder facts (items 2, 3, 5): the engine's attack preview for the chosen variant. */
 export { attackPreview } from '../../engine/index.js';
 
 // ------------------------------------------------------------------ why not (M8 items 3, 4): the engine's own reason, never a guess
-/** "Can't play now: no rival conquered province under 10 troops (18.m)." or null when the card can be played. */
+/** "Can't play now: no rival conquered province under 10 troops (18.m)." — or the general's protection, when that is the blocker — or null when the card can be played. */
 export function cardBlockReason(state, data, pid, uid) {
   const b = cardBlock(state, data, pid, uid); if (!b) return null;
   return `Can't play now: ${b.reason}${b.rule ? ` (${b.rule})` : ''}.`;
@@ -688,6 +981,7 @@ export function cardPlayPopup(events, i, state, data) {
   }
   if (e.type === 'cardPlayed' && p.role) outcome.push(`Played by the ${p.role}${p.round ? ` in round ${p.round}` : ''}${p.source === 'horn' ? '' : ' of the battle'}.`);
   if (e.type === 'cardPlayed' && p.source === 'attackRoma') outcome.push(`${nm(who)} may attack Roma.`);
+  if (e.type === 'cardPlayed' && p.dest === 'throwaway') outcome.push('Gone for good — it goes to the throwaway pile, never the discard pile (18.z).');
   if (e.type === 'cardPlayed' && p.inPlay) outcome.push('Stays in play in front of the player.', ...(def?.text ? [def.text] : []));
   for (let k = i + 1; k < events.length && outcome.length < 7; k++) {
     const x = events[k]; if (PLAY_STOP.has(x.type)) break; if (PLAY_QUIET.has(x.type)) continue;

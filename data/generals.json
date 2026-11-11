@@ -295,7 +295,7 @@
     "card": "generals/germanicus.png",
     "token": "tokens/general_germanicus.png"
    },
-   "text": "Fight to the Death: once his side has lost troops in this battle and is down to exactly 1 troop (one final die), +2 to that die, attacking or defending (no cap); an army that started with 1 troop never triggers it. Disciplined Advance (attacking only): the defender's Wall bonus is ignored for the first 2 rolls of each battle; stacks with Catapults.",
+   "text": "Fight to the Death: +1 to the highest die at 2 troops remaining and +2 at 1 (no cap). Defending qualifies even if the battle starts at 1 or 2. Attacking must start with at least 3 troops and be reduced to 2 or 1. Disciplined Advance (attacking only): the defender's Wall bonus is ignored for the whole battle.",
    "perks": [
     {
      "id": "fight_to_the_death",
@@ -317,13 +317,13 @@
      "when": "Any battle, attacking or defending, with the army",
      "detail": [
       {
-       "text": "When Germanicus' side has lost troops in this battle and is down to exactly 1 troop (rolling a single final die), add +2 to that die. There is no die cap.",
+       "text": "At 2 troops remaining, +1 to the highest die. At 1 troop remaining, +2 to the highest die. There is no die cap.",
        "rule": [
         "15.h"
        ]
       },
       {
-       "text": "An army that started the battle with only 1 troop never triggers it: the troops must have been lost in the rolls of this battle.",
+       "text": "Defending qualifies even if the battle starts at 1 or 2 troops. Attacking must start with at least 3 and suffer losses down to 2 or 1.",
        "rule": [
         "15.h"
        ]
@@ -345,21 +345,22 @@
      ],
      "attackOnly": true,
      "params": {
-      "wallRollsIgnored": 2,
+      "wallRollsIgnored": 1000,
+      "entireBattle": true,
       "stacksWithCatapults": true
      },
      "name": "Perk 2: Disciplined Advance",
      "when": "Attacking only, with the army",
      "detail": [
       {
-       "text": "The defender's Wall bonus is ignored for the first 2 rolls (rounds) of each battle.",
+       "text": "The defender's Wall bonus is ignored for the entire battle while Germanicus attacks with the army.",
        "rule": [
         "15.h",
         "19.k"
        ]
       },
       {
-       "text": "This stacks with Catapults: each source adds 2 rolls, so Disciplined Advance plus one Catapult ignore the Wall bonus for the first 4 rolls.",
+       "text": "This stacks with Catapults. Germanicus already ignores the Wall for the whole battle; each Catapult still adds its own ignored rolls on top.",
        "rule": [
         "15.h",
         "19.u"
@@ -378,6 +379,37 @@
      ]
     }
    ]
+  },
+  {
+   "id": "augustus",
+   "name": "Augustus",
+   "title": "The builder and master of the Treasury",
+   "rule": ["15.i"],
+   "art": {
+    "card": "generals/augustus.png",
+    "token": "tokens/general_augustus.png"
+   },
+   "text": "The builder and master of the Treasury. +1 Gold on a Merchant Bonus that was earned, and Roads cost 1 Gold.",
+   "perks": [
+    {
+     "id": "treasury",
+     "needsWithArmy": false,
+     "modifiers": [],
+     "name": "Perk 1: Treasury",
+     "when": "At the Resources step, when a Merchant Bonus is earned",
+     "detail": [{ "text": "+1 Gold is added to an earned Merchant Bonus. It is never granted without a qualifying Road network.", "rule": ["22.b"] }]
+    },
+    {
+     "id": "builder",
+     "needsWithArmy": false,
+     "modifiers": [],
+     "name": "Perk 2: Builder",
+     "when": "Buying a Road",
+     "detail": [{ "text": "Roads cost 1 Gold instead of 2.", "rule": ["19.j"] }]
+    }
+   ],
+   "quote": "The builder and master of the Treasury",
+   "intro": []
   }
  ]
 }

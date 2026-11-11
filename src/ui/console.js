@@ -9,7 +9,7 @@ const app = document.getElementById('app');
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 let data = null, assets = null, session = null, lastError = '', autoRnd = null, dice = '';
 
-const GROUP_ORDER = ['ROLL', 'CHOOSE_BORROW', 'CHOOSE_BATTLE_CARDS', 'CHOOSE_PERK', 'PLAY_CARD', 'PASS', 'DISCARD_CARDS', 'CALL_REINFORCEMENTS', 'BATTLE_CONTINUE', 'BATTLE_RETREAT', 'PLACE_SURVIVORS', 'DRAW_CARD', 'PLACE_TROOPS', 'RESOURCE_BUILD', 'CHOOSE_PROVINCE', 'CHOOSE_GENERAL', 'CHOOSE_START_PROVINCE', 'MOVE', 'BUY_TROOP', 'BUY_GAME_CARD', 'BUILD_ROAD', 'BUILD_WALL', 'USE_SAVED_RESOURCE', 'ATTACK', 'PREVIEW_TARGET', 'ALLY', 'END_TURN'];
+const GROUP_ORDER = ['ROLL', 'CHOOSE_BORROW', 'CHOOSE_BATTLE_CARDS', 'CHOOSE_PERK', 'PLAY_CARD', 'PASS', 'DISCARD_CARDS', 'CALL_REINFORCEMENTS', 'BATTLE_CONTINUE', 'BATTLE_RETREAT', 'PLACE_SURVIVORS', 'DRAW_CARD', 'PLACE_TROOPS', 'RESOURCE_BUILD', 'CHOOSE_PROVINCE', 'CHOOSE_GENERAL', 'CHOOSE_START_PROVINCE', 'MOVE', 'BUY_TROOP', 'BUY_GAME_CARD', 'BUY_PRESTIGE', 'BUILD_ROAD', 'BUILD_WALL', 'BUY_MERCHANT_SHIP', 'MOVE_MERCHANT_SHIP', 'USE_SAVED_RESOURCE', 'ATTACK', 'PREVIEW_TARGET', 'ALLY', 'END_TURN'];
 
 // ---- M4 setup screen: 2-3 seats, each Human or AI, a general (or Random), Random or Selected starts (validated like the engine does)
 let seatsForm = [

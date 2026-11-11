@@ -1,5 +1,5 @@
 {
- "_comment": "Game Cards (rules 18). 11 types, 31 cards (18.a, Vidi 2026-10-21). `type` is \"battle\" or \"other\": only battle cards get the Battle Card label and the builder step (PLAN 5.2, 10.8). Used cards go to the Game Card discard pile (18.l).",
+ "_comment": "Game Cards (rules 18). 12 types, 33 cards (18.a, Vidi 2026-10-21; Sneak Attack from the Sea! added 2026-11-07). `type` is \"battle\" or \"other\": only battle cards get the Battle Card label and the builder step (PLAN 5.2, 10.8). Used cards go to the Game Card discard pile (18.l).",
  "deck": "game",
  "cards": [
   {
@@ -245,7 +245,7 @@
     "delayTurns": 1,
     "usesTurnCardSlot": true
    },
-   "text": "Pay Gold equal to the native troop count of a province allied against you to flip it to your side. Carthage can never be allied. Or: pay 1 Gold to turn one of your own allied provinces into a conquered province (it keeps its troops, no Prestige).",
+   "text": "Pay Gold equal to the native troop count of a province allied against you to flip it to your side. Carthage can never be allied. Or: pay 1 Gold to turn one of your own allied provinces into a conquered province (it keeps its troops, +1 Prestige).",
    "art": {
     "front": "cards/game/bribe_the_ally.png"
    },
@@ -366,6 +366,36 @@
      "generalMayCome": true,
      "stayAfterDefence": true,
      "returnOptional": true
+    }
+   }
+  },
+  {
+   "id": "sneak_attack_sea",
+   "deck": "game",
+   "copies": 2,
+   "name": "Sneak Attack from the Sea!",
+   "kind": "action",
+   "type": "other",
+   "rule": [
+    "18.z"
+   ],
+   "play": {
+    "windows": [
+     "ownActionsStep"
+    ],
+    "delayTurns": 1,
+    "usesTurnCardSlot": true
+   },
+   "text": "Attack any province that has a sea link, from one of your coastal provinces that has a Road. The attack counts as a sea attack (2 dice; 3 with Pompey, an extra die with Scipio). It costs 1 action and no troops can be borrowed for it — move troops to the origin first. Roma still needs a Battlefield Imperator card.",
+   "art": {
+    "front": "cards/game/sneak_attack_sea.png"
+   },
+   "effect": {
+    "handler": "sneakAttack",
+    "params": {
+     "sea": true,
+     "needsRoad": true,
+     "noBorrow": true
     }
    }
   }

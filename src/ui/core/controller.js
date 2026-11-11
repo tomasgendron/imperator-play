@@ -70,13 +70,13 @@ export function createController(view) {
     view.thinking(whoActs(s));
     c.aiTimer = later(async () => { c.aiTimer = null; if (c.busy || !G.aiToMove(c.S) || c.aiPaused) return; await apply(G.aiMove(c.S), { fromAi: true }); }, spd(auto ? 300 : 650));
   }
-  /** Batch 5 items 1 and 8: what happens by itself for a human. Scouting rolls the natives at once (no Roll click, 17.h); a Rome Is
+  /** Batch 5 items 1 and 8: what happens by itself for a human. Scouting rolls the natives at once (no Roll click, 17.h) — a Sneak Attack's own native roll (18.z, v31.10) too; a Rome Is
    *  Displeased draw that falls on a human is announced first by a big banner that waits for OK (16.m). */
   function humanAuto(s) {
     const f = topFrame(s); if (!f) return false;
-    if (f.kind === 'roll' && f.purpose === 'nativeRoll' && G.isHuman(s, f.player) && c.NET?.role !== 'guest') {
+    if (f.kind === 'roll' && (f.purpose === 'nativeRoll' || f.purpose === 'sneakNativeRoll') && G.isHuman(s, f.player) && c.NET?.role !== 'guest') {
       c.autoRoll = true; document.body.dataset.humanTurn = '';
-      c.aiTimer = later(() => { c.aiTimer = null; c.autoRoll = false; if (!c.busy && topFrame(st())?.purpose === 'nativeRoll') apply({ type: 'ROLL', playerId: f.player }); else view.render(); }, spd(200));
+      c.aiTimer = later(() => { c.aiTimer = null; c.autoRoll = false; if (!c.busy && (topFrame(st())?.purpose === 'nativeRoll' || topFrame(st())?.purpose === 'sneakNativeRoll')) apply({ type: 'ROLL', playerId: f.player }); else view.render(); }, spd(200));
       return true;
     }
     if (f.kind === 'draw' && f.deck === 'displeased' && G.isHuman(s, f.player) && (!c.NET || f.player === c.viewer) && c.displeasedSeen !== f.id) {

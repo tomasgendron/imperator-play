@@ -9,7 +9,7 @@ import { topFrame } from './core.js';
 import * as S from './selectors.js';
 import { attackTargets, summonGeneralTarget } from './battle.js';
 import { generalMoveTargets, sellableCards } from './turn.js';
-import { TURN_PLAYS, heldLongEnough, revoltTargets, bribeTargets, bribeOwnTargets, assassinTargets, assassinKills, strikeTroops } from './cards.js';
+import { TURN_PLAYS, heldLongEnough, revoltTargets, bribeTargets, bribeOwnTargets, assassinTargets, assassinKills, strikeTroops, sneakAttacks } from './cards.js';
 
 const nm = (data, id) => data.provincesById[id]?.name ?? id;
 /** How many troops must stay so the province remains at its minimum (and the global floor). Shown wherever troops are asked to move. */
@@ -115,7 +115,7 @@ export function legalActions(state, data) {
         add({ type: 'PASS' }, 'Pass (no Horn of Titus Pullus)');
         for (const src of f.sources ?? []) {
           add({ type: 'CALL_REINFORCEMENTS', from: src.province, troops: src.max }, `Horn: reinforce from ${nm(data, src.province)} (${stayNote(state, data, src.province)})`, { field: 'troops', min: 1, max: src.max });
-          if (src.general) add({ type: 'CALL_REINFORCEMENTS', from: src.province, troops: src.max, withGeneral: true }, `Horn: reinforce from ${nm(data, src.province)} with the general (${stayNote(state, data, src.province)})`, { field: 'troops', min: 1, max: src.max });
+          if (src.general && !S.generalRecalled(state, who)) add({ type: 'CALL_REINFORCEMENTS', from: src.province, troops: src.max, withGeneral: true }, `Horn: reinforce from ${nm(data, src.province)} with the general (${stayNote(state, data, src.province)})`, { field: 'troops', min: 1, max: src.max });
         }
         break;
       case 'battleContinue':
@@ -162,10 +162,20 @@ export function legalActions(state, data) {
     const me = state.players.find(p => p.id === who); const gold = me.gold; const c = data.rules.costs;
     const act = unused > 0;
     if (act && gold >= data.itemsById.catapult.cost.gold) add({ type: 'BUY_CATAPULT' }, `Buy a Catapult (${data.itemsById.catapult.cost.gold} Gold)`);
+    if (act && gold >= c.prestige) add({ type: 'BUY_PRESTIGE' }, `Buy 1 Prestige (${c.prestige} Gold)`);
+    if (act && gold >= c.merchantShip) for (const link of S.seaLinks(data)) if (!S.hasShip(state, who, link.a, link.b)) add({ type: 'BUY_MERCHANT_SHIP', a: link.a, b: link.b }, `Merchant ship ${nm(data, link.a)}–${nm(data, link.b)} (${c.merchantShip} Gold)`);
+    if (act) for (const ship of S.shipsOf(state, who)) for (const link of S.seaLinks(data)) {
+      if (ship.a === link.a && ship.b === link.b) continue;
+      if (S.hasShip(state, who, link.a, link.b)) continue;
+      add({ type: 'MOVE_MERCHANT_SHIP', a: ship.a, b: ship.b, toA: link.a, toB: link.b }, `Move Merchant ship ${nm(data, ship.a)}–${nm(data, ship.b)} → ${nm(data, link.a)}–${nm(data, link.b)} (free)`);
+    }
     if (act) for (const id of mine) {
-      if (gold >= c.troop) add({ type: 'BUY_TROOP', province: id }, `Buy a troop in ${nm(data, id)} (${c.troop} Gold)`);
+      if (gold >= c.troop) add({ type: 'BUY_TROOP', province: id }, `Buy 1 troop in ${nm(data, id)} (${c.troop} Gold)`);
+      if (gold >= c.troops2) add({ type: 'BUY_TROOP', province: id, n: 2 }, `Buy 2 troops in ${nm(data, id)} (${c.troops2} Gold)`);
+      if (gold >= c.troops3) add({ type: 'BUY_TROOP', province: id, n: 3 }, `Buy 3 troops in ${nm(data, id)} (${c.troops3} Gold)`);
       if (gold >= c.gameCardGold && state.provinces[id].troops > c.gameCardTroops) add({ type: 'BUY_GAME_CARD', fromProvince: id }, `Buy a Game Card, paying a troop from ${nm(data, id)} (${c.gameCardGold} Gold)`);
-      if (gold >= c.road && !state.provinces[id].road) add({ type: 'BUILD_ROAD', province: id }, `Build a Road in ${nm(data, id)} (${c.road} Gold)`);
+      const road = S.roadCost(state, data, who);
+      if (gold >= road && !state.provinces[id].road) add({ type: 'BUILD_ROAD', province: id }, `Build a Road in ${nm(data, id)} (${road} Gold)`);
       if (gold >= c.wall) for (const n of S.neighbours(data, id)) if (!state.provinces[id].walls.includes(n)) add({ type: 'BUILD_WALL', province: id, facing: n }, `Build a Wall in ${nm(data, id)} facing ${nm(data, n)} (${c.wall} Gold)`);
     }
     // cards played by hand in the Actions step (18.h): not an action, one per turn, held since an earlier turn
@@ -186,6 +196,10 @@ export function legalActions(state, data) {
           if (k === 2) for (let i = 0; i < ts.length; i++) for (let j = i + 1; j < ts.length; j++)
             add({ type: 'PLAY_CARD', cardUid: e.uid, kills: [{ province: ts[i], n: 1 }, { province: ts[j], n: 1 }] }, `Play Assassin! on ${nm(data, ts[i])} and ${nm(data, ts[j])} (1 each)`);
         }
+        if (def === 'sneak_attack_sea') for (const s of sneakAttacks(state, data, who)) {
+          add({ type: 'PLAY_CARD', cardUid: e.uid, from: s.from, target: s.target, troops: s.max }, `Play Sneak Attack from the Sea! — attack ${nm(data, s.target)} from ${nm(data, s.from)} (sea attack)`, { field: 'troops', min: 1, max: s.max });
+          if (me.general?.at === s.from && !S.generalRecalled(state, who)) add({ type: 'PLAY_CARD', cardUid: e.uid, from: s.from, target: s.target, troops: s.max, withGeneral: true }, `Play Sneak Attack from the Sea! — attack ${nm(data, s.target)} from ${nm(data, s.from)} with the general (sea attack)`, { field: 'troops', min: 1, max: s.max });
+        }
       }
     }
     const gen = state.players.find(p => p.id === who).general;
@@ -193,12 +207,12 @@ export function legalActions(state, data) {
       if (from === to) continue;
       const max = S.maxMove(state, data, from);
       if (max >= 1) add({ type: 'MOVE', from, to, troops: max }, `Move troops ${nm(data, from)} → ${nm(data, to)} (${stayNote(state, data, from)}; ${stayNote(state, data, to)})`, { field: 'troops', min: 1, max });
-      if (gen?.at === from) {
+      if (gen?.at === from && !S.generalRecalled(state, who)) {
         if (max >= 1) add({ type: 'MOVE', from, to, troops: max, withGeneral: true }, `Move the general with troops ${nm(data, from)} → ${nm(data, to)} (${stayNote(state, data, from)}; ${stayNote(state, data, to)})`, { field: 'troops', min: 1, max });
       }
     }
     // free, not actions: the general's own move (15.j) and selling cards for 2 Gold (20.p)
-    for (const to of generalMoveTargets(state, data, who)) add({ type: 'MOVE_GENERAL', to }, `Move the general to ${nm(data, to)} (free, once per turn)`);
+    for (const to of generalMoveTargets(state, data, who)) add({ type: 'MOVE_GENERAL', to }, `Move the general to ${nm(data, to)} (free, as many times as you want)`);
     for (const uid of sellableCards(state, data, who)) add({ type: 'SELL_CARD', cardUid: uid }, `Sell ${data.cardDefsById[state.cards[uid].def].name} for ${data.rules.sellCard.gold} Gold`);
     for (const c of state.players.find(p => p.id === who).savedResources) {
       const piece = data.cardDefsById[state.cards[c.uid].def].effect.params.piece;
@@ -213,7 +227,7 @@ export function legalActions(state, data) {
       for (const t of attackTargets(state, data, who, from)) {
         const what = `${nm(data, t.id)}${state.provinces[t.id].owner ? '' : ' (natives)'} from ${nm(data, from)}${t.via ? ' via ' + nm(data, t.via) : ''}`;
         add({ type: 'ATTACK', from, target: t.id, troops: max }, `ATTACK ${what} (${stayNote(state, data, from)})`, { field: 'troops', min: 1, max });
-        if (gen?.at === from) add({ type: 'ATTACK', from, target: t.id, troops: max, withGeneral: true }, `ATTACK ${what} with the general (${stayNote(state, data, from)})`, { field: 'troops', min: 1, max });
+        if (gen?.at === from && !S.generalRecalled(state, who)) add({ type: 'ATTACK', from, target: t.id, troops: max, withGeneral: true }, `ATTACK ${what} with the general (${stayNote(state, data, from)})`, { field: 'troops', min: 1, max });
       }
     }
     for (const target of data.provinceIds) {

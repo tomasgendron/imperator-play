@@ -4,7 +4,7 @@
 //   -> start (Caesar's flee) -> per round: cards -> roll battleRound -> battleContinue (continue / retreat) -> end
 //   -> after: placeSurvivors, Game Card draw, extra Revolt Roll (frames pushed so they resolve in that order, Q29).
 // The settle hook below drives the stages; it only acts when no frame is waiting. Turn and decree logic stay in turn.js.
-import { fail, check, emit, roll, pushFrame, popFrame, topFrame, mustPlayer, playerOf, orderFrom, awardPrestige, toDiscard, onSettle } from './core.js';
+import { fail, check, emit, roll, pushFrame, popFrame, topFrame, mustPlayer, playerOf, difficultyOf, orderFrom, awardPrestige, toDiscard, onSettle } from './core.js';
 import { define, defineRoll } from './actions.js';
 import { registerPerk, registerEffect, registerDecree } from './registry.js';
 import { changeTroops, spendAction, processRevolts, pickRevolt, revoltPickedEvent, active, mustControl, provinceChoiceHandlers, turnHooks, responseWindows } from './turn.js';
@@ -28,10 +28,15 @@ export function battleCardsHeld(state, data, pid) {
  * How `from` reaches `target` for an attack: direct land/sea link (16.i), or through a NEUTRAL Carthage (16.n, 17.z; Q80).
  * Returns {ok, sea, via, code, reason}.
  */
-export function attackRoute(state, data, pid, from, target) {
+export function attackRoute(state, data, pid, from, target, opts = {}) {
   if (!data.provincesById[target]) return { ok: false, code: 'UNKNOWN_PROVINCE', reason: `Unknown province "${target}".` };
   if (target === from || state.provinces[target].owner === pid) return { ok: false, code: 'OWN_TARGET', reason: `${nm(data, target)} is yours.` };
   if (target === 'carthage' && state.carthage.neutral) return { ok: false, code: 'CARTHAGE_NEUTRAL', reason: 'Neutral Carthage belongs to Roma: it cannot be attacked (16.n).', rule: '16.n' };
+  if (opts.sneak) {   // 18.z: a Sneak Attack sails from any coastal province to any coastal province, by sea
+    if (!S.isCoastal(data, from)) return { ok: false, code: 'ORIGIN_NOT_COASTAL', reason: `${nm(data, from)} has no sea link: a Sneak Attack must sail from a coastal province (18.z).`, rule: '18.z' };
+    if (!S.isCoastal(data, target)) return { ok: false, code: 'TARGET_LANDLOCKED', reason: `${nm(data, target)} has no sea link: a Sneak Attack can only target a coastal province (18.z).`, rule: '18.z' };
+    return { ok: true, sea: true, via: null, sneak: true };
+  }
   const link = S.linkType(data, from, target);
   if (link) return { ok: true, sea: link === 'sea', via: null };
   const pass = data.rules.neutralCarthagePassable;
@@ -56,16 +61,18 @@ export function attackTargets(state, data, pid, from) {
  * Why `pid` cannot attack `target` from `from` right now (M8 item 4, Vidi 2026-10-22): null when the attack is legal (with
  * opts.withGeneral and, when given, opts.troops), else {code, reason, rule}. ATTACK fails with exactly this, in this order, so the
  * reason shown in the builder and the legality check cannot drift apart. Borrow, battle cards and the perk are checked by ATTACK itself.
+ * opts.sneak marks a Sneak Attack (18.z): any coastal target, and the Roma card-slot check is skipped (the Sneak card itself is the turn's card).
  */
 export function attackBlock(state, data, pid, from, target, opts = {}) {
   const B = (code, reason, rule = null) => ({ code, reason, rule });
   const pl = playerOf(state, pid);
   if (!data.provincesById[from]) return B('UNKNOWN_PROVINCE', `Unknown province "${from}".`);
   if (!S.controls(state, pid, from)) return B('NOT_YOURS', `${nm(data, from)} is not one of your provinces.`);
-  const route = attackRoute(state, data, pid, from, target);
+  const route = attackRoute(state, data, pid, from, target, opts);
   if (!route.ok) return B(route.code, route.reason, route.rule ?? '16.i');
   const t = state.provinces[target]; const fp = state.provinces[from]; const withGeneral = !!opts.withGeneral;
   if (withGeneral && pl.general?.at !== from) return B('GENERAL_NOT_THERE', `Your general is not in ${nm(data, from)} (17.m).`, '17.m');
+  if (withGeneral && S.generalRecalled(state, pid)) return B('GENERAL_RECALLED', `Your general is recalled to Rome until the end of turn ${pl.generalRecalledThroughTurn}: he cannot lead an attack (18.o).`, '18.o');
   const pompeySea = route.sea && withGeneral && perksOn(state, pid, 'pompey');
   if (!fp.road && !pompeySea) return B('NEED_ROAD', `${nm(data, from)} needs a Road to attack from it (19.b, 19.i${route.sea ? '; only Pompey with the army is exempt at sea, 15.d' : ''}).`, '19.b');
   if (t.owner === null && target !== 'roma' && target !== 'carthage' && t.native.rolled === null) return B('NATIVES_NOT_ROLLED', `Roll ${nm(data, target)}'s natives first (PREVIEW_TARGET, 17.h).`, '17.h');
@@ -77,7 +84,7 @@ export function attackBlock(state, data, pid, from, target, opts = {}) {
     const c = pl.hand.find(x => state.cards[x.uid].def === data.rules.romaAttackNeedsCard);
     if (!c) return B('NEED_BATTLEFIELD_IMPERATOR', 'Attacking Roma needs a Battlefield Imperator card (12.h, 18.w).', '18.w');
     if (c.drawnOnTurn + data.rules.holdCardTurns > state.turn.number) return B('HOLD_A_TURN', 'The Battlefield Imperator must be held until the turn after it was drawn (18.w).', '18.w');
-    if (state.turn.nonBattleCardPlayed) return B('CARD_SLOT_USED', 'You already played your one non-battle card this turn (18.h).', '18.h');
+    if (state.turn.nonBattleCardPlayed && !opts.sneak) return B('CARD_SLOT_USED', 'You already played your one non-battle card this turn (18.h).', '18.h');
   }
   if (state.turn.actionsUsed >= data.rules.actionsPerTurn) return B('NO_ACTIONS_LEFT', `You have already used your ${data.rules.actionsPerTurn} actions this turn (17.e).`, '17.e');
   return null;
@@ -141,7 +148,7 @@ export function diceCounts(state, data, b) {
   const af = attForce(b); if (a > af) { a = af; ar.push(`only ${af} troop(s) left`); }
   let d = R.defenderDice; dr.push('defender: 2 dice');
   if (wallsActive(state, data, b)) {
-    if (b.round <= b.wallRollsIgnored) dr.push(`Wall bonus cancelled in rolls 1-${b.wallRollsIgnored} (${b.wallSources.join(', ')})`);
+    if (b.round <= b.wallRollsIgnored) dr.push(b.wallRollsIgnored >= 99 ? `Wall bonus ignored for the whole battle (${b.wallSources.join(', ')})` : `Wall bonus cancelled in rolls 1-${b.wallRollsIgnored} (${b.wallSources.join(', ')})`);
     else { d = R.defenderDiceWithWall; dr.push(b.target === 'roma' ? 'Roma: Walls on all sides (12.i)' : b.target === 'carthage' && state.provinces.carthage.owner === null ? 'Carthage: Walls on all sides (16.n)' : 'Wall on this border (19.k)'); }
   }
   const df = defForce(state, b); if (d > df) { d = df; dr.push(`only ${df} defender(s) left`); }
@@ -154,7 +161,7 @@ const perkFns = {
   caesarFlee: { minEnemy: (data) => data.generalsById.caesar.perks[0].params.minEnemyTroops ?? data.rules.caesarFleeMinEnemy },
   scipioExtraDie: {}, seaMaster: {},
   fightToTheDeath: { delta: data => data.generalsById.germanicus.perks.find(p => p.handler === 'fightToTheDeath').params.delta },
-  disciplinedAdvance: { rolls: data => data.generalsById.germanicus.perks.find(p => p.handler === 'disciplinedAdvance').params.wallRollsIgnored },
+  disciplinedAdvance: { rolls: () => 1000 },
 };
 for (const [k, v] of Object.entries(perkFns)) registerPerk(k, v);
 registerEffect('battleModifier', { elephants: 'all rounds', moral_boost: 'one round' });
@@ -166,36 +173,49 @@ registerDecree('carthageDecree', {});
 define('ATTACK', {
   turn: true,
   run(ctx, a) {
-    const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid);
+    const { state, data } = ctx; const pid = active(ctx);
     const block = attackBlock(state, data, pid, a.from, a.target, { withGeneral: a.withGeneral, troops: a.troops ?? null });   // M8 item 4: the UI shows the same reason
     if (block) fail(block.code, block.reason, block.rule);
-    const route = attackRoute(state, data, pid, a.from, a.target);
-    const t = state.provinces[a.target];
-    const withGeneral = !!a.withGeneral; const n = a.troops;
-    const bfi = a.target === 'roma' ? pl.hand.find(x => state.cards[x.uid].def === data.rules.romaAttackNeedsCard).uid : null;
-    const bmax = borrowLimit(state, data, a.from, n);
-    if (a.borrow !== undefined && a.borrow !== null) check(isInt(a.borrow) && a.borrow >= 0 && a.borrow <= bmax, 'BORROW_MAX', `You may borrow 0 to ${bmax} native troop(s) from ${nm(data, a.from)} (19.c).`, '19.c');
-    const held = battleCardsHeld(state, data, pid);
-    let cards = null;
-    if (a.battleCards !== undefined && a.battleCards !== null) cards = pickCards(data, held, a.battleCards);
-    // 15.c (Vidi 2026-10-24): Scipio's only perk is the extra die, applied by itself; the old +1 perk is gone (supersedes Q112)
-    if (a.perk !== undefined && a.perk !== null) check(withGeneral && perksOn(state, pid, 'scipio') && a.perk === 'extraDie', 'BAD_PERK', a.perk === 'plusOne' ? "Scipio's +1 perk was removed (15.c, Vidi 2026-10-24): he only rolls an extra die." : 'Only Scipio, attacking with the army, has a perk to choose: extraDie (15.c).', '15.c');
-    spendAction(ctx, 'attack');
-    if (bfi) {
-      const i = pl.hand.findIndex(x => x.uid === bfi); pl.hand.splice(i, 1); toDiscard(state, bfi); state.turn.nonBattleCardPlayed = true;
-      emit(ctx, 'cardPlayed', { actor: pid, rule: '18.w', pub: { player: pid, def: data.rules.romaAttackNeedsCard, uid: bfi, source: 'attackRoma' } });
-    }
-    changeTroops(ctx, a.from, -n);
-    const b = state.battle = {
-      id: 'b' + (state.eventSeq + 1), mode: 'attack', stage: 'borrow', round: 0, target: a.target, sea: route.sea, via: route.via,
-      att: { player: pid, from: a.from, own: n, borrow: a.borrow ?? null, borrowMax: bmax, borrowed: 0, borrowedDead: 0, general: withGeneral, perk: a.perk ?? null, cards, queue: [], elephants: 0, playedRound: 0 },
-      def: { player: t.owner, kind: defKind(state, a.target), general: false, cards: null, queue: [], elephants: 0, playedRound: 0, hornAsked: false, startForce: 0 },
-      moral: { att: 0, def: 0 }, fled: null, wallRollsIgnored: 0, wallSources: [], loyaltyDone: a.target !== 'roma', rounds: [],
-    };
-    b.def.general = !!(t.owner && generalOf(state, t.owner)?.at === a.target);
-    emit(ctx, 'attackDeclared', { actor: pid, rule: '17.e', pub: { battleId: b.id, player: pid, from: a.from, target: a.target, troops: n, general: withGeneral, sea: route.sea, via: route.via, defender: t.owner, underGarrisonedOrigin: S.isUnderGarrisoned(state, data, a.from) } });
+    declareAttack(ctx, pid, a);
   },
 });
+/** Shared attack declaration (ATTACK and the Sneak Attack card, 18.z): validates nothing itself — the caller must have passed
+ * attackBlock first — spends the action, spends the Battlefield Imperator for Roma, moves the troops and opens the battle.
+ * opts.sneak: no borrowing (borrowMax 0, so the borrow frame never appears) and the route is sea. */
+export function declareAttack(ctx, pid, a, opts = {}) {
+  const { state, data } = ctx; const pl = mustPlayer(state, pid);
+  const route = attackRoute(state, data, pid, a.from, a.target, opts);
+  const t = state.provinces[a.target];
+  const withGeneral = !!a.withGeneral; const n = a.troops;
+  const bfi = a.target === 'roma' ? pl.hand.find(x => state.cards[x.uid].def === data.rules.romaAttackNeedsCard).uid : null;
+  const bmax = opts.sneak ? 0 : borrowLimit(state, data, a.from, n);
+  if (a.borrow !== undefined && a.borrow !== null) check(isInt(a.borrow) && a.borrow >= 0 && a.borrow <= bmax, 'BORROW_MAX', `You may borrow 0 to ${bmax} native troop(s) from ${nm(data, a.from)} (19.c).`, '19.c');
+  const held = battleCardsHeld(state, data, pid);
+  let cards = null;
+  if (a.battleCards !== undefined && a.battleCards !== null) cards = pickCards(data, held, a.battleCards);
+  // 15.c (Vidi 2026-10-24): Scipio's only perk is the extra die, applied by itself; the old +1 perk is gone (supersedes Q112)
+  if (a.perk !== undefined && a.perk !== null) check(withGeneral && perksOn(state, pid, 'scipio') && a.perk === 'extraDie', 'BAD_PERK', a.perk === 'plusOne' ? "Scipio's +1 perk was removed (15.c, Vidi 2026-10-24): he only rolls an extra die." : 'Only Scipio, attacking with the army, has a perk to choose: extraDie (15.c).', '15.c');
+  spendAction(ctx, 'attack');
+  if (bfi) {
+    const i = pl.hand.findIndex(x => x.uid === bfi); pl.hand.splice(i, 1); toDiscard(state, bfi); state.turn.nonBattleCardPlayed = true;
+    emit(ctx, 'cardPlayed', { actor: pid, rule: '18.w', pub: { player: pid, def: data.rules.romaAttackNeedsCard, uid: bfi, source: 'attackRoma' } });
+  }
+  changeTroops(ctx, a.from, -n);
+  // v31.12: an Easy AI seat attacks a human-owned province at most once per turn (one battle = one attack, however many rounds it runs).
+  // The count lives on the turn (reset by nextTurn) and is read by the AI when it weighs its next attack.
+  if (t.owner && playerOf(state, t.owner)?.controller !== 'ai' && difficultyOf(state, pid) === 'easy') {
+    const m = (state.turn.aiHumanAttacks ??= {});
+    m[pid] = (m[pid] ?? 0) + 1;
+  }
+  const b = state.battle = {
+    id: 'b' + (state.eventSeq + 1), mode: 'attack', stage: 'borrow', round: 0, target: a.target, sea: route.sea, via: route.via, sneak: !!opts.sneak,
+    att: { player: pid, from: a.from, own: n, borrow: a.borrow ?? null, borrowMax: bmax, borrowed: 0, borrowedDead: 0, general: withGeneral, perk: a.perk ?? null, cards, queue: [], elephants: 0, playedRound: 0 },
+    def: { player: t.owner, kind: defKind(state, a.target), general: false, cards: null, queue: [], elephants: 0, playedRound: 0, hornAsked: false, startForce: 0 },
+    moral: { att: 0, def: 0 }, fled: null, wallRollsIgnored: 0, wallSources: [], loyaltyDone: a.target !== 'roma', rounds: [],
+  };
+  b.def.general = !!(t.owner && generalOf(state, t.owner)?.at === a.target);
+  emit(ctx, 'attackDeclared', { actor: pid, rule: '17.e', pub: { battleId: b.id, player: pid, from: a.from, target: a.target, troops: n, general: withGeneral, sea: route.sea, via: route.via, sneak: !!opts.sneak, defender: t.owner, underGarrisonedOrigin: S.isUnderGarrisoned(state, data, a.from) } });
+}
 function pickCards(data, held, want) {
   check(want && typeof want === 'object', 'BAD_CARDS', 'battleCards must be {cardDefId: count}.');
   const uids = [];
@@ -247,6 +267,7 @@ define('CALL_REINFORCEMENTS', {
     check(isInt(a.troops) && a.troops >= 1 && a.troops <= src.max, 'BAD_TROOPS', `Send 1 to ${src.max} troop(s) from ${nm(data, a.from)} (1 stays, 17.f).`, '18.y');
     const pl = mustPlayer(state, f.player);
     if (a.withGeneral) check(pl.general?.at === a.from, 'GENERAL_NOT_THERE', 'Your general is not there.', '18.y');
+    if (a.withGeneral) check(!S.generalRecalled(state, f.player), 'GENERAL_RECALLED', `${data.generalsById[pl.general?.id]?.name ?? 'Your general'} is recalled to Rome until the end of turn ${pl.generalRecalledThroughTurn}: he cannot leave Rome (18.o).`, '18.o');
     popFrame(ctx);
     const i = pl.hand.findIndex(c => c.uid === f.card); pl.hand.splice(i, 1); toDiscard(state, f.card);
     emit(ctx, 'cardPlayed', { actor: f.player, rule: '18.y', pub: { battleId: b.id, player: f.player, def: 'horn_of_titus_pullus', uid: f.card, source: 'defenceAnnounced' } });
@@ -300,7 +321,7 @@ export function summonGeneralTarget(state, data, pid) {
   const dest = side === 'att' ? b.att.from : b.target;
   if (!dest || !S.controls(state, pid, dest)) return null;
   if (at === dest) return { side, dest, from: at, already: true };
-  const route = S.moveRoute(state, data, pid, at, dest);
+  const route = S.generalMoveRoute(state, data, pid, at, dest);   // Roma-aware (18.o, v31.17): a general freed from recall sits in Roma
   if (!route) return null;
   return { side, dest, from: at, path: route.path, already: false };
 }
@@ -445,9 +466,14 @@ function startBattle(ctx, b) {
   const { state, data } = ctx;
   b.round = 1;
   if (b.mode === 'attack') {
-    const cat = mustPlayer(state, b.att.player).items.catapult;
-    if (cat) { b.wallRollsIgnored += cat * data.rules.catapult.wallRollsIgnoredEach; b.wallSources.push(`${cat} Catapult${cat > 1 ? 's' : ''} (19.u)`); }
-    if (b.att.general && perksOn(state, b.att.player, 'germanicus')) { b.wallRollsIgnored += perkFns.disciplinedAdvance.rolls(data); b.wallSources.push('Germanicus: Disciplined Advance (15.h)'); }
+    // v31.13: a Wall bonus can only be ignored where a Wall exists (19.k) — with no Wall there is nothing to ignore, so the
+    // battleStarted pub carries wallRollsIgnored 0 and the panel shows no "Wall bonus ignored" line. Mechanically neutral:
+    // diceCounts only applies the Wall when wallsActive, so a wall-less defender rolled 2 dice either way.
+    if (wallsActive(state, data, b)) {
+      const cat = mustPlayer(state, b.att.player).items.catapult;
+      if (cat) { b.wallRollsIgnored += cat * data.rules.catapult.wallRollsIgnoredEach; b.wallSources.push(`${cat} Catapult${cat > 1 ? 's' : ''} (19.u)`); }
+      if (b.mode === 'attack' && b.att.general && perksOn(state, b.att.player, 'germanicus')) { b.wallRollsIgnored += perkFns.disciplinedAdvance.rolls(data); b.wallSources.push('Germanicus: Disciplined Advance, the whole battle (15.h)'); }
+    }
     // Caesar (15.b, Q19, Q68): one ENEMY troop flees, never from a force of 1
     const min = perkFns.caesarFlee.minEnemy(data);
     if (b.att.general && perksOn(state, b.att.player, 'caesar')) {
@@ -492,12 +518,13 @@ function loseBorrowed(ctx, b, k, why) {
 }
 defineRoll('battleRound', (ctx, f) => {
   const { state, data } = ctx; const b = state.battle;
+  if (b.att.started == null) { b.att.started = attForce(b); b.def.started = defForce(state, b); }
   const dc = diceCounts(state, data, b);
   const raw = { att: [], def: [] };
   for (let i = 0; i < dc.attacker; i++) raw.att.push(roll(ctx, data.rules.dice.battle, 'battleAttack', b.att.player));
   for (let i = 0; i < dc.defender; i++) raw.def.push(roll(ctx, data.rules.dice.battle, 'battleDefence', b.def.player));
   popFrame(ctx);
-  emit(ctx, 'battleRoundRolled', { actor: b.att.player, rule: '17.e', pub: { battleId: b.id, round: b.round, attacker: { player: b.att.player, dice: [...raw.att], reasons: dc.attackerReasons }, defender: { player: b.def.player, dice: [...raw.def], reasons: dc.defenderReasons } } });
+  emit(ctx, 'battleRoundRolled', { actor: b.att.player, rule: '17.e', pub: { battleId: b.id, round: b.round, target: b.target, attPlayer: b.att.player, defPlayer: b.def.player ?? null, attacker: { player: b.att.player, dice: [...raw.att], reasons: dc.attackerReasons }, defender: { player: b.def.player, dice: [...raw.def], reasons: dc.defenderReasons } } });
   const adj = []; const fin = { att: [...raw.att], def: [...raw.def] };
   for (const side of ['att', 'def']) {
     const bonus = b[side].elephants + b.moral[side];
@@ -508,11 +535,22 @@ defineRoll('battleRound', (ctx, f) => {
     if (b.moral[side]) adj.push({ side: who, source: 'moral_boost', delta: b.moral[side], appliesTo: 'all', why: 'Moral boost! this roll (18.c)' });
   }
   if (b.mode === 'attack') {
-    // Q113 (Vidi 2026-10-22): only once his side has LOST troops in this battle (killed in an earlier roll) and is down to exactly 1;
-    // an army that started at 1 never triggers it
-    const delta = perkFns.fightToTheDeath.delta(data); const lost = side => b.rounds.some(r => r[side + 'Loss'] > 0);
-    if (b.att.general && perksOn(state, b.att.player, 'germanicus') && attForce(b) === 1 && fin.att.length === 1 && lost('attacker')) { fin.att[0] += delta; adj.push({ side: 'attacker', source: 'germanicus', delta, why: 'Fight to the Death (15.h)' }); }
-    if (b.def.general && b.def.player && perksOn(state, b.def.player, 'germanicus') && defForce(state, b) === 1 && fin.def.length === 1 && lost('defender')) { fin.def[0] += delta; adj.push({ side: 'defender', source: 'germanicus', delta, why: 'Fight to the Death (15.h)' }); }
+    // 15.h (v31.8): +1 to the highest die at 2 troops, +2 at 1, no cap. A defender qualifies even if the battle
+    // started at 1 or 2. An attacker must have started with at least 3 and been reduced to 2 or 1.
+    const bump = (dice, delta) => { if (!delta || !dice.length) return; let i = 0; for (let k = 1; k < dice.length; k++) if (dice[k] > dice[i]) i = k; dice[i] += delta; };
+    const fight = (now, started, attacking) => {
+      if (now !== 1 && now !== 2) return 0;
+      if (attacking && !(started >= 3 && now < started)) return 0;
+      return now === 1 ? 2 : 1;
+    };
+    if (b.att.general && perksOn(state, b.att.player, 'germanicus')) {
+      const delta = fight(attForce(b), b.att.started ?? attForce(b), true);
+      if (delta) { bump(fin.att, delta); adj.push({ side: 'attacker', source: 'germanicus', delta, why: `Fight to the Death +${delta} (15.h)` }); }
+    }
+    if (b.def.general && b.def.player && perksOn(state, b.def.player, 'germanicus')) {
+      const delta = fight(defForce(state, b), b.def.started ?? defForce(state, b), false);
+      if (delta) { bump(fin.def, delta); adj.push({ side: 'defender', source: 'germanicus', delta, why: `Fight to the Death +${delta} (15.h)` }); }
+    }
   }
   if (adj.length) emit(ctx, 'battleDiceAdjusted', { rule: '15.g, 18.b, 18.c', pub: { battleId: b.id, round: b.round, adjustments: adj, attackerFinal: [...fin.att], defenderFinal: [...fin.def] } });
   const A = [...fin.att].sort((x, y) => y - x), D = [...fin.def].sort((x, y) => y - x);
@@ -528,7 +566,7 @@ defineRoll('battleRound', (ctx, f) => {
   b.moral = { att: 0, def: 0 };
   let af = attForce(b), df = defForce(state, b);
   b.rounds.push({ round: b.round, attackerDice: raw.att, defenderDice: raw.def, attackerFinal: fin.att, defenderFinal: fin.def, attackerLoss: aLoss, defenderLoss: dLoss });
-  emit(ctx, 'battleRoundResolved', { rule: '17.e', pub: { battleId: b.id, round: b.round, attackerFinal: A, defenderFinal: D, pairs, attackerLoss: aLoss, defenderLoss: dLoss, attackerTroopsAfter: af, defenderTroopsAfter: df } });
+  emit(ctx, 'battleRoundResolved', { rule: '17.e', pub: { battleId: b.id, round: b.round, target: b.target, attPlayer: b.att.player, defPlayer: b.def.player ?? null, attackerFinal: A, defenderFinal: D, pairs, attackerLoss: aLoss, defenderLoss: dLoss, attackerTroopsAfter: af, defenderTroopsAfter: df } });
   if (af === 0 && df === 0) {                                                          // Q20: the defender's last troop survives
     setDefForce(state, b, 1); df = 1;
     emit(ctx, 'bothSidesZero', { rule: 'Q20', pub: { battleId: b.id, defenderKeeps: 1 } });
@@ -633,7 +671,7 @@ defineRoll('extraRevoltRoll', (ctx, f) => {
   const hit = r.hit;
   emit(ctx, 'revoltRoll', { actor: pid, rule: '19.d', pub: { player: pid, value: v, provinces: hit, extra: true, exempt: f.exclude, ...(r.pick !== null ? { tied: r.tied } : {}) } });
   revoltPickedEvent(ctx, pid, r, true);
-  for (const id of match.filter(m => !S.canRevolt(state, data, m))) emit(ctx, 'revoltImmune', { actor: pid, rule: '17.c', pub: { player: pid, province: id, troops: state.provinces[id].troops, reason: `${data.rules.revoltImmuneAtTroops} or more troops never revolt` } });
+  for (const id of match.filter(m => !S.canRevolt(state, data, m))) emit(ctx, 'revoltImmune', { actor: pid, rule: '17.c', pub: { player: pid, province: id, troops: state.provinces[id].troops, reason: S.revoltImmuneReason(state, data, id), general: S.generalProtects(state, id) } });
   processRevolts(ctx, pid, hit, { source: 'extraRevoltRoll' });
 });
 
@@ -749,7 +787,7 @@ function finishDecree(ctx, b, outcome) {
  */
 export function attackPreview(state, data, a) {
   const pid = a.playerId ?? state.turn?.activePlayerId; const pl = playerOf(state, pid);
-  const route = attackRoute(state, data, pid, a.from, a.target);
+  const route = attackRoute(state, data, pid, a.from, a.target, { sneak: !!a.sneak });
   if (!route.ok) return { ok: false, reason: route.reason, perks: [] };
   const t = state.provinces[a.target];
   const withGeneral = !!a.withGeneral && pl.general?.at === a.from;
@@ -775,11 +813,11 @@ export function attackPreview(state, data, a) {
       if (route.sea) perks.push({ side: 'attacker', general: 'pompey', applies: true, text: 'Pompey, Master of the Sea: 3 dice v 2 by sea, and no Road needed for a sea attack (15.d).', rule: '15.d' });
       else perks.push({ side: 'attacker', general: 'pompey', applies: false, text: 'Pompey: his sea perk only works at sea; this is a land attack (15.d). (His garrison -1 always applies.)', rule: '15.d' });
     } else if (myGen === 'germanicus') {
-      perks.push({ side: 'attacker', general: 'germanicus', applies: true, text: 'Germanicus, Fight to the Death: +2 on your last die once you have lost troops in this battle and are down to 1 (15.h, Q113).', rule: '15.h' });
+      perks.push({ side: 'attacker', general: 'germanicus', applies: true, text: 'Germanicus, Fight to the Death: +1 to the highest die at 2 troops and +2 at 1, if this attack started with at least 3 (15.h).', rule: '15.h' });
       perks.push(wall
-        ? { side: 'attacker', general: 'germanicus', applies: true, text: `Germanicus, Disciplined Advance: the defender's Wall is ignored for the first ${perkFns.disciplinedAdvance.rolls(data)} rolls (15.h).`, rule: '15.h' }
+        ? { side: 'attacker', general: 'germanicus', applies: true, text: "Germanicus, Disciplined Advance: the defender's Wall is ignored for the whole battle (15.h).", rule: '15.h' }
         : { side: 'attacker', general: 'germanicus', applies: false, text: 'Germanicus, Disciplined Advance: no Wall to ignore here (15.h).', rule: '15.h' });
-      if (wall) { wallRollsIgnored += perkFns.disciplinedAdvance.rolls(data); wallSources.push('Germanicus: Disciplined Advance (15.h)'); }
+      if (wall) { wallRollsIgnored += perkFns.disciplinedAdvance.rolls(data); wallSources.push('Germanicus: Disciplined Advance, the whole battle (15.h)'); }
     }
   }
   if (t.owner) {
@@ -788,7 +826,7 @@ export function attackPreview(state, data, a) {
       if (dg.id === 'caesar' && !(withGeneral && myGen === 'caesar')) perks.push(attForceNow >= minFlee
         ? { side: 'defender', general: 'caesar', applies: true, text: 'Defending Caesar: 1 of your troops flees at the start (a borrowed one first); it returns if Caesar loses (15.b).', rule: '15.b' }
         : { side: 'defender', general: 'caesar', applies: false, text: 'Defending Caesar: you attack with a lone troop, so no one flees (15.b).', rule: '15.b' });
-      else if (dg.id === 'germanicus') perks.push({ side: 'defender', general: 'germanicus', applies: true, text: 'Defending Germanicus, Fight to the Death: +2 on his last die once his side has lost troops in this battle and is down to 1 (15.h, Q113).', rule: '15.h' });
+      else if (dg.id === 'germanicus') perks.push({ side: 'defender', general: 'germanicus', applies: true, text: 'Defending Germanicus, Fight to the Death: +1 at 2 troops and +2 at 1, even if the battle started that small (15.h).', rule: '15.h' });
       else if (dg.id === 'scipio' || dg.id === 'pompey') perks.push({ side: 'defender', general: dg.id, applies: false, text: `Defending ${gName(dg.id)}: no perks when defending (${dg.id === 'scipio' ? '15.c' : '15.d'}).`, rule: dg.id === 'scipio' ? '15.c' : '15.d' });
     }
   }

@@ -4,7 +4,7 @@
 import { loadGameData } from '../loadData.js';
 import { resolveAsset } from '../assets.js';
 import { setupChoices, checkSetup, current } from '../consoleModel.js';
-import { topFrame, whoActs, minGarrison, isUnderGarrisoned, totalTroops, provincesOf as ownedBy, viewFor, eventsFor } from '../../engine/index.js';
+import { topFrame, whoActs, minGarrison, isUnderGarrisoned, totalTroops, provincesOf as ownedBy, viewFor, eventsFor, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces } from '../../engine/index.js';
 import * as G from './model.js';
 import { createSound } from './sound.js';
 import { HostRoom, PING_MS } from '../../net/host.js';
@@ -137,13 +137,19 @@ function wireGuard() {
 
 // ------------------------------------------------------------------ setup screen (M4 setup flow)
 const GEN_DEFAULT = 'random';
-let seats = [{ name: 'Vidi', controller: 'human', general: GEN_DEFAULT, start: '' }, { name: 'Marcus (AI)', controller: 'ai', general: GEN_DEFAULT, start: '' }];
+let seats = [{ name: 'Vidi', controller: 'human', general: GEN_DEFAULT, start: '' }, { name: 'Marcus (AI)', controller: 'ai', difficulty: 'normal', general: GEN_DEFAULT, start: '' }];
 const SEAT_COLORS = ['#c0392b', '#2471a3', '#2e8b57'], SEAT_COLOR_NAMES = ['red', 'blue', 'green'];
 let pickSeat = 0;   // which seat picks its start on the map (Selected starts)
 let rollOff = null; // Q110: Selected starts roll off first: {seed, n, order: seat indexes in turn order, rolls} (G.rollOffPreview), null = not rolled
 // M12: an online game's seed gets a secret 128-bit salt, so a guest cannot find it by trying seeds against the public dice
 // (the seed field holds a short number; the room code is known to every guest).
 const seedNow = () => ($('#seed').value.trim() || 'game') + (C.NET?.role === 'host' && C.NET.salt ? '#' + C.NET.salt : '');
+/** v31.11: a fresh random seed for a new game ('g' + a number up to 6 digits, as before). crypto.getRandomValues when available,
+ * Math.random as the fallback — the seed is UI input only, the engine stays seeded and deterministic (same seed + same choices = same game). */
+const freshSeed = () => {
+  try { const a = new Uint32Array(1); crypto.getRandomValues(a); return 'g' + (a[0] % 1000000); }
+  catch { return 'g' + Math.floor(Math.random() * 1e6); }
+};
 /** Q110: the pick order, reverse turn order (the last to move picks first); [] before the roll-off. */
 const pickOrder = () => (rollOff && rollOff.n === seats.length && rollOff.seed === seedNow() ? [...rollOff.order].reverse() : []);
 const decided = x => !!x.start || !!x.skip;
@@ -155,7 +161,7 @@ function resetRollOff() { if (!rollOff) return; rollOff = null; seats.forEach(x 
 /** v28 batch 7 item 5: a 2-player game starts one player in the West and one in the East (4.g); the first picker chooses the side. */
 const sidesOn = () => seats.length === 2 && !!data.rules.twoPlayerSides;
 let genSeat = 0;    // which seat a click on a general card gives the general to (M8.1)
-const setSeatCount = n => { if (n !== seats.length) resetRollOff(); while (seats.length < n) seats.push({ name: 'Livia (AI)', controller: 'ai', general: GEN_DEFAULT, start: '' }); while (seats.length > n) seats.pop(); pickSeat = Math.min(pickSeat, n - 1); genSeat = Math.min(genSeat, n - 1); renderSetup(); };
+const setSeatCount = n => { if (n !== seats.length) resetRollOff(); while (seats.length < n) seats.push({ name: 'Livia (AI)', controller: 'ai', difficulty: 'normal', general: GEN_DEFAULT, start: '' }); while (seats.length > n) seats.pop(); pickSeat = Math.min(pickSeat, n - 1); genSeat = Math.min(genSeat, n - 1); renderSetup(); };
 /** Why `id` cannot be seat i's start, with the picks of the seats before it in the pick order (Q110; the engine's validateSetup decides): null when it can. */
 function startWhy(i, id) {
   const o = pickOrder(); const before = o.length ? o.slice(0, o.indexOf(i)) : seats.map((_, j) => j).filter(j => j !== i);
@@ -183,20 +189,23 @@ function renderSetup() {
   const startCell = i => { const may = mayPick(i); const k = po.indexOf(i);
     return `<td class="st"><button type="button" class="btn sm pickbtn${pickSeat === i && may ? ' on' : ''}" data-pick="${i}" ${may ? '' : 'disabled'} title="${!po.length ? 'Roll for turn order first (Q110)' : may ? `Pick this seat's start on the map (pick ${k + 1} of ${po.length})` : `Waits for the seats before it in the pick order`}">${po.length ? `<span class="pk">${k + 1}.</span> ` : ''}${seats[i].start ? '📍 ' + esc(prov(seats[i].start)) : '🎲 Random'}</button>
       <select name="start${i}" title="Fallback: choose from a list" ${may ? '' : 'disabled'}><option value="">Random for this seat</option>${ch.starts.map(x => { const why = x.id === seats[i].start ? null : startWhy(i, x.id); return `<option value="${x.id}" ${seats[i].start === x.id ? 'selected' : ''} ${why ? 'disabled' : ''}>${esc(x.name)}${why ? ' (not possible)' : ''}</option>`; }).join('')}</select></td>`; };
-  $('#seats').innerHTML = `<tr><th></th><th>Name</th><th>Played by</th><th>General</th>${sel ? '<th>Start province</th>' : ''}</tr>` + seats.map((x, i) => `<tr class="seat" data-seat="${i}">
+  $('#seats').innerHTML = `<tr><th></th><th>Name</th><th>Played by</th><th>AI level</th><th>General</th>${sel ? '<th>Start province</th>' : ''}</tr>` + seats.map((x, i) => `<tr class="seat" data-seat="${i}">
     <td><span class="sw" style="background:${SEAT_COLORS[i]}" title="${SEAT_COLOR_NAMES[i]}"></span></td>
     <td>${x.controller === 'remote' ? `<input name="name${i}" value="${attr(remoteName(i))}" size="12" readonly class="remote${remoteName(i) ? ' joined' : ''}" placeholder="waiting for a player…" aria-label="Seat ${i + 1}: online player">` : `<input name="name${i}" value="${attr(x.name)}" size="12" aria-label="Seat ${i + 1} name">`}</td>
     <td><span class="seg">${hosting ? toggle(i, 'human', 'You') + toggle(i, 'remote', 'Online') : toggle(i, 'human', 'Human')}${toggle(i, 'ai', 'AI')}</span></td>
+    <td>${x.controller === 'ai' ? `<select name="dif${i}" aria-label="Seat ${i + 1} AI difficulty" title="Easy holds Revolt! and Assassin! back against humans, and attacks a human at most once per turn"><option value="normal" ${x.difficulty !== 'easy' ? 'selected' : ''}>Normal</option><option value="easy" ${x.difficulty === 'easy' ? 'selected' : ''}>Easy</option></select>` : '<span class="small">—</span>'}</td>
     <td class="gcell"><select name="gen${i}" aria-label="Seat ${i + 1} general">${genOpts(i)}</select><button type="button" class="btn sm genseat${genSeat === i ? ' on' : ''}" data-genseat="${i}" title="Choose ${attr(x.name)}'s general from the cards below" aria-pressed="${genSeat === i}">🂠 cards</button></td>
     ${sel ? startCell(i) : ''}</tr>`).join('');
   $$('#seats input:not([readonly]), #seats select').forEach(el => el.oninput = el.onchange = () => {
     const i = +el.name.replace(/\D/g, ''); const k = el.name.replace(/\d/g, '');
     if (k === 'start') { setStart(i, el.value); return; }
+    if (k === 'dif') { seats[i].difficulty = el.value; return; }   // v31.12: per-seat AI difficulty, no re-render needed
     seats[i][{ name: 'name', gen: 'general' }[k]] = el.value;
     if (k === 'name') { validate(); if (sel) renderStartPick(); } else renderSetup();
   });
   $$('#seats .ctl').forEach(b => b.onclick = () => {
     const i = +b.dataset.seat; seats[i].controller = b.dataset.ctl;
+    if (b.dataset.ctl === 'ai' && !seats[i].difficulty) seats[i].difficulty = 'normal';   // v31.12: a seat turned AI gets a difficulty
     if (hosting && b.dataset.ctl === 'human') seats.forEach((y, j) => { if (j !== i && y.controller === 'human') y.controller = 'remote'; });   // one seat is You
     renderSetup();
   });
@@ -351,7 +360,7 @@ function validate() {
 }
 /** The seats as the engine gets them: an Online seat is a 'human' controller named after its guest (M11). */
 const remoteName = i => C.NET?.role === 'host' ? C.NET.room.seats[i]?.name ?? '' : '';
-const engineSeats = () => seats.map((x, i) => ({ name: x.controller === 'remote' ? (remoteName(i) || `Guest ${i + 1}`) : x.name.trim(), controller: x.controller === 'remote' ? 'human' : x.controller, general: x.general, startProvince: x.start || (x.skip ? 'random' : undefined), startSide: sidesOn() && $('#startMode').value === 'selected' ? x.side || undefined : undefined }));
+const engineSeats = () => seats.map((x, i) => ({ name: x.controller === 'remote' ? (remoteName(i) || `Guest ${i + 1}`) : x.name.trim(), controller: x.controller === 'remote' ? 'human' : x.controller, difficulty: x.controller === 'ai' ? (x.difficulty ?? 'normal') : undefined, general: x.general, startProvince: x.start || (x.skip ? 'random' : undefined), startSide: sidesOn() && $('#startMode').value === 'selected' ? x.side || undefined : undefined }));
 function startGame() {
   if (!validate()) return;
   const mode = $('#startMode').value;
@@ -792,6 +801,11 @@ async function playEvents(events, before = null) {
   const shownRevolts = new Set();
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
+    if (G.battleEventHidden(s, e)) {
+      if (e.type === 'battleEnded') { const sum = G.battleSummary(events, i, s, data); toast(`${sum.title}. ${sum.lines[0] ?? ''}`); }
+      if (G.battleChromeClear(e, s, true)) { $('#arrows').innerHTML = ''; if ($('#ovBattle')?.classList.contains('on')) closeBattlePop(); clearBattle(); }
+      continue;
+    }
     for (const n of plan[i]) SND.play(n, { vol: e.type === 'diceRolled' ? 0.7 : 1 });
     switch (e.type) {
       case 'gameRollResolved': await rollPopup(G.gameRollPopup(events, i, s, data)); break;
@@ -808,6 +822,8 @@ async function playEvents(events, before = null) {
         break;
       }
       case 'attackDeclared': startBattleView(e, s, before); drawArrow(e.pub.from, e.pub.target, '#ffdf7a'); break;
+      case 'merchantBonus': toast(`${pn(e.pub.player)}: Merchant Bonus, ${e.pub.roads} Roads reaching Roma, +${e.pub.gold} Gold`); break;
+      case 'goldPrestige': if (e.pub.goldPrestige) toast(`${pn(e.pub.player)}: Gold Prestige ${e.pub.goldPrestige} from ${e.pub.gold} Gold (${e.pub.total} toward ${e.pub.win})`); break;
       case 'generalSummoned': {
         if (bv) {
           const name = data.generalsById[e.pub.general]?.name ?? 'General';
@@ -822,17 +838,19 @@ async function playEvents(events, before = null) {
       case 'battleStarted': if (!bv) startBattleView({ pub: { player: s.battle?.att.player, from: s.battle?.att.from, target: e.pub.target, general: s.battle?.att.general } }, s, before);
         Object.assign(bv, { aCount: e.pub.attacker, dCount: e.pub.defender, borrowed: e.pub.borrowed });
         if (e.pub.perk === 'extraDie') addPerk('a', 'Scipio: an extra die (15.c)', 'scipio');   // batch 5: his only perk (the +1 is gone)
-        if (e.pub.wallRollsIgnored) addPerk('a', `Wall bonus ignored for the first ${e.pub.wallRollsIgnored} roll(s)`, 'wallIgnored');
+        if (e.pub.wallRollsIgnored) addPerk('a', e.pub.wallRollsIgnored >= 99 ? 'Wall bonus ignored for the whole battle (15.h)' : `Wall bonus ignored for the first ${e.pub.wallRollsIgnored} roll(s)`, 'wallIgnored');
+        refreshFightToDeath();   // v31.13: list Fight to the Death (15.h) up front, with its live state
         renderBattleHead(true); openBattlePop(); await sleep(spd(500)); break;
       case 'enemyFled': if (bv) addPerk(e.pub.side === 'defender' ? 'a' : 'd', `Caesar: one enemy troop flees before the battle (15.b)`); break;
       case 'generalPerkTriggered': if (bv) addPerk(e.actor === bv.defId && bv.defId ? 'd' : 'a', `${data.generalsById[e.pub.general]?.name ?? e.pub.general}: ${e.pub.reason ?? e.pub.effect} (${e.rule})`); break;
       case 'cardPlayed': if (bv && data.cardDefsById[e.pub.def]?.type === 'battle') addBattleCard(e); showCardPlay(G.cardPlayPopup(events, i, s, data)); break;
       case 'resourceApplied': case 'resourceCardUsed': showCardPlay(G.cardPlayPopup(events, i, s, data)); break;
       case 'battleRoundRolled': await animRoundRolled(e); break;
-      case 'battleDiceAdjusted': adjustRound(e); for (const x of e.pub.adjustments ?? []) addPerk(x.side === 'defender' ? 'd' : 'a', G.adjustmentLabel(x, data), x.source, true); break;
-      case 'battleRoundResolved': await animRoundResolved(e); break;
+      case 'battleDiceAdjusted': for (const x of e.pub.adjustments ?? []) addPerk(x.side === 'defender' ? 'd' : 'a', G.adjustmentLabel(x, data), x.source, true); break;
+      case 'battleRoundResolved': await animRoundResolved(e); refreshFightToDeath(); break;   // v31.13: the perk's live state may have changed this round
       case 'battleEnded': {
-        endBattleView(e); await sleep(spd(400));
+        endBattleView(e); $('#arrows').innerHTML = ''; if (bv) { bv.title = `Battle over · ${prov(e.pub.target)}`; renderBattleHead(); }
+        await sleep(spd(400));
         // M7 item 1: the result is told inside the battle popup. A human defender who is not at the screen gets it later as "While you were away".
         const p = G.battleResultPopup(events, i, s, data); const away = p ? queueNews(p) : false;
         const sum = G.battleSummary(events, i, s, data, C.viewer);
@@ -860,13 +878,26 @@ async function playEvents(events, before = null) {
       case 'revoltRollSkipped': toast(`${pn(e.pub.player)}: no Revolt Roll (fewer than 2 conquered provinces, 17.c)`); break;
       case 'provinceConquered': toast(`${pn(e.pub.player)} conquers ${prov(e.pub.province)}!`); break;
       case 'provinceAllied': toast(`${pn(e.pub.player)} allies with ${prov(e.pub.province)}`); break;
-      case 'turnStarted': toast(`Turn ${e.pub.number}: ${pn(e.pub.player)}`); $('#arrows').innerHTML = ''; break;
+      case 'turnStarted': toast(`Turn ${e.pub.number}: ${pn(e.pub.player)}`); $('#arrows').innerHTML = ''; if (!s.battle) clearBattle(); break;
       case 'playerEliminated': toast(`${pn(e.pub.player)} is out of the game`); break;
     }
   }
+  await maybeAiTurnSummary(events);
+}
+/** v31.7: after an AI turn, a short summary the human dismisses with OK or a click outside. Offline only: an online host must not
+ *  wait here (guests would stall), and a guest must not pause on a stream of updates. Node tests never call this. */
+async function maybeAiTurnSummary(events) {
+  if (C.NET || !events?.some(e => e.type === 'turnEnded')) return;
+  const ended = [...events].reverse().find(e => e.type === 'turnEnded');
+  const pid = ended?.pub?.player; const s = st(); const pl = s?.players?.find(p => p.id === pid);
+  if (!pl || pl.controller !== 'ai') return;
+  const sum = G.aiTurnSummary(G.eventsOfTurn(s.log, pid), s, data, pid);
+  if (sum.skip || !$('#ovModal')) return;
+  const body = sum.sections.map(sec => `<div class="sec">${esc(sec.title)}</div><ul class="rolllines">${sec.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>`).join('');
+  await openModal(`<div class="ask aiturn" id="aiSum"><h2>${esc(sum.name)} · turn ${sum.turn ?? ''}</h2><p class="small">What the AI did this turn. OK, or click outside, to go on.</p>${body}<div class="foot"><span class="spacer"></span><button class="btn gold" data-close id="aiSumOk">OK</button></div></div>`, { cls: 'aiturn' });
 }
 async function eventModal(artId, title, body) {
-  await openModal(`<div class="cardbig"><img src="${img(artId)}" alt=""></div><div class="txt"><h2>${esc(title)}</h2>${body}<button class="btn gold" data-close>OK</button></div>`, { autoMs: spd(2600), cls: 'event' });
+  await openModal(`<div class="cardbig"><img src="${img(artId)}" alt=""></div><div class="txt"><h2>${esc(title)}</h2>${body}<button class="btn gold" data-close>OK</button></div>`, { autoMs: spd(5200), cls: 'event' });
 }
 /** Game Roll / Revolt Roll / revolt popups (M6 items 1 and 7). Sticky ones (a human lost a province) wait for OK; the rest close themselves. */
 async function rollPopup(p) {
@@ -877,7 +908,8 @@ async function rollPopup(p) {
   for (const m of p.matched ?? []) flashToken(m.id);
   const html = `${p.kind === 'displeased' && p.player ? whoBar(p.player, 'drew Rome Is Displeased') : ''}<div class="cardbig"><img src="${img(p.art)}" alt="">${num}</div><div class="txt"><h2>${esc(p.title)}</h2>${hit}<ul class="rolllines">${(p.matched ? p.lines.filter(l => !l.startsWith(`Number ${p.value}: `)) : p.lines).map(l => `<li>${esc(l)}</li>`).join('')}</ul>${p.sticky ? '<p class="small"><b>Click OK to continue.</b></p>' : ''}<button class="btn gold" data-close id="popOk">OK</button></div>`;
   document.body.dataset.popup = p.kind;
-  await openModal(html, { autoMs: p.sticky ? 0 : spd(4500), cls: 'event roll-pop ' + p.kind + (p.revolt || p.kind === 'revolt' ? ' revolt-pop' : '') });
+  const humanRoll = p.kind === 'gameRoll' && p.sticky;
+  await openModal(html, { autoMs: humanRoll || p.sticky ? 0 : spd(9000), cls: 'event roll-pop ' + p.kind + (p.revolt || p.kind === 'revolt' ? ' revolt-pop' : '') });
   document.body.dataset.popup = '';
 }
 /** Hot-seat (item 7): a revolt that hits a human who is not looking right now is shown again when that human's context comes up. */
@@ -912,7 +944,7 @@ function showCardPlay(p) {
 }
 // a click on the page elsewhere closes it (not a click in a modal or another popup: acknowledging those leaves it to be read)
 document.addEventListener('pointerdown', ev => { if (!ev.target.closest?.('#cardPlays, .ov.on')) $$('#cardPlays .cardplay').forEach(x => x.remove()); }, true);
-const CARD_VIEW_MS = 8000;   // batch 5 item 7: real seconds, not scaled by the animation speed (it is reading time)
+const CARD_VIEW_MS = 16000;   // v31.8: twice the old 8 s; Close still dismisses it early
 /** v27 (Vidi 2026-10-25 9:12 PM): whose card it is, big and in the player's colour, at the TOP of a card popup (not below it). */
 const whoBar = (pid, sub, id = '') => (pid ? `<div class="whobar"${id ? ` id="${id}"` : ''} data-who="${attr(pid)}" style="--wc:var(--${col(pid)})"><b class="wb-name">${esc(pn(pid))}'s card</b>${sub ? `<span class="wb-sub">${esc(pn(pid))} ${esc(sub)}</span>` : ''}</div>` : '');
 async function flipCard(deck, def, caption, mine = true, who = null) {
@@ -926,7 +958,7 @@ async function flipCard(deck, def, caption, mine = true, who = null) {
   // batch 5 item 7 (Vidi 2026-10-24): a card being looked at stays up 8 seconds, or until Close or a click anywhere else
   let done; const p = new Promise(r => { done = r; }); $('#dOk').onclick = () => done(); ov.onclick = () => done();
   await sleep(spd(350)); SND.play('card_flip'); dc.classList.add('flipped');
-  await Promise.race([p, sleep(mine ? CARD_VIEW_MS : spd(1900))]);   // an AI's draw keeps its old short look
+  await Promise.race([p, sleep(mine ? CARD_VIEW_MS : spd(3800))]);   // an AI's draw keeps a shorter look; Close still wins
   ov.onclick = null; ov.classList.remove('on'); document.body.dataset.drawView = '';
 }
 function flashToken(id) { const t = $(`.tok[data-id="${id}"]`); if (t) { t.classList.remove('hit'); void t.offsetWidth; t.classList.add('hit'); } }
@@ -962,6 +994,19 @@ function renderPerks() {
   $('#aGen').textContent = bv.aGen ?? ''; $('#dGen').textContent = bv.dGen ?? '';
   $('#aPerks').innerHTML = ul(bv.perks?.a); $('#dPerks').innerHTML = ul(bv.perks?.d);
 }
+/** v31.13: list Fight to the Death (15.h) in the battle panel from the start of the battle, with its live state — the engine only
+ *  fires the perk through battleDiceAdjusted, after a roll. An adjustment label that already fired (e.g. "Fight to the Death +1
+ *  (15.h): +1") is the record of this round's die and is never overwritten by the generic line. */
+function refreshFightToDeath() {
+  if (!bv || !st().battle) return;
+  for (const side of ['a', 'd']) {
+    const f = G.fightToDeath(st(), data, side);
+    if (!f) continue;
+    const cur = bv.perks?.[side]?.get('germanicus');
+    if (cur && /\(15\.h\): \+\d$/.test(cur)) continue;   // a dice adjustment already fired: keep its label
+    addPerk(side, G.fightToDeathLine(f), 'germanicus', true);
+  }
+}
 // ------------------------------------------------------------------ M7 item 1: the battle popup, front and centre (the Battle tab keeps the record)
 let bpDone = null;
 function openBattlePop() {
@@ -984,7 +1029,7 @@ async function battleResult(sum, sticky) {
   const p = new Promise(r => { bpDone = r; });
   $('#bpOk').onclick = () => { SND.play('button_click'); closeBattlePop(); };
   if (hostHidden()) later(() => { if (bpDone) closeBattlePop(); }, 0);
-  else if (!sticky) setTimeout(() => { if (bpDone) closeBattlePop(); }, spd(3500));
+  else if (!sticky) setTimeout(() => { if (bpDone) closeBattlePop(); }, spd(7000));
   await p;
   if (document.body.dataset.popup === 'battle') document.body.dataset.popup = '';
 }
@@ -1021,6 +1066,7 @@ async function animRoundRolled(e) {
   for (const r of e.pub.defender.reasons ?? []) if (!plain.test(r)) addPerk('d', r);
   const a = e.pub.attacker.dice, d = e.pub.defender.dice;
   const tr = document.createElement('tr'); tr.dataset.r = e.pub.round;
+  tr._rawA = [...a]; tr._rawD = [...d];   // v31.13: the dice as rolled, for the adjustment badges at resolve
   tr.innerHTML = `<td><b>${e.pub.round}</b><small>${a.length}d6 v ${d.length}d6</small></td><td class="ca">${diceHtml(a.map(() => '?'), 'a', 1)}</td><td class="cp">-</td><td class="cd">${diceHtml(d.map(() => '?'), 'n', 1)}</td><td class="cl"></td><td class="ct"></td>`;
   $('#rt tbody').append(tr); tr.scrollIntoView({ block: 'nearest' });
   SND.later('dice_roll_d6', 120, { vol: 0.6 });
@@ -1030,16 +1076,15 @@ async function animRoundRolled(e) {
   $$('.cd .d', tr).forEach((x, i) => { x.classList.remove('rolling'); x.textContent = d[i]; });
   SND.play('dice_land'); await sleep(spd(300));
 }
-function adjustRound(e) {
-  const tr = $(`#rt tbody tr[data-r="${e.pub.round}"]`); if (!tr) return;
-  $$('.ca .d', tr).forEach((x, i) => { if (e.pub.attackerFinal[i] !== undefined) x.classList.add('boost'); });
-  $$('.cd .d', tr).forEach((x, i) => { if (e.pub.defenderFinal[i] !== undefined) x.classList.add('boost'); });
-}
 async function animRoundResolved(e) {
   const p = e.pub, tr = $(`#rt tbody tr[data-r="${p.round}"]`); if (!tr) return;
   const dA = $$('.ca .d', tr), dD = $$('.cd .d', tr);
   // the engine pairs the sorted final dice: show those so the pairs line up
   dA.forEach((x, i) => { x.textContent = p.attackerFinal[i] ?? x.textContent; }); dD.forEach((x, i) => { x.textContent = p.defenderFinal[i] ?? x.textContent; });
+  // v31.13: mark the die a perk adjusted — the final die minus the die as rolled, per die (15.h, 18.b, 18.c). The old adjustRound
+  // marked EVERY die with a gold outline because it only checked that a final value existed; the badge now carries the meaning.
+  const badge = (cells, raw, fin) => { const ds = G.dieBadges(raw, fin); cells.forEach((x, i) => { if (ds[i] > 0) { x.classList.add('boost'); x.insertAdjacentHTML('beforeend', `<span class="adj">+${ds[i]}</span>`); } }); };
+  badge(dA, tr._rawA, p.attackerFinal); badge(dD, tr._rawD, p.defenderFinal);
   p.pairs.forEach((q, i) => { const aw = q.winner === 'attacker'; dA[i]?.classList.add(aw ? 'win' : 'lose'); dD[i]?.classList.add(aw ? 'lose' : 'win'); });
   dA.slice(p.pairs.length).forEach(x => x.classList.add('unused')); dD.slice(p.pairs.length).forEach(x => x.classList.add('unused'));
   $('.cp', tr).innerHTML = '<span class="pairs">' + p.pairs.map(q => `<span class="${q.winner === 'attacker' ? 'A' : 'D'}">${q.a} v ${q.d}</span>`).join('') + '</span>';
@@ -1085,6 +1130,19 @@ function render() {
   if (!C.busy && !bpDone && !s.battle && $('#ovBattle').classList.contains('on')) closeBattlePop();
   if (C.viewer && news[C.viewer]?.length && !C.busy) setTimeout(showNews, 0);
   deadEndFlag();
+  sneakResumeCheck(legal);
+}
+/** v31.10: a Sneak Attack target whose natives were rolled on selection (18.z): once the roll has landed, reopen the flow at the troops step. */
+function sneakResumeCheck(legal) {
+  if (!sneakResume) return;
+  const s = st(); const p = s.provinces[sneakResume.target];
+  if (p?.native.rolled === null) return;   // the roll has not landed yet
+  const r = sneakResume; sneakResume = null;
+  if (!document.querySelector('#ovModal.on')) return;   // the player dismissed the flow while the roll was in flight
+  const me = s.players.find(x => x.id === s.turn.activePlayerId);
+  if (s.phase !== 'turn' || s.turn.step !== 'actions' || !me?.hand.some(c => c.uid === r.uid)) return;
+  const list = legal.filter(d => d.type === 'PLAY_CARD' && d.action.cardUid === r.uid);
+  if (list.length) openSneakFlow(r.uid, list, { step: 'troops', from: r.from, target: r.target });
 }
 /**
  * v28 batch 7 item 1: with 2+ human players (hot-seat or online), a Game Card owed from the Game Roll gets a BIG public popup of WHO
@@ -1129,7 +1187,10 @@ function renderPhase(legal) {
   const used = s.phase === 'turn' ? G.actionsUsedLabel(s, data) : null;
   $('#phWho').innerHTML = s.phase === 'setup' ? 'Setup' : s.phase === 'finished' ? `Game over: ${esc(pn(s.winner))} wins` : `${esc(pn(a))}'s turn<span class="turnflag" style="background:var(--${col(a)})">turn ${s.turn.number}</span>${used ? `<span class="actcount" id="actCount" title="Actions used this turn">${used}</span>` : ''}`;
   const si = G.stepIndex(s);
-  $('#phChips').innerHTML = s.phase === 'setup' ? '<span class="chip cur"><b>0</b>Setup</span>' : G.STEP_CHIPS.map(([, n], i) => `<span class="chip ${i < si ? 'done' : i === si ? 'cur' : ''}"><b>${i < si ? '✓' : i + 1}</b>${n}</span>`).join('<span class="arrow">▸</span>');
+  const rollDue = legal.find(d => d.type === 'ROLL' && f?.purpose !== 'battleRound' && f?.purpose !== 'loyalty');
+  const chips = s.phase === 'setup' ? '<span class="chip cur"><b>0</b>Setup</span>' : G.STEP_CHIPS.map(([, n], i) => `<span class="chip ${i < si ? 'done' : i === si ? 'cur' : ''}"><b>${i < si ? '✓' : i + 1}</b>${n}</span>`).join('<span class="arrow">▸</span>');
+  $('#phChips').innerHTML = chips + (rollDue ? `<button type="button" class="btn sm gold" id="bRollTop" ${C.busy ? 'disabled' : ''}>🎲 ${esc(rollDue.label)}</button>` : '');
+  const rt = $('#bRollTop'); if (rt) rt.onclick = () => { if (!C.busy) human(rollDue); else SND.play('error_denied'); };
   const w = whoActs(s); let html = ''; let prompt = esc(G.describePrompt(s, data));
   if (s.phase === 'finished') html = '<button class="btn gold" id="bOver">Results</button>';
   else if (!legal.length) {
@@ -1210,19 +1271,22 @@ function openBuy() { bys = { item: null, province: null }; openModal('<div id="b
 function buyHtml(m) {
   const it = bys.item ? m.items.find(x => x.item === bys.item) : null;
   const pv = it && bys.province ? it.provinces.find(x => x.id === bys.province) : null;
-  const stepNo = !it ? 1 : !pv ? 2 : 3;
+  const stepNo = !it ? 1 : it.provinces.length === 0 ? 3 : !pv ? 2 : 3;   // v31.14: Prestige has no province, so it skips "Where" and goes straight to paying
   const chips = ['What', 'Where', 'How to pay'].map((n, i) => `<span class="bd-step ${i + 1 === stepNo ? 'cur' : i + 1 < stepNo ? 'done' : ''}">${i + 1} ${n}</span>`).join('');
   const back = stepNo > 1 ? '<button class="btn sm" id="bsBack">◀ Back</button>' : '';
   const sellHint = m.sellable ? `<button class="btn sm" id="buySell">Short of Gold? Sell a card (+${data.rules.sellCard?.gold ?? 2} Gold, free)…</button>` : '';
   let body;
   if (!it) {
-    body = `<div class="bs-pieces">${m.items.map(x => `<button class="bs-piece ${x.enabled ? '' : 'off'}" data-item="${x.item}" ${x.enabled ? '' : 'disabled'}><img src="${img(x.item === 'troop' ? 'card.troop_1' : 'back.game')}" alt=""><b>${x.name}</b><span>${esc(x.costText)}</span>${x.reason ? `<span class="bs-why">${esc(x.reason)}</span>` : ''}</button>`).join('')}</div>`;
-  } else if (!pv) {
-    const q = it.item === 'troop' ? 'Which province gets the new troop?' : `Which province pays the troop? At least 1 must stay there (17.s, 17.f).`;
-    body = `<p class="small">${q}</p><div class="bs-grid">${it.provinces.map(x => `<button class="btn ${x.enabled ? '' : 'off'}" data-prov="${x.id}" ${x.enabled ? '' : 'disabled'}><b>${esc(x.name)}</b><span class="small">${x.troops} troop${x.troops === 1 ? '' : 's'}${x.reason ? ' · ' + esc(x.reason) : it.item === 'gameCard' ? ` → ${x.troops - 1}` : ` → ${x.troops + 1}`}</span></button>`).join('')}</div>`;
+    body = `<div class="bs-pieces">${m.items.map(x => `<button class="bs-piece ${x.enabled ? '' : 'off'}" data-item="${x.item}" ${x.enabled ? '' : 'disabled'}><img src="${img(x.item === 'gameCard' ? 'back.game' : x.item === 'prestige' ? 'card.prestige' : 'card.troop_1')}" alt=""><b>${x.name}</b><span>${esc(x.costText)}</span>${x.reason ? `<span class="bs-why">${esc(x.reason)}</span>` : ''}</button>`).join('')}</div>`;
+  } else if (!pv && it.provinces.length) {
+    const n = it.n ?? 1;
+    const q = it.item === 'gameCard' ? 'Which province pays the troop? At least 1 must stay there (17.s, 17.f).' : `Which province gets ${n === 1 ? 'the new troop' : 'all ' + n + ' troops'}?`;
+    body = `<p class="small">${q}</p><div class="bs-grid">${it.provinces.map(x => `<button class="btn ${x.enabled ? '' : 'off'}" data-prov="${x.id}" ${x.enabled ? '' : 'disabled'}><b>${esc(x.name)}</b><span class="small">${x.troops} troop${x.troops === 1 ? '' : 's'}${x.reason ? ' · ' + esc(x.reason) : it.item === 'gameCard' ? ` → ${x.troops - 1}` : ` → ${x.troops + n}`}</span></button>`).join('')}</div>`;
   } else {
-    const what = it.item === 'troop' ? `1 troop in ${pv.name}` : `1 Game Card, paying a troop from ${pv.name}`;
-    body = `<p><b>${esc(what)}</b></p><p class="small">No card makes this free, so it is paid in Gold. It uses 1 of your ${data.rules.actionsPerTurn} actions.</p><div class="bs-go"><button class="btn gold" data-key="${attr(G.descKey(pv.paid))}">Pay ${it.cost} Gold${it.item === 'gameCard' ? ' + 1 troop' : ''} (1 action) ▶</button></div><p class="small">You have ${m.gold} Gold; ${m.gold - it.cost} left after.</p>`;
+    const n = it.n ?? 1;
+    const paid = pv?.paid ?? it.paid;
+    const what = it.item === 'prestige' ? '1 Prestige — banked and permanent (22.g)' : it.item === 'gameCard' ? `1 Game Card, paying a troop from ${pv.name}` : `${n} troop${n === 1 ? '' : 's'} in ${pv.name}`;
+    body = `<p><b>${esc(what)}</b></p><p class="small">${it.item === 'prestige' ? 'Unlike Gold Prestige (22.f), bought Prestige is never lost when the Gold is spent or confiscated.' : 'No card makes this free, so it is paid in Gold.'} The whole purchase uses 1 of your ${data.rules.actionsPerTurn} actions.</p><div class="bs-go"><button class="btn gold" data-key="${attr(G.descKey(paid))}">Pay ${it.cost} Gold${it.item === 'gameCard' ? ' + 1 troop' : ''} (1 action) ▶</button></div><p class="small">You have ${m.gold} Gold; ${m.gold - it.cost} left after.</p>`;
   }
   return `<div class="ask build" id="buyScreen" data-step="${stepNo}"><h2>Buy · ${m.gold} Gold · ${m.actionsLeft} action${m.actionsLeft === 1 ? '' : 's'} left</h2><div class="bd-steps">${chips}</div><div class="bs-body">${body}</div><div class="foot">${back}${stepNo === 1 ? sellHint : ''}<span class="spacer"></span><button class="btn" data-close>Cancel</button></div></div>`;
 }
@@ -1246,14 +1310,47 @@ function openSell() {
   openModal(`<div class="ask menu" id="sellScreen" style="display:flex;flex-direction:column;gap:8px;min-width:400px"><h2>Sell a card · +${g} Gold each</h2><p class="small">Selling is free (not an action). The card goes to its discard pile (20.p).</p><div class="opts bs-list">${rows || '<span class="small">Nothing to sell.</span>'}</div><div class="foot"><span class="spacer"></span><button class="btn" data-close>Close</button></div></div>`);
   $$('#sellScreen [data-key]').forEach(b => b.onclick = () => { const d = list.find(x => G.descKey(x) === b.dataset.key); if (!d) return; closeModal(); SND.play('gold_gain'); human(d); });
 }
-// ------------------------------------------------------------------ M7 item 8: free general move (15.j): once per turn, along your own chain
+// ------------------------------------------------------------------ M7 item 8: free general move (15.j): as many times as you want, along your own chain (v31.17)
 function openGenMove() {
   const s = st(); const pid = whoActs(s); const list = mineNow().filter(d => d.type === 'MOVE_GENERAL');
   const g = G.playerById(s, pid)?.general; const gen = g ? data.generalsById[g.id] : null;
   const rows = list.map(d => { const p = s.provinces[d.action.to]; return `<button class="btn tgt" data-key="${attr(G.descKey(d))}" data-prov="${d.action.to}"><b>${esc(prov(d.action.to))}</b> <span class="small">${p.troops} troop${p.troops === 1 ? '' : 's'}${p.status === 'allied' ? ' · allied' : ''}</span></button>`; }).join('');
-  openModal(`<div class="ask menu" id="genTargets" style="display:flex;flex-direction:column;gap:8px;min-width:420px"><h2>Move ${esc(gen?.name ?? 'your general')} (free)</h2><p class="small">Now in <b>${esc(g?.at ? prov(g.at) : '?')}</b>. Once per turn, any time after the Revolt Roll, along a chain of your own provinces. It is not an action (15.j).</p><div class="opts bs-list">${rows}</div><div class="foot"><span class="spacer"></span><button class="btn" data-close>Cancel</button></div></div>`);
+  openModal(`<div class="ask menu" id="genTargets" style="display:flex;flex-direction:column;gap:8px;min-width:420px"><h2>Move ${esc(gen?.name ?? 'your general')} (free)</h2><p class="small">Now in <b>${esc(g?.at ? prov(g.at) : '?')}</b>. As many times as you want, any time after the Revolt Roll, along a chain of your own provinces. It is not an action (15.j).</p><div class="opts bs-list">${rows}</div><div class="foot"><span class="spacer"></span><button class="btn" data-close>Cancel</button></div></div>`);
   $$('#genTargets [data-prov]').forEach(b => { b.onmouseenter = () => flashToken(b.dataset.prov); });
   $$('#genTargets [data-key]').forEach(b => b.onclick = () => { const d = list.find(x => G.descKey(x) === b.dataset.key); if (!d) return; closeModal(); human(d); });
+}
+/** Buy a Merchant ship (5 Gold, 1 action) in two steps, or move one you own. */
+function openShips() {
+  const move = mineNow().filter(d => d.type === 'MOVE_MERCHANT_SHIP');
+  const cost = data.rules.costs.merchantShip;
+  let first = null, second = null;
+  const row = d => `<button class="btn" data-key="${attr(G.descKey(d))}"><b>${esc(d.label)}</b></button>`;
+  openModal(`<div class="ask menu" id="shipPick" style="display:flex;flex-direction:column;gap:8px;min-width:420px"><img class="shipart" src="assets/ships/merchant_ship.png" alt="Merchant ship"><h2>Buy a Merchant ship · ${cost} Gold</h2><p class="small">One action. Pick two provinces joined by sea. One ship of yours per link (22.c, 22.d).</p><div class="sec">1 · Your coastal province</div><div class="opts bs-list" id="shipStep1"></div><div class="sec">2 · The province it connects to</div><div class="opts bs-list" id="shipStep2"></div><div class="foot"><button class="btn gold" id="shipConfirm" type="button" disabled>Buy for ${cost} Gold</button><span class="spacer"></span><button class="btn" data-close>Cancel</button></div>${move.length ? `<div class="sec">Move · free</div><div class="opts bs-list">${move.map(row).join('')}</div>` : ''}</div>`);
+  const paint = () => {
+    const s = st(); const pid = whoActs(s);
+    const step1 = shipBuyProvinces(s, data, pid);
+    if (first && !step1.includes(first)) { first = null; second = null; }
+    const step2 = first ? shipBuyProvinces(s, data, pid, first) : [];
+    if (second && !step2.includes(second)) second = null;
+    const chips = (ids, step, picked) => ids.map(id => `<button type="button" class="btn${id === picked ? ' gold' : ''}" data-ship-step="${step}" data-prov="${id}">${esc(prov(id))}</button>`).join('') || `<span class="small">${step === 1 ? 'No coastal province of yours can take a new ship.' : first ? 'No open sea link from there.' : 'Pick the first province.'}</span>`;
+    $('#shipStep1').innerHTML = chips(step1, 1, first);
+    $('#shipStep2').innerHTML = chips(step2, 2, second);
+    const ok = $('#shipConfirm');
+    ok.disabled = !(first && second);
+    $$('#shipPick [data-ship-step]').forEach(b => b.onclick = () => {
+      if (b.dataset.shipStep === '1') { if (first !== b.dataset.prov) second = null; first = b.dataset.prov; }
+      else second = b.dataset.prov;
+      flashToken(b.dataset.prov); paint();
+    });
+  };
+  paint();
+  $('#shipConfirm').onclick = () => {
+    const [a, b] = first < second ? [first, second] : [second, first];
+    const d = mineNow().find(x => x.type === 'BUY_MERCHANT_SHIP' && x.action.a === a && x.action.b === b);
+    if (!d) return;
+    closeModal(); human(d);
+  };
+  $$('#shipPick [data-key]').forEach(b => b.onclick = () => { const d = move.find(x => G.descKey(x) === b.dataset.key); if (!d) return; closeModal(); human(d); });
 }
 
 // ------------------------------------------------------------------ Play a card: pick the card, then (Revolt!, Assassin!, Bribe) pick the enemy province yourself (M6 item 8)
@@ -1277,8 +1374,9 @@ function openCardTargets(uid) {
   const s = st(); const def = s.cards[uid].def; const list = mineNow().filter(d => d.type === 'PLAY_CARD' && d.action.cardUid === uid);
   cardPick = null;
   if (def === 'assassin' && list.some(d => d.action.kills)) { openAssassinFlow(uid, list); return; }
-  const intro = def === 'revolt' ? 'Choose the enemy province to inspire a revolt in. Valid targets: a rival\'s conquered province with fewer than 10 troops; never a starting province, an allied province or Roma (17.c, 17.r, 18.m).'
-    : def === 'bribe_the_ally' ? 'Bribe a province allied to a rival (pay its native count in Gold; it becomes your ally), or pay 1 Gold to turn one of YOUR OWN allied provinces into a conquered province (it keeps its troops, no Prestige) (18.v, 19.r).' : 'Choose the target.';
+  if (def === 'sneak_attack_sea') { openSneakFlow(uid, list); return; }
+  const intro = def === 'revolt' ? 'Choose the enemy province to inspire a revolt in. Valid targets: a rival\'s conquered province with fewer than 10 troops; never a starting province, an allied province or Roma, and never a province where its owner\'s general is stationed (17.c, 17.r, 18.m).'
+    : def === 'bribe_the_ally' ? 'Bribe a province allied to a rival (pay its native count in Gold; it becomes your ally), or pay 1 Gold to turn one of YOUR OWN allied provinces into a conquered province (it keeps its troops, +1 Prestige) (18.v, 19.r).' : 'Choose the target.';
   openModal(`<div class="ask menu" id="cardTargets" style="display:flex;flex-direction:column;gap:8px;min-width:420px"><h2>${esc(data.cardDefsById[def]?.name ?? def)}</h2><p class="small">${esc(intro)}</p><div class="opts bs-list">${list.map(d => { const r = targetRow(d); return `<button class="btn tgt" data-pick="${attr(G.descKey(d))}" data-prov="${attr(r.id ?? '')}">${r.html}</button>`; }).join('')}</div><div class="foot"><button class="btn" data-close>Cancel</button><span class="spacer"></span><button class="btn gold" id="cardGo" disabled>Choose a target first</button></div></div>`);
   $$('#modalBox [data-pick]').forEach(b => b.onclick = () => {
     cardPick = b.dataset.pick; SND.play('province_select');
@@ -1339,6 +1437,78 @@ function openAssassinFlow(uid, list) {
   };
   render();
 }
+/**
+ * Sneak Attack from the Sea! as a short step flow, like the Assassin (18.z):
+ * 1. pick the coastal origin (Road, or Pompey with the army) -> 2. pick any coastal target -> 3. troops (+ general) -> confirm.
+ * Back and Cancel on every step; nothing is played (and the card is not spent) until the last button.
+ */
+/** v31.10: a Sneak Attack target whose natives are not rolled yet is rolled when picked (18.z, 17.h); the flow resumes at the troops step once the roll lands. */
+let sneakResume = null;
+function openSneakFlow(uid, list, start = null) {
+  const s = st(); const nm = data.cardDefsById.sneak_attack_sea?.name ?? 'Sneak Attack from the Sea!';
+  const acts = list.filter(d => d.action.from && d.action.target);
+  const origins = [...new Set(acts.map(d => d.action.from))];
+  const maxFor = from => Math.max(...acts.filter(d => d.action.from === from).map(d => d.range?.max ?? d.action.troops));
+  const targetsFor = from => [...new Set(acts.filter(d => d.action.from === from).map(d => d.action.target))];
+  const hasGen = (from, target) => acts.some(d => d.action.from === from && d.action.target === target && d.action.withGeneral);
+  const find = (from, target, withGeneral) => acts.find(d => d.action.from === from && d.action.target === target && !!d.action.withGeneral === !!withGeneral);
+  const whose = id => { const p = s.provinces[id]; return p.owner ? `${pn(p.owner)}${p.status === 'allied' ? ' (allied)' : ''}` : 'natives'; };
+  const troopsOf = id => { const p = s.provinces[id]; return p.owner ? p.troops : (p.native.present ?? p.native.count ?? 0); };
+  const unrolled = id => { const p = st().provinces[id]; return !p.owner && p.native.rolled === null && id !== 'carthage'; };
+  const defText = id => { const p = st().provinces[id]; return p.owner ? `${p.troops} troops` : `${p.native.present ?? p.native.count ?? '?'} natives`; };
+  const landlocked = data.provinceIds.filter(id => !(data.provincesById[id]?.sea?.length)).map(id => prov(id)).join(', ');
+  let st8 = start ? { step: start.step, from: start.from, target: start.target, troops: null, withGeneral: false } : { step: 'origin', from: null, target: null, troops: null, withGeneral: false };
+  const render = () => {
+    const { step, from, target, troops, withGeneral } = st8;
+    const head = `<h2>${esc(nm)}</h2>`;
+    let body = '', go = '';
+    if (step === 'origin') {
+      body = `<p class="small">Step 1 of 4: sail from one of your coastal provinces. It needs a Road — unless Pompey attacks with his army (15.d). The attack counts as a sea attack and costs 1 action; no troops can be borrowed for it (18.z).</p>
+        <div class="as-list">${origins.map(id => { const p = s.provinces[id]; return `<button class="btn tgt as-prov" data-sn-origin="${attr(id)}"><b>${esc(prov(id))}</b> <span class="small">${p.troops} troops · ${p.road ? 'Road' : 'no Road (Pompey)'} · can send up to ${maxFor(id)}</span></button>`; }).join('')}</div>`;
+    } else if (step === 'target') {
+      body = `<p class="small">Step 2 of 4: attack ANY coastal province from <b>${esc(prov(from))}</b> — anywhere on the map. ${esc(landlocked)} have no sea link and cannot be attacked this way (18.z).</p>
+        <div class="as-list">${targetsFor(from).map(id => `<button class="btn tgt as-prov" data-sn-target="${attr(id)}"><b>${esc(prov(id))}</b> <span class="small">${esc(whose(id))} · ${unrolled(id) ? 'natives · not rolled yet (rolled when you pick it)' : `${troopsOf(id)} troops`}${id === 'roma' ? ' · needs a Battlefield Imperator' : ''}</span></button>`).join('')}</div>`;
+    } else if (step === 'rolling') {
+      body = `<p class="small">Rolling the natives of <b>${esc(prov(target))}</b>… (a d6 roll, 17.h). The attack continues once the roll lands.</p>`;
+    } else if (step === 'troops') {
+      const max = maxFor(from);
+      body = `<p class="small">Step 3 of 4: how many troops sail from <b>${esc(prov(from))}</b> to <b>${esc(prov(target))}</b>? (1–${max}; at least 1 stays behind.) Defenders in ${esc(prov(target))}: <b>${esc(defText(target))}</b>.</p>
+        <div class="as-list"><div class="optrow"><span>Troops</span><input type="range" min="1" max="${max}" value="${troops ?? max}" id="snTroops"><b class="v" id="snTroopsV">${troops ?? max}</b></div>
+        ${hasGen(from, target) ? `<label class="small" style="display:block;margin-top:6px"><input type="checkbox" id="snGen"> Bring the general</label>` : ''}</div>`;
+      go = `<button class="btn gold" id="snNext">Review attack ▶</button>`;
+    } else {
+      body = `<p class="small">Step 4 of 4: review the attack, then play the card.</p><p class="as-sum">Attack <b>${esc(prov(target))}</b> from <b>${esc(prov(from))}</b> with <b>${troops} troop${troops > 1 ? 's' : ''}</b>${withGeneral ? ' and the <b>general</b>' : ''} — a sea attack (2 dice; 3 with Pompey, an extra die with Scipio).</p><p class="small">The card is spent when you press Play, and the attack costs 1 action.</p>`;
+      go = `<button class="btn gold" id="snGo">Play ${esc(nm)} ▶</button>`;
+    }
+    openModal(`<div class="ask menu" id="sneakFlow" data-step="${step}">${head}${body}<div class="foot"><button class="btn" id="snBack">◀ Back</button><button class="btn" id="snCancel" data-close>Cancel</button><span class="spacer"></span>${go}</div></div>`);
+    $$('#modalBox [data-sn-origin]').forEach(x => x.onclick = () => { SND.play('province_select'); st8 = { step: 'target', from: x.dataset.snOrigin, target: null, troops: null, withGeneral: false }; render(); });
+    $$('#modalBox [data-sn-target]').forEach(x => x.onclick = () => {
+      SND.play('province_select'); const id = x.dataset.snTarget;
+      if (unrolled(id)) {   // v31.10: roll the natives on selection, then resume at the troops step
+        sneakResume = { uid, from: st8.from, target: id };
+        st8 = { ...st8, step: 'rolling', target: id, troops: null, withGeneral: false }; render();
+        const scouted = human({ action: { type: 'PREVIEW_TARGET', playerId: whoActs(st()), target: id, sneak: true } });
+        Promise.resolve(scouted).then(ok => { if (ok === false && sneakResume?.target === id) { sneakResume = null; st8 = { step: 'target', from: st8.from, target: null, troops: null, withGeneral: false }; render(); } });
+        return;
+      }
+      st8 = { ...st8, step: 'troops', target: id, troops: maxFor(st8.from), withGeneral: false }; render();
+    });
+    const rg = $('#snTroops'); if (rg) rg.oninput = () => { $('#snTroopsV').textContent = rg.value; st8.troops = +rg.value; };
+    const cg = $('#snGen'); if (cg) cg.onchange = () => { st8.withGeneral = cg.checked; };
+    const nx = $('#snNext'); if (nx) nx.onclick = () => { st8 = { ...st8, step: 'confirm' }; render(); };
+    $('#snBack').onclick = () => {
+      if (st8.step === 'origin') { closeModal(); return; }
+      if (st8.step === 'target') st8 = { step: 'origin', from: null, target: null, troops: null, withGeneral: false };
+      else if (st8.step === 'rolling') { sneakResume = null; st8 = { ...st8, step: 'target', target: null, troops: null, withGeneral: false }; }
+      else if (st8.step === 'troops') st8 = { ...st8, step: 'target', target: null, troops: null, withGeneral: false };
+      else st8 = { ...st8, step: 'troops' };
+      render();
+    };
+    $('#snCancel').onclick = () => { sneakResume = null; closeModal(); };
+    const g = $('#snGo'); if (g) g.onclick = () => { const d = find(st8.from, st8.target, st8.withGeneral); if (!d) return; closeModal(); human({ ...d, _v: st8.troops }); };
+  };
+  render();
+}
 function optionsHtml(list) {
   return list.map(d => {
     const k = attr(G.descKey(d));
@@ -1370,13 +1540,13 @@ function renderPlayers() {
     const tags = tag(p.savedResources) + tag(p.inPlay) + (p.items?.catapult ? `<span class="tag">Catapult ×${p.items.catapult}</span>` : '');
     const used = s.phase === 'turn' ? G.actionsUsedLabel(s, data) : '';
     return `<div class="player ${active ? 'active' : ''} ${p.out ? 'out' : ''}" data-pid="${p.id}" style="--pc:var(--${c})">
-      <div class="ph"><span class="nm">${esc(p.name)}</span><span class="gn">${esc(gen?.name ?? 'no general yet')}</span><span class="ctl ${p.controller === 'ai' ? 'ai' : ''}">${p.controller === 'ai' ? 'AI' : 'Human'}</span>${netBadge(p.id)}<span class="turnbadge">▶ ${active && used ? used : 'TURN'}</span></div>
+      <div class="ph"><span class="nm">${esc(p.name)}</span><span class="gn">${esc(gen?.name ?? 'no general yet')}</span><span class="ctl ${p.controller === 'ai' ? 'ai' : ''}" ${p.controller === 'ai' && p.difficulty === 'easy' ? 'title="Easy: holds Revolt! and Assassin! back against humans, and attacks a human at most once per turn"' : ''}>${p.controller === 'ai' ? 'AI · ' + (p.difficulty === 'easy' ? 'Easy' : 'Normal') : 'Human'}</span>${netBadge(p.id)}<span class="turnbadge">▶ ${active && used ? used : 'TURN'}</span></div>
       <div class="pbody2">
         <div class="gcard" title="${attr(gen ? gen.name + ': ' + gen.text + ' (click for every perk in detail)' : 'General not chosen yet')}"><img src="${img(gen ? 'general.' + gen.id : 'back.blank')}" alt="${attr(gen?.name ?? '')}">${recalled ? '<div class="oldtext">recalled to Rome</div>' : ''}</div>
         <div class="pstats">
-          <div class="prest"><div class="lbl"><span>Prestige</span><span data-prestige>${p.prestige} / ${data.rules.winPrestige}</span></div><div class="pips">${pips}</div></div>
+          <div class="prest"><div class="lbl"><span>Prestige</span><span data-prestige title="${goldPrestige(p.gold, data) ? `+${goldPrestige(p.gold, data)} Gold Prestige at end of turn from ${p.gold} Gold (22.f)` : 'Prestige'}">${p.prestige}${goldPrestige(p.gold, data) ? ' +' + goldPrestige(p.gold, data) : ''} / ${data.rules.winPrestige}</span></div><div class="pips">${pips}</div></div>
           <div class="pgold" title="Gold"><span class="coin"></span><span>Gold</span><b data-gold>${p.gold}</b></div>
-          <div class="res"><div><span>Troops</span><b>${totalTroops(s, p.id)}</b></div><div><span>Provinces</span><b>${ownedBy(s, p.id).length}</b></div><div><span>Cards</span><b>${G.handCount(p)}</b></div></div>
+          <div class="res"><div><span>Troops</span><b>${totalTroops(s, p.id)}</b></div><div><span>Provinces</span><b>${ownedBy(s, p.id).length}</b></div><div><span>Cards</span><b>${G.handCount(p)}</b></div><div title="Number of Roads: longest Road network that reaches Roma (22.e)"><span>Roads</span><b data-roads>${roadNetwork(s, data, p.id).roads}</b></div></div>
           <div class="sv"><div class="small">Saved resources · in play · items</div><div class="tagrow">${tags || '<span class="small">none</span>'}</div></div>
           <div class="trayhost">${p.id === trayPid ? trayHtml(p.id) : ''}</div>
           ${turnActsHtml(p.id)}
@@ -1406,6 +1576,7 @@ function wireActs(root, pre = '') {
   $$(`#${actId(pre, 'pActs')} [data-menu]`, root).forEach(b => b.onclick = () => { if (C.busy) return; shut(); openMenu(b.dataset.menu, mineNow()); });
   const ba = one('bAsk'); if (ba) ba.onclick = () => { shut(); askPeek = false; renderAsk(mineNow()); };
   const gm = one('genMove'); if (gm) gm.onclick = () => { SND.play('button_click'); shut(); openGenMove(); };
+  const sh = one('shipBuy'); if (sh) sh.onclick = () => { SND.play('button_click'); shut(); openShips(); };
   const sl = one('panelSell'); if (sl) sl.onclick = () => { SND.play('button_click'); shut(); openSell(); };
 }
 /** M7 items 8 and 10: the active player's own buttons, next to the die: Roll, Draw a card, Move general (free, 15.j), Sell a card (free, 20.p). */
@@ -1443,9 +1614,13 @@ function turnActsHtml(pid, pre = '') {
   else if (pre) b.push(`<button class="btn sm"${none('No card to sell.')}>Sell…</button>`);
   if (c.scout.length) b.push(`<button class="btn sm" data-menu="scout"${dis} title="Scout a target: roll its natives (${c.scout.length} targets)">Scout…</button>`);
   if (c.other.length) b.push(`<button class="btn sm" data-menu="other"${dis} title="${c.other.length} more action(s)">More…</button>`);
-  if (legal.some(x => x.type === 'MOVE_GENERAL')) b.push(`<button class="btn sm genbtn" id="${I('genMove')}"${dis} title="Move your general: free, once per turn, along your own chain (15.j)">⚑ General</button>`);
-  else if (pre) b.push(`<button class="btn sm genbtn"${none(s.turn.generalMoved ? 'General moved this turn.' : 'Your general cannot move now.')}>⚑ General</button>`);
-  else if (s.turn.generalMoved) b.push('<span class="small pnote">General moved this turn</span>');
+  // v31.13: the ⚑ General button stays visible until End Turn — the free move (15.j) is not an action, so using both actions must
+  // not hide it; when the move is genuinely unavailable it is greyed with the reason instead of removed.
+  if (legal.some(x => x.type === 'MOVE_GENERAL')) b.push(`<button class="btn sm genbtn" id="${I('genMove')}"${dis} title="Move your general: free, as many times as you want, along your own chain (15.j)">⚑ General</button>`);
+  else if (!f) b.push(`<button class="btn sm genbtn"${none(G.generalMoveWhy(s, data, pid) ?? 'Your general cannot move now.')}>⚑ General</button>`);
+  const ships = legal.filter(x => x.type === 'BUY_MERCHANT_SHIP' || x.type === 'MOVE_MERCHANT_SHIP');
+  if (!f) b.push(`<button class="btn sm" id="${I('shipBuy')}"${ships.length && !C.busy ? '' : ' disabled'} title="${ships.length ? 'Buy a Merchant ship for 5 Gold, or move one you own for free. One action. Any other sea link (22.c).' : 'A Merchant ship costs 5 Gold to buy, or nothing to move. One action (22.c).'}">Ship…</button>`);
+  else if (pre) b.push(`<button class="btn sm genbtn"${none(G.generalMoveWhy(s, data, pid) ?? 'Your general cannot move now.')}>⚑ General</button>`);
   const end = c.end[0];
   if (end) b.push(`<button class="btn sm gold endturn wide" id="${I('bEnd')}" data-key="${attr(G.descKey(end))}" title="${attr(end.label)}"${dis}>End Turn ▶</button>`);
   return `<div class="pacts turn" id="${I('pActs')}">${b.join('')}</div>`;
@@ -1518,17 +1693,38 @@ function renderMap(legal) {
     if (showMin) { const m = G.shownMin(s, data, id); if (m?.min) mk('lbl', 'min ' + m.min, x, y + 5.7, 'Minimum garrison'); }
     if (!p.owner && id !== 'roma' && p.native.present !== null && p.native.count !== null && p.native.present < p.native.count) mk('lbl', p.native.present + '/' + p.native.count, x, y + 5.7, 'natives present / count (depleted)');
   }
-  for (const pl of s.players) if (pl.general?.at && !pl.out) { const [x, y] = tokenFor(pl.general.at); mk('gen ' + col(pl.id), genLetter(pl.general.id), x - (LM ? 2.9 : 2.3), y - (LM ? 0 : 3.9), `${data.generalsById[pl.general.id].name} (${pl.name})`, LM ? ` data-at="${pl.general.at}" data-side="l"` : ''); }
+  const canMoveGen = legal.some(x => x.type === 'MOVE_GENERAL');   // v31.13: the viewer's own token is clickable when the free move is available
+  for (const pl of s.players) if (pl.general?.at && !pl.out) { const [x, y] = tokenFor(pl.general.at); mk('gen ' + col(pl.id) + (pl.id === C.viewer && canMoveGen ? ' clickable' : ''), genLetter(pl.general.id), x - (LM ? 2.9 : 2.3), y - (LM ? 0 : 3.9), `${data.generalsById[pl.general.id].name} (${pl.name})${pl.id === C.viewer && canMoveGen ? ' — click to move (15.j)' : ''}`, ` data-at="${pl.general.at}" data-gen="${pl.id}"${LM ? ' data-side="l"' : ''}`); }
   { const [cx, cy] = tokenFor('carthage'); if (!s.provinces.carthage.owner) mk('wall', 'WALLS', cx + (LM ? 4.4 : 0), cy - (LM ? 0 : 5.8), 'Carthage: walls on all sides', LM ? ' data-at="carthage" data-side="r"' : ''); const [rx, ry] = tokenFor('roma'); mk('wall', 'WALLS', rx + (LM ? 4.4 : 0), ry - (LM ? 0 : 6.2), 'Roma: walls on all sides', LM ? ' data-at="roma" data-side="r"' : ''); }
-  $('#tokens').innerHTML = h; placeSideMarks();
+  $('#tokens').innerHTML = h; placeSideMarks(); renderShips(s);
   const r = s.provinces.roma; $('#romainfo').innerHTML = `ROMA: ${r.troops} troops · Gold pile ${s.roma?.goldPile ?? 0} · ${r.owner ? 'held by ' + esc(pn(r.owner)) : 'no holder'}<br><span style="opacity:.85">Walls on all sides · Ingrained Loyalty</span>`;
   $$('#tokens .tok').forEach(t => {
     t.onmouseenter = () => { if (!selected) showInfo(t.dataset.id, false); };
     t.onmouseleave = () => { if (selected) showInfo(selected, true); else hideInfo(); };
     t.onclick = e => { e.stopPropagation(); tokenClick(t.dataset.id); };
   });
+  // v31.13: the general's token is clickable — a second way to move him (15.j), alongside the ⚑ General button. The click must
+  // not fall through to the province underneath, so the marker stops propagation (its pointer-events are enabled in game.css).
+  $$('#tokens .mk.gen').forEach(m => { m.onclick = e => { e.stopPropagation(); genTokenClick(m.dataset.gen); }; });
   if (builder && ab.from && ab.to) drawArrow(ab.from, ab.to, ab.type === 'MOVE' ? '#9bd0ff' : ab.type === 'ALLY' ? '#9dff9d' : '#ffdf7a');
   else if (builder) $('#arrows').innerHTML = '';
+}
+function renderShips(s) {
+  const svg = $('#ships'); if (!svg) return;
+  const sp = data.map.map.tokenSpace;
+  svg.setAttribute('viewBox', `0 0 ${sp.w} ${sp.h}`);
+  svg.innerHTML = shipSegments(s, data).map(g => `<line x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}" stroke="var(--${col(g.player)})" stroke-width="5" stroke-linecap="round"/><circle cx="${g.mx}" cy="${g.my}" r="7" fill="var(--${col(g.player)})" stroke="#fff" stroke-width="1.5"/>`).join('');
+}
+/** v31.13: the general's token on the map is a second way to move him (15.j), alongside the ⚑ General button. Only the active
+ *  player's own token opens the move picker; any other tap explains why, and never offers an illegal move. */
+function genTokenClick(pid) {
+  if (C.busy) return;
+  const s = st();
+  if (pid !== C.viewer) { SND.play('error_denied'); toast('That is not your general.'); return; }
+  if (s.phase !== 'turn' || whoActs(s) !== pid) { SND.play('error_denied'); toast("It's not your turn."); return; }
+  if (mineNow().some(d => d.type === 'MOVE_GENERAL')) { SND.play('button_click'); openGenMove(); return; }
+  SND.play('error_denied');
+  toast(G.generalMoveWhy(s, data, pid) ?? 'Your general cannot move now.');
 }
 function tokenClick(id) {
   if (C.busy) return;
@@ -1584,11 +1780,11 @@ function hideInfo() { $('#info').style.display = 'none'; $('#info').classList.re
 function renderTable() {
   const s = st();
   const rows = data.provinces.map(def => {
-    const id = def.id, p = s.provinces[id]; const m = G.shownMin(s, data, id); const under = p.owner ? isUnderGarrisoned(s, data, id) : false;
+    const id = def.id, p = s.provinces[id]; const m = G.shownMin(s, data, id); const under = p.status === 'allied' ? p.troops < (m?.min ?? 1) : (p.owner ? isUnderGarrisoned(s, data, id) : false);
     const gens = s.players.filter(pl => pl.general?.at === id).map(pl => data.generalsById[pl.general.id].name).join(', ');
     const notes = [];
     if (p.status === 'starting') notes.push('Start province: minimum 1, always loyal.');
-    if (p.status === 'allied') notes.push('Allied: no minimum, no bonus troop, no revolt.');
+    if (p.status === 'allied') notes.push('Allied: Min garrison is natives + 1 for the reward and the bonus troop (19.r). No revolt. Moving troops out still keeps the global floor of 1.');
     if (under) notes.push('UNDER-GARRISONED: no bonus troop, no reward.');
     if (id === 'carthage') notes.push(s.carthage?.defeated ? 'Carthage defeated: Decree numbers count as Rome Rolls.' : 'Walls all sides; the Senate Decree target.');
     if (id === 'roma') notes.push('Walls all sides, Ingrained Loyalty; attack needs Battlefield Imperator.');
@@ -1609,6 +1805,14 @@ function renderDecks(legal) {
     const d = f?.kind === 'draw' && f.deck === k ? legal.find(x => x.type === 'DRAW_CARD') : null;
     const el = $('#deck-' + k); el.classList.toggle('due', !!d); el.dataset.key = d ? G.descKey(d) : '';
     $('img', el).src = img(G.deckCount(s, k) ? 'deck.' + k : 'deck.empty');
+  }
+  // v31.11 (18.z): the throwaway pile — Sneak Attack cards played to attack, gone for good. Old saves have no field.
+  const tw = s.throwaway?.game ?? [];
+  const twLine = $('#throwawayLine');
+  if (twLine) {
+    twLine.hidden = !tw.length;
+    $('#cnt-throwaway').textContent = tw.length;
+    $('#throwawayNames').textContent = tw.length ? ' — ' + tw.map(u => data.cardDefsById[s.cards[u]?.def]?.name ?? s.cards[u]?.def ?? u).join(', ') : '';
   }
 }
 function renderHand(legal) {
@@ -1666,6 +1870,17 @@ function openCardView(uid) {
 }
 function renderLog() {
   $('#log').innerHTML = G.logFor(st(), data, 150, C.viewer).map(l => `<li class="${l.cls}">${esc(l.text)}${l.rule ? `<span class="r">${esc(l.rule)}</span>` : ''}</li>`).join('');
+}
+function showHowToWin() {
+  const w = G.HOW_TO_WIN;
+  openModal(`<div class="ask" id="howWin" style="max-width:640px;display:flex;flex-direction:column;gap:10px"><h2>${esc(w.title)}</h2>${w.paragraphs.map(p => `<p>${esc(p)}</p>`).join('')}<p><b>${esc(w.prestige)}</b></p><div class="foot"><span class="spacer"></span><button class="btn gold" data-close>Close</button></div></div>`, { cls: 'howwin' });
+}
+function exportFullLog() {
+  if (!C.S) { toast('No game to export yet'); return; }
+  const exp = G.fullLogText(st(), data);
+  const name = `imperator-log-${st().gameId ?? 'game'}.txt`;
+  download(name, exp.text);
+  toast(`Exported ${exp.count} log lines`);
 }
 
 // ------------------------------------------------------------------ builder (attack / ally / move, then Borrow, Battle cards, perk)
@@ -1727,7 +1942,7 @@ function renderBuilder(legal) {
         const pk = pv.perks.length ? pv.perks.map(p => `<li class="${p.applies ? 'on' : 'off'}">${p.applies ? '✔' : '✖'} ${esc(p.text)}</li>`).join('') : '<li class="off">none</li>';
         const held = G.handCards(G.playerById(s, me)).filter(x => data.cardDefsById[s.cards[x.uid].def].type === 'battle').length;
         right = `<div class="bd-perks" id="abPerks"><b>General perks in this battle</b><ul>${pv.perks.some(p => p.applies) ? pk : (pv.perks.length ? pk + '<li class="off"><b>none apply</b></li>' : pk)}</ul>`
-          + `<div class="small">${pv.sea ? 'Sea attack: 2 dice (17.n).' : 'Land attack: 3 dice.'}${pv.wall ? ` Defender Wall: 3 defence dice${pv.wallRollsIgnored ? `, ignored for the first ${pv.wallRollsIgnored} roll(s) (${esc(pv.wallSources.join(', '))})` : ''}.` : ''}</div>`
+          + `<div class="small">${pv.sea ? 'Sea attack: 2 dice (17.n).' : 'Land attack: 3 dice.'}${pv.wall ? ` Defender Wall: 3 defence dice${pv.wallRollsIgnored ? (pv.wallRollsIgnored >= 99 ? `, ignored for the whole battle (${esc(pv.wallSources.join(', '))})` : `, ignored for the first ${pv.wallRollsIgnored} roll(s) (${esc(pv.wallSources.join(', '))})`) : ''}.` : ''}</div>`
           + `<div class="small">${held ? `You hold ${held} battle card(s): you choose them next.` : 'No battle cards in hand.'}</div></div>`;
       }
       mid += `<div class="bd-btns"><button class="btn" id="abCancel">Cancel</button><button class="btn confirm" id="abConfirm" data-key="${attr(ab.key ?? '')}">Confirm ${ab.type.toLowerCase()} ▶</button></div>`;
@@ -1780,9 +1995,9 @@ function renderBattleCtl(legal) {
   const f = topFrame(st()); let h = '';
   if (!C.busy && st().battle && f && ((f.kind === 'roll' && (f.purpose === 'battleRound' || f.purpose === 'loyalty')) || f.kind === 'battleContinue')) {
     h = legal.map(d => `<button class="btn sm ${d.type === 'BATTLE_RETREAT' ? '' : 'gold'}" data-key="${attr(G.descKey(d))}">${esc(d.label)}</button>`).join('');
-    if (legal.length && st().battle) openBattlePop();
+    if (legal.length && st().battle && !G.skipBattleUi(st(), st().battle.att.player, st().battle.def.player)) openBattlePop();
   }
-  if (st().battle && !bv) { const b = st().battle; const gn = pid => { const g = G.playerById(st(), pid)?.general; return g ? data.generalsById[g.id]?.name : null; }; bv = { title: `BATTLE for ${prov(b.target)}`, att: pn(b.att.player), attCls: col(b.att.player), def: b.def.player ? pn(b.def.player) : 'natives', defCls: b.def.player ? col(b.def.player) : 'nat', rounds: [], aCount: b.att.own + b.att.borrowed, dCount: null, borrowed: b.att.borrowed, attId: b.att.player, defId: b.def.player, aGen: b.att.general ? `General ${gn(b.att.player) ?? ''} leads the army` : 'no general', dGen: b.def.general ? `General ${gn(b.def.player) ?? ''} defends` : b.def.player ? 'no general here' : 'natives: no general', perks: { a: new Map(), d: new Map() } }; renderBattleHead(true); }
+  if (st().battle && !bv && !G.skipBattleUi(st(), st().battle.att.player, st().battle.def.player)) { const b = st().battle; const gn = pid => { const g = G.playerById(st(), pid)?.general; return g ? data.generalsById[g.id]?.name : null; }; bv = { title: `BATTLE for ${prov(b.target)}`, att: pn(b.att.player), attCls: col(b.att.player), def: b.def.player ? pn(b.def.player) : 'natives', defCls: b.def.player ? col(b.def.player) : 'nat', rounds: [], aCount: b.att.own + b.att.borrowed, dCount: null, borrowed: b.att.borrowed, attId: b.att.player, defId: b.def.player, aGen: b.att.general ? `General ${gn(b.att.player) ?? ''} leads the army` : 'no general', dGen: b.def.general ? `General ${gn(b.def.player) ?? ''} defends` : b.def.player ? 'no general here' : 'natives: no general', perks: { a: new Map(), d: new Map() } }; renderBattleHead(true); }
   $('#bCtl').innerHTML = h;
   $$('#bCtl [data-key]').forEach(b => b.onclick = () => {
     const d = legal.find(x => G.descKey(x) === b.dataset.key); if (!d) return;
@@ -1843,6 +2058,19 @@ function applyTabsHidden() {
   b.title = tabsHidden ? 'Show the Provinces / Battle section again' : 'Hide the Provinces / Battle section: the map gets the room';
 }
 function setTabsHidden(h) { tabsHidden = !!h; try { localStorage.setItem('imperator.tabsHidden', tabsHidden ? '1' : '0'); } catch { /* */ } applyTabsHidden(); if (C.S) renderMap(mineNow()); }
+function applyHideAiBattles() {
+  const on = G.hideAiBattlesOn(); const b = $('#bAiBattles'); if (!b) return;
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  b.textContent = on ? 'AI battles hidden' : 'Hide AI battles';
+  b.classList.toggle('gold', on);
+}
+function setHideAiBattles(on) {
+  G.setHideAiBattles(on); applyHideAiBattles();
+  if (!C.S) return;
+  const b = st().battle;
+  if (on && b && G.skipBattleUi(st(), b.att.player, b.def.player)) closeBattlePop();
+  render();
+}
 function setTab(t) { tab = t; document.body.classList.toggle('battletab', t === 'battle' || t === 'build'); document.body.classList.toggle('tabforce', t === 'build'); $$('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); $$('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + t)); }
 
 // ------------------------------------------------------------------ save / load / game over
@@ -1886,7 +2114,9 @@ function showGameOver() {
   SND.play(G.soundsFor({ type: 'gameWon', pub: { player: s.winner } }, s)[0]);
   const rows = [...s.players].sort((a, b) => b.prestige - a.prestige).map(p => `<tr><td style="color:var(--${col(p.id)});font-weight:800;background:#f3e7c4">${esc(p.name)}</td><td>${p.controller === 'ai' ? 'AI' : 'Human'}</td><td>${p.prestige}</td><td>${ownedBy(s, p.id).length}</td><td>${totalTroops(s, p.id)}</td><td>${p.gold}</td></tr>`).join('');
   const ov = $('#ovOver');
-  ov.innerHTML = `<h1>IMPERATOR!</h1><div style="font-size:1.6em"><b style="color:var(--${col(w.id)});background:#f3e7c4;padding:0 10px;border-radius:6px" id="winnerName">${esc(w.name)}</b> wins${w.prestige >= data.rules.winPrestige ? ` with ${w.prestige} Prestige` : ' as the last player standing'} on turn ${s.turn.number}.</div>
+  const won = [...s.log].reverse().find(e => e.type === 'gameWon' && e.pub.player === s.winner);
+  const how = won?.pub.goldPrestige ? ` with ${won.pub.prestige} Prestige + ${won.pub.goldPrestige} Gold Prestige (${won.pub.gold} Gold)` : w.prestige >= data.rules.winPrestige ? ` with ${w.prestige} Prestige` : ' as the last player standing';
+  ov.innerHTML = `<h1>IMPERATOR!</h1><div style="font-size:1.6em"><b style="color:var(--${col(w.id)});background:#f3e7c4;padding:0 10px;border-radius:6px" id="winnerName">${esc(w.name)}</b> wins${how} on turn ${s.turn.number}.</div>
     <table id="finalTable"><tr><th>Player</th><th>Seat</th><th>Prestige</th><th>Provinces</th><th>Troops</th><th>Gold</th></tr>${rows}</table>
     <div class="row"><button class="btn gold big" id="ovNew">New game</button><button class="btn" id="ovLook">Look at the board</button>${C.NET?.role === 'guest' ? '' : '<button class="btn" id="ovExport">Export the save</button>'}</div>`;
   ov.classList.add('on'); document.body.dataset.over = s.winner;
@@ -1894,12 +2124,15 @@ function showGameOver() {
   $('#ovLook').onclick = () => ov.classList.remove('on');
   if ($('#ovExport')) $('#ovExport').onclick = () => download(G.saveFileName(s), JSON.stringify(G.makeSave(C.S, { appVersion: C.uiLabel, kind: 'final' })));
 }
-function toSetup() { unguard(); if (C.NET) { netLeave(); playWhere = 'local'; } clearTimeout(C.aiTimer); $('#toast').classList.remove('on'); C.S = null; document.body.dataset.over = ''; ['#ovOver', '#ovAsk', '#ovModal'].forEach(x => $(x).classList.remove('on')); renderSetup(); }
+function toSetup() { unguard(); if (C.NET) { netLeave(); playWhere = 'local'; } clearTimeout(C.aiTimer); $('#toast').classList.remove('on'); C.S = null; document.body.dataset.over = ''; ['#ovOver', '#ovAsk', '#ovModal'].forEach(x => $(x).classList.remove('on')); // v31.11: every return to setup starts a fresh game, so roll a fresh seed — a leftover seed in the field silently replayed the same game. A seed typed afterwards still sticks (the field is only refreshed here, on entering setup).
+  const sd = $('#seed'); if (sd) sd.value = freshSeed(); renderSetup(); }
 
 // ------------------------------------------------------------------ static wiring
 function wireStatic() {
   $('#bSound').onclick = () => SND.toggle();
   $('#speed').onchange = e => { C.speed = Number(e.target.value) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } };
+  applyHideAiBattles();
+  const ab = $('#bAiBattles'); if (ab) ab.onclick = () => { SND.play('button_click'); setHideAiBattles(!G.hideAiBattlesOn()); };
   $('#bSave').onclick = saveMenu; $('#bLoad').onclick = loadMenu; $('#setupLoad').onclick = loadMenu;
   $('#bNew').onclick = () => { if (!C.S || C.S && st().phase === 'finished' || window.confirm(leaveText())) toSetup(); };   // v30.5 (Q181): the same question as the back button
   $$('#playWhere .segb').forEach(b => b.onclick = () => setPlayWhere(b.dataset.where));
@@ -1918,8 +2151,11 @@ function wireStatic() {
   $('#spImg').src = mapImg();
   $$('#mapPick .segb').forEach(b => b.onclick = () => { mapPick = b.dataset.map; SND.play('button_click'); renderSetup(); });
   $('#startMode').onchange = renderSetup;
-  $('#seed').addEventListener('input', () => { if (rollOff) { resetRollOff(); renderSetup(); } });   // Q110: a new seed means a new roll-off
+  $('#seed').addEventListener('input', () => { if (rollOff) { resetRollOff(); renderSetup(); } });
+  $('#seedDice').addEventListener('click', () => { SND.play('button_click'); $('#seed').value = freshSeed(); if (rollOff) resetRollOff(); renderSetup(); });   // v31.11: roll a fresh seed on demand   // Q110: a new seed means a new roll-off
   $('#startGame').onclick = startGame;
+  const hw = $('#howToWin'); if (hw) hw.onclick = () => showHowToWin();
+  const ex = $('#bExportLog'); if (ex) ex.onclick = () => exportFullLog();
   $('#resumeOnline').onclick = () => { const o = onlineSave(localStorage.getItem('imperator.autosave')); if (o) resumeOnline(o); };
   $('#resumeAuto').onclick = () => { try { loadFrom(JSON.parse(localStorage.getItem('imperator.autosave'))); } catch (e) { $('#setupErrors').textContent = 'The autosave could not be read: ' + e.message; } };
   $('#importFile').onchange = async e => { const f = e.target.files[0]; if (!f) return; const text = await f.text(); e.target.value = ''; let o = text; try { o = JSON.parse(text); } catch { /* readSave says why */ } loadFrom(o); };

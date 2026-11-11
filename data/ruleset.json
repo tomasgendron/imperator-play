@@ -35,13 +35,25 @@
   "costs": {
    "value": {
     "troop": 2,
+    "troops2": 5,
+    "troops3": 10,
     "gameCardGold": 2,
     "gameCardTroops": 1,
     "road": 2,
     "wall": 3,
-    "catapult": 5
+    "catapult": 5,
+    "merchantShip": 5,
+    "prestige": 20
    },
-   "rule": "17.p, 17.s, 19.j, 19.u"
+   "rule": "17.p, 17.s, 19.j, 19.u, 22.c"
+  },
+  "merchantBonus": {
+   "value": { "minRoads": 2, "perExtraRoad": 1 },
+   "rule": "22.b"
+  },
+  "goldPrestigeGold": {
+   "value": 20,
+   "rule": "22.f"
   },
   "maxGameCardBuysPerTurn": {
    "value": 1,
@@ -295,7 +307,7 @@
   },
   "deckSizes": {
    "value": {
-    "game": 31,
+    "game": 33,
     "resource": 21,
     "displeased": 10,
     "decree": 1
@@ -425,10 +437,10 @@
   "generalMove": {
    "value": {
     "free": true,
-    "oncePerTurn": true,
+    "oncePerTurn": false,
     "chainOnly": true
    },
-   "rule": "15.j, 17.e, 17.z (Vidi 2026-10-22: free, not an action, after the Revolt Roll; oncePerTurn and chainOnly are Boardicca's defaults; chainOnly=false allows any own province)"
+   "rule": "15.j, 17.e, 17.z (Vidi 2026-10-22: free, not an action, after the Revolt Roll; Vidi 2026-11-09: as many times as you want in a turn, so oncePerTurn is false; chainOnly is Boardicca's default; chainOnly=false allows any own province)"
   },
   "sellCard": {
    "value": {
@@ -530,7 +542,7 @@
   },
   "bribeOwnAllyGold": {
    "value": 1,
-   "rule": "18.v, 19.r (Vidi 2026-10-25): Bribe the Ally! second use: the Gold paid to the bank to turn your own allied province into a conquered one (troops stay, no Prestige)"
+   "rule": "18.v, 19.r (Vidi 2026-10-25): Bribe the Ally! second use: the Gold paid to the bank to turn your own allied province into a conquered one (troops stay, +1 Prestige)"
   },
   "bribeOwnerPrestigeLoss": {
    "value": 0,

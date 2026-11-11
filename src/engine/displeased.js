@@ -81,12 +81,17 @@ export function applyDispleased(ctx, pid, defId, extra = {}) {
 }
 const none = (ctx, pid, def, reason, rule) => emit(ctx, 'displeasedNoEffect', { actor: pid, rule, pub: { player: pid, def, reason } });
 
-// 18.o General is Recalled to Rome! (Q42)
+// 18.o General is Recalled to Rome! (Q42, v31.17): the token goes to Roma with him — a recalled general protects no
+// province (his old province can revolt / be bribed again) and cannot leave Rome until the recall ends (see the lock in
+// generalMoveTargets / MOVE_GENERAL / attackBlock / MOVE / ALLY / CALL_REINFORCEMENTS).
 EFFECTS.recalled_to_rome = (ctx, pid) => {
   const { state } = ctx; const pl = mustPlayer(state, pid);
   const through = Math.max(pl.generalRecalledThroughTurn ?? 0, recallThrough(state, pid, ctx.data));
   pl.generalRecalledThroughTurn = through;
-  emit(ctx, 'generalRecalled', { actor: pid, rule: '18.o', pub: { player: pid, throughTurn: through } });
+  const from = pl.general?.at ?? null;
+  // Only a general who is actually standing on the map is taken to Roma. A lost general, or one who was never placed, stays off the map.
+  if (pl.general && from && state.provinces[from]) pl.general.at = 'roma';
+  emit(ctx, 'generalRecalled', { actor: pid, rule: '18.o', pub: { player: pid, throughTurn: through, from } });
 };
 // 18.p Emperor confiscates half your Gold! (Q45: poverty is tested before halving)
 EFFECTS.confiscates_gold = (ctx, pid) => {

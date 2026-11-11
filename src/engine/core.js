@@ -42,6 +42,9 @@ export const topFrame = state => state.pending[state.pending.length - 1] ?? null
 export function popFrame(ctx) { return ctx.state.pending.pop(); }
 
 export const playerOf = (state, id) => state.players.find(p => p.id === id);
+/** AI difficulty of a seat (v31.12): 'normal' unless the seat chose 'easy'. Saves from before difficulty default to Normal. */
+export const AI_DIFFICULTIES = ['normal', 'easy'];
+export const difficultyOf = (state, id) => { const d = playerOf(state, id)?.difficulty; return AI_DIFFICULTIES.includes(d) ? d : 'normal'; };
 export function mustPlayer(state, id) { const p = playerOf(state, id); if (!p) fail('UNKNOWN_PLAYER', `No player "${id}".`); return p; }
 
 /** Player ids in turn order, starting with `first`. */
@@ -71,6 +74,10 @@ export const sortedIds = o => Object.keys(o).sort();
 
 /** A used or spent card goes face up onto its own deck's discard pile (18.l, Vidi 2026-10-21; replaces "to the bottom"). */
 export function toDiscard(state, uid) { state.discards[state.cards[uid].deck].push(uid); }
+
+/** A card thrown away for good (18.z, v31.11): a Sneak Attack from the Sea! actually played to attack goes here, never to the
+ * discard pile, so it can never be drawn again. The pile is never reshuffled into a draw pile (18.l). */
+export function toThrowaway(state, uid) { (state.throwaway ??= { game: [], resource: [], displeased: [] })[state.cards[uid].deck].push(uid); }
 
 /**
  * Takes the top card of a draw pile. An empty draw pile is first rebuilt by shuffling its discard pile (18.l); returns null only when

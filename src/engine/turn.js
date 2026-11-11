@@ -72,6 +72,12 @@ function beginResources(ctx) {
     pl.gold += data.rules.startProvinceGold;                           // +1 Gold while the start province is held and never defeated (17.d, 20.k)
     emit(ctx, 'startProvinceGold', { actor: pid, rule: '20.k', pub: { player: pid, province: pl.startProvince, gold: data.rules.startProvinceGold } });
   }
+  const net = S.roadNetwork(state, data, pid);                         // Merchant Bonus: longest Roma-reaching Road network only (22.b)
+  const bonus = S.merchantBonusFor(state, data, pid, net.roads);
+  if (bonus) {
+    pl.gold += bonus;
+    emit(ctx, 'merchantBonus', { actor: pid, rule: '22.b', pub: { player: pid, roads: net.roads, gold: bonus, provinces: net.provinces } });
+  }
   pushFrame(ctx, { kind: 'draw', deck: 'resource', reason: 'resourcesStep', player: pid });
 }
 
@@ -203,13 +209,14 @@ define('USE_SAVED_RESOURCE', {
   },
 });
 
-// ------------------------------------------------------------------ free general move (15.j, 17.e, 17.z; Vidi 2026-10-22)
-/** Where the active player's general may go with the free move right now ([] when it is not available). */
+// ------------------------------------------------------------------ free general move (15.j, 17.e, 17.z; Vidi 2026-10-22; v31.17: as many times as you want in a turn)
+/** Where the active player's general may go with the free move right now ([] when it is not available). A recalled general is
+ * under house arrest in Rome until the recall ends (18.o, v31.17, Tomas's ruling). */
 export function generalMoveTargets(state, data, pid) {
-  const o = data.rules.generalMove ?? { free: true, oncePerTurn: true, chainOnly: true };
+  const o = data.rules.generalMove ?? { free: true, oncePerTurn: false, chainOnly: true };
   const pl = state.players.find(p => p.id === pid); const at = pl?.general?.at;
-  if (!o.free || !at || (o.oncePerTurn && state.turn.generalMoved)) return [];
-  return S.provincesOf(state, pid).filter(id => id !== at && (!o.chainOnly || S.moveRoute(state, data, pid, at, id))).sort();
+  if (!o.free || !at || S.generalRecalled(state, pid) || (o.oncePerTurn && state.turn.generalMoved)) return [];
+  return S.provincesOf(state, pid).filter(id => id !== at && (!o.chainOnly || S.generalMoveRoute(state, data, pid, at, id))).sort();
 }
 define('MOVE_GENERAL', {
   turn: true,
@@ -217,12 +224,13 @@ define('MOVE_GENERAL', {
     const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid); const o = data.rules.generalMove;
     const g = data.generalsById[pl.general?.id]?.name ?? 'Your general';
     check(pl.general?.at, 'NO_GENERAL', `${g} is not on the map.`, '15.j');
+    check(!S.generalRecalled(state, pid), 'GENERAL_RECALLED', `${g} is recalled to Rome until the end of turn ${pl.generalRecalledThroughTurn}: he cannot leave Rome (18.o).`, '18.o');
     check(!(o.oncePerTurn && state.turn.generalMoved), 'GENERAL_MOVED', `${g} already moved this turn: the free general move is once per turn (15.j).`, '15.j');
     mustControl(ctx, a.to, pid);
     check(a.to !== pl.general.at, 'SAME_PROVINCE', `${g} is already in ${nm(data, a.to)}.`);
-    const route = S.moveRoute(state, data, pid, pl.general.at, a.to);
+    const route = S.generalMoveRoute(state, data, pid, pl.general.at, a.to);
     if (o.chainOnly) check(route, 'NO_ROUTE', `No chain of your own provinces connects ${nm(data, pl.general.at)} and ${nm(data, a.to)} (15.j, 17.z).`, '15.j');
-    const from = pl.general.at; pl.general.at = a.to; state.turn.generalMoved = true;   // free: no action, no Gold, no troops (15.j)
+    const from = pl.general.at; pl.general.at = a.to; state.turn.generalMoved = true;   // free: no action, no Gold, no troops (15.j); as many times as you want per turn (v31.17)
     emit(ctx, 'generalMoved', { actor: pid, rule: '15.j', pub: { player: pid, from, to: a.to, path: route?.path ?? [from, a.to] } });
   },
 });
@@ -296,8 +304,16 @@ defineRoll('gameRoll', (ctx, f) => {
   }
   pl.gameRollsTaken += 1;
   popFrame(ctx);
-  const rome = data.rules.romeRollNumbers.includes(v) || (data.rules.decreeNumbers.includes(v) && (state.carthage.defeated || state.carthage.neutral));   // neutral Carthage counts as defeated (16.d, 16.n)
-  if (rome) { emit(ctx, 'gameRollResolved', { actor: pid, rule: '16.d', pub: { value: v, kind: 'rome' } }); romeRoll(ctx, pid, v); return; }
+  // Rolls 2 and 9 follow who controls Carthage now. carthage.defeated is history and does not decide this.
+  // A player who controls it gets only the satisfied message. Neutral or unowned Carthage, including after a
+  // Senate Decree or a revolt, still raises a Senate Decree. Rolls 1 and 10 stay Rome Rolls.
+  const playerControlsCarthage = state.players.some(p => S.controls(state, p.id, 'carthage'));
+  if (data.rules.decreeNumbers.includes(v) && playerControlsCarthage) {
+    emit(ctx, 'gameRollResolved', { actor: pid, rule: '16.n', pub: { value: v, kind: 'satisfied' } });
+    emit(ctx, 'senateSatisfied', { actor: pid, rule: '16.n', pub: { player: pid, value: v, message: 'The Senate is satisfied with Carthage’s destruction! No decrees for now.' } });
+    return;
+  }
+  if (data.rules.romeRollNumbers.includes(v)) { emit(ctx, 'gameRollResolved', { actor: pid, rule: '16.d', pub: { value: v, kind: 'rome' } }); romeRoll(ctx, pid, v); return; }
   if (data.rules.decreeNumbers.includes(v)) {
     emit(ctx, 'gameRollResolved', { actor: pid, rule: '16.n', pub: { value: v, kind: 'decree' } });
     emit(ctx, 'senateDecree', { actor: pid, rule: '16.n', pub: { number: v } });
@@ -367,6 +383,10 @@ export function processRevolts(ctx, pid, queue, { source = 'revoltRoll', asked =
     const id = q.shift();
     if (state.phase !== 'turn') return;
     if (state.provinces[id].owner !== pid || state.provinces[id].status !== 'conquered') continue;
+    if (!S.canRevolt(state, data, id)) {   // 10+ troops, or the owner's general is stationed here: cannot revolt (17.c, muse batch)
+      emit(ctx, 'revoltImmune', { actor: pid, rule: '17.c', pub: { player: pid, province: id, troops: state.provinces[id].troops, reason: S.revoltImmuneReason(state, data, id), general: S.generalProtects(state, id) } });
+      continue;
+    }
     const krl = id === asked ? null : mustPlayer(state, pid).hand.find(c => state.cards[c.uid].def === 'kill_revolt_leader');
     if (krl && data.rules.killRevoltLeaderAsked !== false) {
       pushFrame(ctx, { kind: 'responseWindow', window: 'revoltResponse', player: pid, province: id, rest: [...q], source, by, card: krl.uid, options: ['PLAY_CARD', 'PASS'] });
@@ -402,7 +422,7 @@ defineRoll('revoltRoll', (ctx, f) => {
   const hit = r.hit;
   emit(ctx, 'revoltRoll', { actor: pid, rule: '17.c', pub: { player: pid, value: v, provinces: hit, ...(r.pick !== null ? { tied: r.tied } : {}) } });
   revoltPickedEvent(ctx, pid, r);
-  for (const id of match.filter(m => !S.canRevolt(state, data, m))) emit(ctx, 'revoltImmune', { actor: pid, rule: '17.c', pub: { player: pid, province: id, troops: state.provinces[id].troops, reason: `${data.rules.revoltImmuneAtTroops} or more troops never revolt` } });
+  for (const id of match.filter(m => !S.canRevolt(state, data, m))) emit(ctx, 'revoltImmune', { actor: pid, rule: '17.c', pub: { player: pid, province: id, troops: state.provinces[id].troops, reason: S.revoltImmuneReason(state, data, id), general: S.generalProtects(state, id) } });
   processRevolts(ctx, pid, hit);
 });
 
@@ -452,6 +472,7 @@ define('MOVE', {
     check(n >= 1 || !withGeneral || !ctx.data.rules.generalMove?.free, 'GENERAL_MOVE_IS_FREE', 'Moving the general on his own is free and not an action: use Move general (15.j).', '15.j');
     check(n >= 1 || withGeneral, 'NOTHING_TO_MOVE', 'Move at least 1 troop (the general alone moves for free, 15.j).', '17.z');
     if (withGeneral) check(pl.general?.at === a.from, 'GENERAL_NOT_THERE', `${data.generalsById[pl.general?.id]?.name ?? 'Your general'} is not in ${nm(data, a.from)}.`, '17.m');
+    if (withGeneral) check(!S.generalRecalled(state, pid), 'GENERAL_RECALLED', `${data.generalsById[pl.general?.id]?.name ?? 'Your general'} is recalled to Rome until the end of turn ${pl.generalRecalledThroughTurn}: he cannot leave Rome (18.o).`, '18.o');
     const max = S.maxMove(state, data, a.from);
     check(n <= max, state.provinces[a.from].status === 'held' ? 'ROMA_FLOOR' : 'PROVINCE_FLOOR',
       `${nm(data, a.from)} can send at most ${max} troop(s): it must keep ${state.provinces[a.from].status === 'held' ? data.rules.romaFloorOnHold : data.rules.provinceFloor} (${state.provinces[a.from].status === 'held' ? '12.l' : '17.f'}).`, state.provinces[a.from].status === 'held' ? '12.l' : '17.f');
@@ -468,13 +489,28 @@ define('MOVE', {
 define('BUY_TROOP', {
   turn: true,
   run(ctx, a) {
-    const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid); const cost = data.rules.costs.troop;
+    const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid); const c = data.rules.costs;
+    const n = a.n ?? 1;
+    const cost = n === 3 ? c.troops3 : n === 2 ? c.troops2 : c.troop;
+    check(n === 1 || n === 2 || n === 3, 'BAD_PACK', 'Buy 1 troop (2 Gold), 2 troops (5 Gold) or 3 troops (10 Gold).', '17.p');
     mustControl(ctx, a.province, pid);
-    check(pl.gold >= cost, 'NEED_GOLD', `A troop costs ${cost} Gold; you have ${pl.gold}.`, '17.p');
-    checkRomaRoom(ctx, a.province, 1);
+    check(pl.gold >= cost, 'NEED_GOLD', `${n} troop${n === 1 ? '' : 's'} cost ${cost} Gold; you have ${pl.gold}.`, '17.p');
+    checkRomaRoom(ctx, a.province, n);
     spendAction(ctx, 'buyTroop');
-    pl.gold -= cost; changeTroops(ctx, a.province, 1);
-    emit(ctx, 'troopsBought', { actor: pid, rule: '17.p', pub: { player: pid, province: a.province, gold: cost } });
+    pl.gold -= cost; changeTroops(ctx, a.province, n);
+    emit(ctx, 'troopsBought', { actor: pid, rule: '17.p', pub: { player: pid, province: a.province, n, gold: cost } });
+  },
+});
+
+define('BUY_PRESTIGE', {
+  turn: true,
+  run(ctx, a) {
+    const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid); const cost = data.rules.costs.prestige;
+    check(pl.gold >= cost, 'NEED_GOLD', `1 Prestige costs ${cost} Gold; you have ${pl.gold}.`, '22.g');
+    spendAction(ctx, 'buyPrestige');
+    pl.gold -= cost;
+    emit(ctx, 'prestigeBought', { actor: pid, rule: '22.g', pub: { player: pid, gold: cost } });
+    awardPrestige(ctx, pid, 1, 'bought', '22.g');   // banked, permanent: unlike Gold Prestige (22.f) it is not lost when the Gold is spent
   },
 });
 
@@ -497,12 +533,48 @@ define('BUY_GAME_CARD', {
 define('BUILD_ROAD', {
   turn: true,
   run(ctx, a) {
-    const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid); const cost = data.rules.costs.road;
+    const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid);     const cost = S.roadCost(state, data, pid);
     mustControl(ctx, a.province, pid);
     check(!state.provinces[a.province].road, 'ROAD_EXISTS', `${nm(data, a.province)} already has a Road.`, '19.f');
     check(pl.gold >= cost, 'NEED_GOLD', `A Road costs ${cost} Gold; you have ${pl.gold}.`, '19.j');
     spendAction(ctx, 'buildRoad');
     pl.gold -= cost; buildPiece(ctx, pid, 'road', a.province, null, { free: false });
+  },
+});
+define('BUY_MERCHANT_SHIP', {
+  turn: true,
+  run(ctx, a) {
+    const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid);
+    const cost = data.rules.costs.merchantShip;
+    check(a.a && a.b && a.a !== a.b, 'BAD_LINK', 'Name the two provinces the sea link joins (22.c).', '22.c');
+    const [x, y] = a.a < a.b ? [a.a, a.b] : [a.b, a.a];
+    check(S.isSeaLink(data, x, y), 'NOT_A_SEA_LINK', `${nm(data, x)} and ${nm(data, y)} are not joined by sea (22.c).`, '22.c');
+    check(!S.hasShip(state, pid, x, y), 'SHIP_EXISTS', `You already have a Merchant ship on ${nm(data, x)}–${nm(data, y)} (22.d).`, '22.d');
+    check(pl.gold >= cost, 'NEED_GOLD', `A Merchant ship costs ${cost} Gold; you have ${pl.gold}.`, '22.c');
+    spendAction(ctx, 'merchantShip');
+    pl.gold -= cost;
+    (state.ships ??= []).push({ player: pid, a: x, b: y });
+    state.ships.sort((p, q) => (p.a < q.a ? -1 : p.a > q.a ? 1 : p.b < q.b ? -1 : p.b > q.b ? 1 : p.player < q.player ? -1 : 1));
+    emit(ctx, 'merchantShipBought', { actor: pid, rule: '22.c', pub: { player: pid, a: x, b: y, gold: cost } });
+  },
+});
+define('MOVE_MERCHANT_SHIP', {
+  turn: true,
+  run(ctx, a) {
+    const { state, data } = ctx; const pid = active(ctx);
+    check(a.a && a.b && a.toA && a.toB, 'BAD_LINK', 'Name the sea link the ship leaves and the sea link it moves to.', '22.c');
+    const [x, y] = a.a < a.b ? [a.a, a.b] : [a.b, a.a];
+    const [nx, ny] = a.toA < a.toB ? [a.toA, a.toB] : [a.toB, a.toA];
+    check(S.hasShip(state, pid, x, y), 'NO_SHIP', `You have no Merchant ship on ${nm(data, x)}–${nm(data, y)}.`, '22.d');
+    check(!(x === nx && y === ny), 'SAME_LINK', 'The ship is already on that sea link.', '22.c');
+    check(S.isSeaLink(data, nx, ny), 'NOT_A_SEA_LINK', `${nm(data, nx)} and ${nm(data, ny)} are not joined by sea (22.c).`, '22.c');
+    check(!S.hasShip(state, pid, nx, ny), 'SHIP_EXISTS', `You already have a Merchant ship on ${nm(data, nx)}–${nm(data, ny)} (22.d).`, '22.d');
+    spendAction(ctx, 'moveMerchantShip');
+    const i = (state.ships ?? []).findIndex(s => s.player === pid && s.a === x && s.b === y);
+    if (i >= 0) state.ships.splice(i, 1);
+    (state.ships ??= []).push({ player: pid, a: nx, b: ny });
+    state.ships.sort((p, q) => (p.a < q.a ? -1 : p.a > q.a ? 1 : p.b < q.b ? -1 : p.b > q.b ? 1 : p.player < q.player ? -1 : 1));
+    emit(ctx, 'merchantShipMoved', { actor: pid, rule: '22.c', pub: { player: pid, fromA: x, fromB: y, a: nx, b: ny, gold: 0 } });
   },
 });
 define('BUILD_WALL', {
@@ -541,7 +613,8 @@ define('PREVIEW_TARGET', {
   run(ctx, a) {
     const { state, data } = ctx; const pid = active(ctx);
     checkTargetable(ctx, pid, a.target);
-    check(S.provincesOf(state, pid).some(id => S.isNeighbour(data, id, a.target)), 'NOT_ADJACENT', `${nm(data, a.target)} does not border any of your provinces (16.i).`, '16.i');
+    // a.sneak (18.z, v31.10): a Sneak Attack target anywhere on the map is scouted when picked, so it need not border your provinces; ordinary scouting still needs an adjacent target (16.i)
+    check(a.sneak || S.provincesOf(state, pid).some(id => S.isNeighbour(data, id, a.target)), 'NOT_ADJACENT', `${nm(data, a.target)} does not border any of your provinces (16.i).`, '16.i');
     const t = state.provinces[a.target];
     check(t.native.rolled === null && a.target !== 'carthage', 'ALREADY_ROLLED', `${nm(data, a.target)}'s natives are already known (${t.native.present}).`, '17.h');
     pushFrame(ctx, { kind: 'roll', die: 'd' + data.rules.dice.native, purpose: 'nativeRoll', player: pid, target: a.target });
@@ -565,6 +638,7 @@ define('ALLY', {
     check(isInt(n) && n >= 1, 'BAD_TROOPS', 'troops must be a whole number >= 1.');
     check(n <= from.troops - data.rules.provinceFloor, 'PROVINCE_FLOOR', `${nm(data, a.from)} can send at most ${Math.max(0, from.troops - 1)} troop(s): it keeps 1 (17.f, Q64).`, '17.f');
     check(n > t.native.present, 'NOT_ENOUGH_TROOPS', `You need more than ${t.native.present} troops (your own, not borrowed) to ally with ${nm(data, a.target)} (17.j).`, '17.j');
+    if (a.withGeneral) check(!S.generalRecalled(state, pid), 'GENERAL_RECALLED', `${data.generalsById[pl.general?.id]?.name ?? 'Your general'} is recalled to Rome until the end of turn ${pl.generalRecalledThroughTurn}: he cannot leave Rome (18.o).`, '18.o');
     spendAction(ctx, 'ally');
     changeTroops(ctx, a.from, -n);
     Object.assign(t, { owner: pid, status: 'allied', troops: n, startingOf: null });
@@ -581,7 +655,7 @@ export function nextTurn(ctx) {
   let i = order.indexOf(prev);
   do i = (i + 1) % order.length; while (playerOf(state, order[i]).out && order[i] !== prev);   // eliminated players are skipped (12.m)
   const next = order[i];
-  state.turn = { number: t.number + 1, round: Math.ceil((t.number + 1) / order.length), activePlayerId: next, step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, sub: {} };
+  state.turn = { number: t.number + 1, round: Math.ceil((t.number + 1) / order.length), activePlayerId: next, step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} };
   emit(ctx, 'turnStarted', { actor: next, rule: '17.a', pub: { number: state.turn.number, round: state.turn.round, player: next } });
 }
 define('END_TURN', {
@@ -590,7 +664,15 @@ define('END_TURN', {
     const { state, data } = ctx; const t = state.turn; const pid = t.activePlayerId; const pl = mustPlayer(state, pid);
     const unused = Math.max(0, data.rules.actionsPerTurn - t.actionsUsed);   // +1 Gold per unused action (17.o, replaces the pass bonus)
     if (unused) { const g = unused * data.rules.unusedActionGold; pl.gold += g; emit(ctx, 'unusedActionGold', { actor: pid, rule: '17.o', pub: { player: pid, unused, gold: g } }); }
+    const gp = S.goldPrestige(pl.gold, data);                               // after the unused-action Gold (22.f); Gold is not spent
+    const total = pl.prestige + gp;
+    emit(ctx, 'goldPrestige', { actor: pid, rule: '22.f', pub: { player: pid, gold: pl.gold, goldPrestige: gp, board: pl.prestige, total, win: data.rules.winPrestige } });
     emit(ctx, 'turnEnded', { actor: pid, rule: '17.a', pub: { number: t.number, player: pid, actionsUsed: t.actionsUsed } });
+    if (total >= data.rules.winPrestige && state.winner === null) {
+      state.winner = pid; state.phase = 'finished'; state.pending = [];
+      emit(ctx, 'gameWon', { actor: pid, rule: '22.f', pub: { player: pid, prestige: pl.prestige, goldPrestige: gp, gold: pl.gold, total } });
+      return;
+    }
     nextTurn(ctx);
   },
 });

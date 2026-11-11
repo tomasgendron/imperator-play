@@ -10,6 +10,8 @@ export const ACTION_TYPES = Object.freeze([
   'CHOOSE_START_PROVINCE', 'CHOOSE_SIDE', 'CHOOSE_GENERAL', 'BUY_CATAPULT', 'CALL_REINFORCEMENTS', 'PLACE_SURVIVORS',
   'DISCARD_CARDS',   // M3: Emperor taxes you! (18.u, Q44)
   'MOVE_GENERAL', 'SELL_CARD',   // M7: free general move (15.j), selling cards (20.p)
+  'BUY_MERCHANT_SHIP', 'MOVE_MERCHANT_SHIP',   // v31.5 ship on a sea link; v31.8 move it for free (22.c)
+  'BUY_PRESTIGE',   // v31.14: buy 1 Prestige for 20 Gold (22.g)
   'SUMMON_GENERAL', 'RETURN_REINFORCEMENTS',   // v31.4: bring a general into a battle he can reach; Horn troops may go home (18.y)
 ]);
 

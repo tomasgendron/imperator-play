@@ -8,7 +8,7 @@
 import { loadGameData } from '../ui/loadData.js';
 import { resolveAsset } from '../ui/assets.js';
 import { setupChoices, checkSetup, current } from '../ui/consoleModel.js';
-import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, isUnderGarrisoned } from '../engine/index.js';
+import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, isUnderGarrisoned, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces } from '../engine/index.js';
 import * as G from '../ui/game/model.js';
 import { createSound } from '../ui/game/sound.js';
 import { createController } from '../ui/core/controller.js';
@@ -64,6 +64,19 @@ const meNow = s => (C.NET?.me ? C.NET.me : G.viewerFor(s, C.viewer));
 const img = (id, o = {}) => { const r = resolveAsset(assets, id, o); return r.path ?? r.fallback ?? r.placeholder; };
 const prov = id => data.provincesById[id]?.name ?? id;
 const pn = id => G.nameOf(st(), id);
+function applyHideAiBattles() {
+  const on = G.hideAiBattlesOn(); const b = $('#bAiBattles'); if (!b) return;
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  b.textContent = on ? 'AI hidden' : 'AI battles';
+  b.title = on ? 'AI versus AI and AI versus natives skip the battle screen. Tap to show them. A battle you are in always shows.' : 'Skip the battle screen when no human is fighting. A battle you are in always shows.';
+}
+function setHideAiBattles(on) {
+  G.setHideAiBattles(on); applyHideAiBattles();
+  if (!C.S) return;
+  const b = st().battle;
+  if (on && b && G.skipBattleUi(st(), b.att.player, b.def.player) && popKind === 'battle') { closePop(); bv = null; }
+  render();
+}
 const col = id => G.colorClass(st(), id);   // 'p1' | 'p2' | 'p3' | 'none'
 const cvar = id => (col(id) === 'none' ? 'var(--native)' : `var(--${col(id)})`);
 /** v30.3 (a slow phone): write a part of the screen only when its HTML changed; returns true when it was written (re-wire then). */
@@ -130,6 +143,8 @@ async function boot() {
   $('#scrim').onclick = () => { if (!sheetSticky) closeSheet(); };
   $('#bLog').onclick = () => openLog();
   $('#bMenu').onclick = () => openMenu();
+  applyHideAiBattles();
+  const ab = $('#bAiBattles'); if (ab) ab.onclick = () => { SND.play('button_click'); setHideAiBattles(!G.hideAiBattlesOn()); };
   $('#dieChip').onclick = () => openLog();
   $('#importFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadFrom(await f.text(), $('#svErr')); };
   const q = new URLSearchParams(location.search);
@@ -173,10 +188,16 @@ function mapGrpHtml() {
 
 // ------------------------------------------------------------------ start screen (This phone / Host / Join, players, starts, decks, advanced)
 const SEAT_NAMES = ['Vidi', 'Marcus (AI)', 'Livia (AI)'];
-let seats = [{ name: 'Vidi', controller: 'human', general: 'random' }, { name: 'Marcus (AI)', controller: 'ai', general: 'random' }];
+let seats = [{ name: 'Vidi', controller: 'human', general: 'random' }, { name: 'Marcus (AI)', controller: 'ai', difficulty: 'normal', general: 'random' }];
 let startMode = 'random', playWhere = 'local', advOpen = false;
 let seed = 'g' + Math.floor(Math.random() * 1e6);
-const engineSeats = () => seats.map((x, i) => (x.controller === 'remote' ? { name: NETH.remoteName(i) || `Guest ${i + 1}`, controller: 'human', general: x.general } : { name: x.name.trim(), controller: x.controller, general: x.general }));
+/** v31.11: a fresh random seed for a new game ('g' + a number up to 6 digits, as before). crypto.getRandomValues when available,
+ * Math.random as the fallback — the seed is UI input only, the engine stays seeded and deterministic. */
+const freshSeed = () => {
+  try { const a = new Uint32Array(1); crypto.getRandomValues(a); return 'g' + (a[0] % 1000000); }
+  catch { return 'g' + Math.floor(Math.random() * 1e6); }
+};
+const engineSeats = () => seats.map((x, i) => (x.controller === 'remote' ? { name: NETH.remoteName(i) || `Guest ${i + 1}`, controller: 'human', general: x.general } : { name: x.name.trim(), controller: x.controller, difficulty: x.controller === 'ai' ? (x.difficulty ?? 'normal') : undefined, general: x.general }));
 /** v30.4: the host's seats -> the room (lobby only): this phone's seat is 'local', the Online seats 'remote', the rest 'ai'. */
 const syncRoom = () => NETH.configure(seats.map((x, i) => ({ kind: x.controller === 'remote' ? 'remote' : x.controller === 'ai' ? 'ai' : 'local', name: x.name.trim() || `Player ${i + 1}` })));
 /** v30.4: the Host tab's seats: seat 1 is this phone (the host), every other seat is Online or AI (at least one Online). */
@@ -194,7 +215,8 @@ function renderStart() {
   const seatRow = (x, i) => { const g = gen(x);
     return `<div class="seat" data-seat="${i}" style="--c:var(--p${i + 1})"><button class="gc${g ? '' : ' rnd'}" data-gen="${i}" ${g ? `style="background-image:url('${attr(img('general.' + g.id))}')"` : ''} aria-label="Choose seat ${i + 1}'s general">${g ? '' : '?'}</button>
       <div class="t">${x.controller === 'remote' ? `<span class="rname" data-rname="${i}">${remoteLabel(i)}</span>` : `<input name="name${i}" value="${attr(x.name)}" aria-label="Seat ${i + 1} name" autocomplete="off">`}<span class="gpick" data-gen="${i}">${g ? `${esc(g.name)} · ${esc(G.generalCaption(data, g.id))}` : 'Random free general'} ▾</span></div>
-      ${playWhere === 'host' && i === 0 ? '<span class="ctl you" data-ctl-you="0">📱 You (host)</span>' : `<button class="ctl" data-ctl="${i}" aria-label="Seat ${i + 1}: played by">${x.controller === 'ai' ? '🤖 AI' : x.controller === 'remote' ? '🌐 Online' : '👤 Human'} ▾</button>`}</div>`; };
+      ${playWhere === 'host' && i === 0 ? '<span class="ctl you" data-ctl-you="0">📱 You (host)</span>' : `<button class="ctl" data-ctl="${i}" aria-label="Seat ${i + 1}: played by">${x.controller === 'ai' ? '🤖 AI' : x.controller === 'remote' ? '🌐 Online' : '👤 Human'} ▾</button>`}
+      ${x.controller === 'ai' ? `<select class="dif" data-dif="${i}" aria-label="Seat ${i + 1} AI difficulty" title="Easy holds Revolt! and Assassin! back against humans, and attacks a human at most once per turn"><option value="normal" ${x.difficulty !== 'easy' ? 'selected' : ''}>Normal</option><option value="easy" ${x.difficulty === 'easy' ? 'selected' : ''}>Easy</option></select>` : ''}</div>`; };
   const online = playWhere === 'join';   // v30.4: the Host tab has the seats and the starts (the host chooses them)
   const r = checkSetup(data, engineSeats(), startMode); const errs = r.ok ? '' : r.errors.map(e => (e.seat !== null ? `Seat ${e.seat + 1}: ` : '') + e.message).join('\n');
   const auto = autosaveText(); let autoInfo = '';
@@ -212,21 +234,22 @@ function renderStart() {
       ${startMode === 'selected' ? `<p class="note" style="margin:6px 2px 0">The game starts with a roll-off for turn order; then each player picks a start on the map, the last to move first.${seats.length === 2 && data.rules.twoPlayerSides ? ' With 2 players, the first to pick chooses West or East (4.g).' : ''}</p>` : ''}</div>`}
     <div class="grp"><h3>The decks</h3><div class="decks">${G.deckCatalog(data).map(d => `<button data-deck="${d.key}" style="background-image:url('${attr(img('deck.' + d.key))}')" aria-label="${attr(d.title)}: see every card"></button>`).join('')}<span>Tap a deck to see every card in it.</span></div></div>
     ${playWhere === 'join' ? '' : `<div class="grp" style="padding:0 9px"><button class="adv" id="mAdv" aria-expanded="${advOpen}">Advanced: seed, AI speed, sound <span>${advOpen ? '▾' : '▸'}</span></button>
-      ${advOpen ? `<div style="padding:0 2px 10px"><label class="fld">Seed (the same seed and setup give the same game)<input type="text" id="mSeed" value="${attr(seed)}" autocomplete="off"></label>
+      ${advOpen ? `<div style="padding:0 2px 10px"><label class="fld">Seed (the same seed and setup give the same game)<input type="text" id="mSeed" value="${attr(seed)}" autocomplete="off"> <button type="button" class="btn sm" id="mSeedDice" title="Roll a fresh random seed">🎲</button></label>
         <label class="fld">AI and animation speed<select id="mSpeed">${[['1.6', 'slow'], ['1', 'normal'], ['0.35', 'fast'], ['0.05', 'instant']].map(([v, t]) => `<option value="${v}" ${String(C.speed) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
         <div class="seg" style="margin-top:8px"><button id="mSound" class="${SND.isOn() ? 'on' : ''}" aria-pressed="${SND.isOn()}">${SND.isOn() ? '🔊 Sound on' : '🔇 Sound off'}</button></div></div>` : ''}</div>`}
     <div class="serr" id="mErr">${esc(errs)}</div>
     ${viewLinks()}
   </div>
-  <div class="sfoot">${playWhere === 'join' ? `<button class="btn gold big${joinBusy ? ' busy' : ''}" id="mJoinGo">Join ▶</button>` : `<button class="btn gold big" id="mStart" ${r.ok && !online && (playWhere !== 'host' || NETH.readiness(seats).ok) ? '' : 'disabled'}>Start game ▶</button>`}<div class="row"><button class="btn wide" id="mResume" ${auto ? '' : 'disabled'}>${onlineSave(auto) ? '🌐 Resume online' : '↺ Resume'}${esc(autoInfo)}</button><button class="btn wide" id="mLoad">📂 Load…</button></div></div>`;
+  <div class="sfoot">${playWhere === 'join' ? `<button class="btn gold big${joinBusy ? ' busy' : ''}" id="mJoinGo">Join ▶</button>` : `<button class="btn gold big" id="mStart" ${r.ok && !online && (playWhere !== 'host' || NETH.readiness(seats).ok) ? '' : 'disabled'}>Start game ▶</button>`}<div class="row"><button class="btn wide" id="mHow">How to Win</button><button class="btn wide" id="mResume" ${auto ? '' : 'disabled'}>${onlineSave(auto) ? '🌐 Resume online' : '↺ Resume'}${esc(autoInfo)}</button><button class="btn wide" id="mLoad">📂 Load…</button></div></div>`;
   $$('[data-where]', el).forEach(b => b.onclick = () => { if (b.dataset.where === playWhere) return; if (playWhere === 'join') { NETG.leave(); joinBusy = false; joinLobby = null; joinMsg = null; }
     if (playWhere === 'host') { NETH.leave(); hostErr = null; hostSeats(false); }
     playWhere = b.dataset.where; if (playWhere === 'host') { hostSeats(true); hostOpen(); } SND.play('button_click'); renderStart(); });
-  $$('[data-n]', el).forEach(b => b.onclick = () => { const n = +b.dataset.n; while (seats.length < n) seats.push({ name: SEAT_NAMES[seats.length], controller: 'ai', general: 'random' }); seats.length = n; if (playWhere === 'host') { hostSeats(true); syncRoom(); } renderStart(); });
+  $$('[data-n]', el).forEach(b => b.onclick = () => { const n = +b.dataset.n; while (seats.length < n) seats.push({ name: SEAT_NAMES[seats.length], controller: 'ai', difficulty: 'normal', general: 'random' }); seats.length = n; if (playWhere === 'host') { hostSeats(true); syncRoom(); } renderStart(); });
   $$('[data-ctl]', el).forEach(b => b.onclick = () => { const i = +b.dataset.ctl; const x = seats[i];
-    if (playWhere === 'host') { const next = x.controller === 'remote' ? 'ai' : 'remote'; if (next === 'ai' && seats.filter(y => y.controller === 'remote').length < 2) { SND.play('error_denied'); toast('An online game needs at least one Online seat.'); return; } x.controller = next; syncRoom(); }
-    else x.controller = x.controller === 'ai' ? 'human' : 'ai';
+    if (playWhere === 'host') { const next = x.controller === 'remote' ? 'ai' : 'remote'; if (next === 'ai' && seats.filter(y => y.controller === 'remote').length < 2) { SND.play('error_denied'); toast('An online game needs at least one Online seat.'); return; } x.controller = next; if (next === 'ai' && !x.difficulty) x.difficulty = 'normal'; syncRoom(); }
+    else { x.controller = x.controller === 'ai' ? 'human' : 'ai'; if (x.controller === 'ai' && !x.difficulty) x.difficulty = 'normal'; }   // v31.12: a seat turned AI gets a difficulty
     SND.play('button_click'); renderStart(); });
+  $$('[data-dif]', el).forEach(sel => sel.onchange = () => { seats[+sel.dataset.dif].difficulty = sel.value; });   // v31.12: per-seat AI difficulty, no re-render needed
   $$('input[name^=name]', el).forEach(inp => inp.oninput = () => { seats[+inp.name.slice(4)].name = inp.value; const rr = checkSetup(data, engineSeats(), startMode); $('#mErr').textContent = rr.ok ? '' : rr.errors.map(e => (e.seat !== null ? `Seat ${e.seat + 1}: ` : '') + e.message).join('\n'); if ($('#mStart')) $('#mStart').disabled = !rr.ok || playWhere === 'join' || (playWhere === 'host' && !NETH.readiness(seats).ok); if (playWhere === 'host') syncRoom(); });
   $$('[data-gen]', el).forEach(b => b.onclick = () => openGeneralPick(+b.dataset.gen));
   $$('[data-mode]', el).forEach(b => b.onclick = () => { startMode = b.dataset.mode; renderStart(); });
@@ -234,9 +257,11 @@ function renderStart() {
   $$('[data-deck]', el).forEach(b => b.onclick = () => openDeck(b.dataset.deck));
   if ($('#mAdv')) $('#mAdv').onclick = () => { advOpen = !advOpen; renderStart(); };
   const sd = $('#mSeed'); if (sd) sd.oninput = () => { seed = sd.value; };
+  const sdb = $('#mSeedDice'); if (sdb) sdb.onclick = () => { seed = freshSeed(); SND.play('button_click'); renderStart(); };   // v31.11: roll a fresh seed on demand
   const spx = $('#mSpeed'); if (spx) spx.onchange = () => { C.speed = Number(spx.value) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } };
   const so = $('#mSound'); if (so) so.onclick = () => { SND.toggle(); renderStart(); };
   if ($('#mStart')) $('#mStart').onclick = startGame;
+  if ($('#mHow')) $('#mHow').onclick = () => showHowToWin();
   if (playWhere === 'join') wireJoin(el);
   wireRejoin(el);
   if (playWhere === 'host') wireHostBox(el);
@@ -358,8 +383,8 @@ function openDeck(key, back = false, only = '') {
 function openDecks() {
   const s = C.S ? st() : null;
   openSheet('decks', `<div class="sh-head"><h2>The decks<small>Tap a deck to see every card in it</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
-    <div class="sh-body"><div class="alist" id="decksList">${G.deckCatalog(data).map(d => `<button class="arow deckrow" data-dk="${attr(d.key)}"><span class="deckmini" style="background-image:url('${attr(img(s && !G.deckCount(s, d.key) ? 'deck.empty' : 'deck.' + d.key))}')"></span><span class="t"><b>${esc(d.title)}</b><small>${d.total} cards${s ? ` · draw pile <b data-left="${attr(d.key)}">${G.deckCount(s, d.key)}</b> · discards ${s.discards?.[d.key]?.length ?? 0}` : ''}</small></span><span class="go">›</span></button>`).join('')}</div>
-    <p class="note">A pile that runs out is reshuffled from its discards.</p></div>`);
+    <div class="sh-body"><div class="alist" id="decksList">${G.deckCatalog(data).map(d => `<button class="arow deckrow" data-dk="${attr(d.key)}"><span class="deckmini" style="background-image:url('${attr(img(s && !G.deckCount(s, d.key) ? 'deck.empty' : 'deck.' + d.key))}')"></span><span class="t"><b>${esc(d.title)}</b><small>${d.total} cards${s ? ` · draw pile <b data-left="${attr(d.key)}">${G.deckCount(s, d.key)}</b> · discards ${s.discards?.[d.key]?.length ?? 0}${(s.throwaway?.[d.key]?.length ?? 0) ? ` · throwaway ${s.throwaway[d.key].length}` : ''}` : ''}</small></span><span class="go">›</span></button>`).join('')}</div>
+    <p class="note">A pile that runs out is reshuffled from its discards. Cards in the throwaway pile are gone for good.</p></div>`);
   $$('#sheet [data-dk]').forEach(b => b.onclick = () => openDeck(b.dataset.dk, true));
 }
 function startGame() {
@@ -481,7 +506,8 @@ function enterGame(fresh) {
   $('#maphint').hidden = !fresh; if (fresh) setTimeout(() => { $('#maphint').hidden = true; }, 4000);
   autosave(); render(); schedule(); guard();
 }
-function toStart() { unguard(); clearTimeout(C.aiTimer); if (C.NET) leaveNet(); C.S = null; renderStart(); renderNetBar(); }
+function toStart() { unguard(); clearTimeout(C.aiTimer); if (C.NET) leaveNet(); C.S = null; seed = freshSeed();   // v31.11: every return to setup starts a fresh game, so roll a fresh seed — a leftover seed silently replayed the same game. A seed typed afterwards still sticks.
+  renderStart(); renderNetBar(); }
 // ------------------------------------------------------------------ v30.5 (Q181, Vidi via Boardicca): leave-protection while a game runs
 // The browser's back button and the iPhone's swipe-back stay on the game (a history entry this page pushed) and ask "Leave this game?"
 // (Stay / Leave); the menu's Leave / New game ask the same; an ONLINE game also warns on close/reload (beforeunload: limited on iOS
@@ -535,12 +561,27 @@ function render() {
   else if (sheetKind === 'log') openLog(true);
   else if (sheetKind === 'player' && $('#genSheet')) openPlayer($('#genSheet').dataset.pid, true);
   // v30.1: the battle sheet is open while a battle runs (its prompts live inside it); ▾ hides it until the gold button or the next battle
-  if (s.battle && !popDone && popKind !== 'battle' && battleOff !== s.battle.id && !C.hostHidden()) { if (sheetKind === 'ask') closeSheet(true); openBattle(); }
+  const hideB = s.battle && G.skipBattleUi(s, s.battle.att.player, s.battle.def.player);
+  if (hideB && popKind === 'battle' && !popDone) { closePop(); bv = null; }
+  else if (!hideB && s.battle && !popDone && popKind !== 'battle' && battleOff !== s.battle.id && !C.hostHidden()) { if (sheetKind === 'ask') closeSheet(true); openBattle(); }
   else if (popKind === 'battle' && !popDone) { if (!s.battle) { closePop(); bv = null; } else renderBattleCtl(); }
   renderDrawCall(s); renderNetBar();
   if (s.phase === 'finished' && guarded) unguard();
   autoAsk(s, legal);
+  sneakResumeCheck(legal);
   if (!C.busy && C.viewer && news[C.viewer]?.length) setTimeout(showNews, 0);
+}
+/** v31.10: a Sneak Attack target whose natives were rolled on selection (18.z): once the roll has landed, reopen the flow at the troops step. */
+function sneakResumeCheck(legal) {
+  if (!sneakResume) return;
+  const s = st(); const p = s.provinces[sneakResume.target];
+  if (p?.native.rolled === null) return;   // the roll has not landed yet
+  const r = sneakResume; sneakResume = null;
+  if (sheetKind !== 'sneak') return;   // the player dismissed the flow while the roll was in flight
+  const me = s.players.find(x => x.id === s.turn.activePlayerId);
+  if (s.phase !== 'turn' || s.turn.step !== 'actions' || !me?.hand.some(c => c.uid === r.uid)) return;
+  const list = legal.filter(d => d.type === 'PLAY_CARD' && d.action.cardUid === r.uid);
+  if (list.length) openSneakFlow(r.uid, list, { step: 'troops', from: r.from, target: r.target });
 }
 /** v30.4: the host's strip (the desktop's host banner and seat badges): the room code (tap: the code and the link), the guests who are
  *  away with a "→ AI" button, a guest's seat the AI plays with "← back" when that guest is connected again, and the screen-on warning. */
@@ -597,7 +638,7 @@ function renderPlayers(s) {
     return `<button class="pl${on ? ' active' : ''}${p.out ? ' out' : ''}" style="--c:var(--${col(p.id)})" data-pid="${p.id}" aria-label="${attr(p.name)}${g ? ', ' + attr(g.name) : ''}: open the General">
     <span class="tag ${on ? '' : p.controller === 'ai' ? 'ai' : ''}" ${!on && p.controller !== 'ai' ? 'hidden' : ''}>${on ? '▶ TURN' : 'AI'}</span>${netDot(s, p)}
     <span class="r1"><span class="av" style="background-image:url('${attr(img(g ? 'general.' + g.id : 'back.game'))}');background-position:center 15%"></span><span class="nm">${esc(p.name)}<small>${esc(g?.name ?? 'no general yet')}</small>${g ? `<small class="cap" data-caption="${g.id}">${esc(G.generalCaption(data, g.id))}</small>` : ''}</span></span>
-    <span class="r2"><span title="Gold">💰${p.gold}</span><span title="Prestige">⭐${p.prestige}<small style="color:var(--muted)">/${data.rules.winPrestige}</small></span><span title="Cards">🂠${G.handCount(p)}</span><span title="Troops">⚔${totalTroops(s, p.id)}</span>${on && s.phase === 'turn' ? `<span class="actcount" title="Actions used this turn">${G.actionsUsedLabel(s, data)}</span>` : ''}</span>
+    <span class="r2"><span title="Gold">💰${p.gold}</span><span title="Prestige">⭐${p.prestige}${goldPrestige(p.gold, data) ? '+' + goldPrestige(p.gold, data) : ''}<small style="color:var(--muted)">/${data.rules.winPrestige}</small></span><span title="Number of Roads, longest network to Roma (22.e)">🛣${roadNetwork(s, data, p.id).roads}</span><span title="Cards">🂠${G.handCount(p)}</span><span title="Troops">⚔${totalTroops(s, p.id)}</span>${on && s.phase === 'turn' ? `<span class="actcount" title="Actions used this turn">${G.actionsUsedLabel(s, data)}</span>` : ''}</span>
     <span class="pbar"><b style="width:${Math.min(100, p.prestige / data.rules.winPrestige * 100)}%"></b></span></button>`; }).join(''))) return;
   $$('#players .pl').forEach(b => b.onclick = () => openPlayer(b.dataset.pid));
 }
@@ -606,9 +647,13 @@ function renderSteps(s, legal) {
   const el = $('#steps'); el.style.setProperty('--pc', `var(--${col(act)})`);
   const names = { resources: 'Resources', gameRoll: 'Game', revoltRoll: 'Revolt', actions: 'Actions' };
   const used = s.phase === 'turn' ? G.actionsUsedLabel(s, data) : null;
-  setHTML(el, s.phase === 'setup' ? '<span class="step cur"><i>0</i>Setup</span>' : s.phase === 'finished' ? `<span class="step cur"><i>★</i>${esc(pn(s.winner))} wins</span>`
-    : G.STEP_CHIPS.map(([k], i) => `<span class="step ${i < si ? 'done' : i === si ? 'cur' : ''}"><i>${i < si ? '✓' : i + 1}</i>${names[k]}</span>`).join('<span class="step-sep">›</span>') + (used ? `<span class="actcount" id="actCount" title="Actions used this turn">${used}</span>` : ''));
-  const f = topFrame(s); const w = whoActs(s); let p;
+  const f0 = topFrame(s);
+  const rollDue = legal.find(d => d.type === 'ROLL' && f0?.purpose !== 'battleRound' && f0?.purpose !== 'loyalty');
+  const rollBtn = rollDue ? `<button type="button" class="btn sm gold" id="bRollTop" ${C.busy ? 'disabled' : ''}>🎲 ${esc(rollDue.label)}</button>` : '';
+  setHTML(el, (s.phase === 'setup' ? '<span class="step cur"><i>0</i>Setup</span>' : s.phase === 'finished' ? `<span class="step cur"><i>★</i>${esc(pn(s.winner))} wins</span>`
+    : G.STEP_CHIPS.map(([k], i) => `<span class="step ${i < si ? 'done' : i === si ? 'cur' : ''}"><i>${i < si ? '✓' : i + 1}</i>${names[k]}</span>`).join('<span class="step-sep">›</span>') + (used ? `<span class="actcount" id="actCount" title="Actions used this turn">${used}</span>` : '')) + rollBtn);
+  const rt = $('#bRollTop'); if (rt) rt.onclick = () => { if (!C.busy) act(rollDue); };
+  const f = f0; const w = whoActs(s); let p;
   if (s.phase === 'finished') p = `<b>${esc(pn(s.winner))} wins the game.</b> Menu → New game to play again.`;
   else if (!legal.length) p = G.isHuman(s, w) ? `Waiting for <b>${esc(pn(w))}</b>…` : `<b>${esc(pn(w))}</b> (AI) is thinking…${C.aiPaused ? ' (AI paused: Menu → Resume AI)' : ''}`;
   else if (!f) p = `<b>Your turn, ${esc(pn(w))}.</b> <b class="actcount">${esc(G.actionsUsedLabel(s, data) ?? '')}</b> actions. Attack, Ally or Move, buy or build, play a card, or tap a province.`;
@@ -634,6 +679,7 @@ function pickSet(s, legal) {
 function renderTokens(s, legal) {
   const sp = data.map.map.tokenSpace; const picks = pickSet(s, legal); const gensAt = {}; const tg = reachFrom(selected, legal);
   for (const pl of s.players) if (pl.general?.at && !pl.out) gensAt[pl.general.at] = pl.general.id;
+  renderShips(s);
   setHTML($('#tokens'), data.provinces.map(def => {
     const id = def.id, p = s.provinces[id]; let cls = 'tok', val;
     if (id === 'roma' && !p.owner) { cls += ' roma'; val = p.troops; }
@@ -650,6 +696,24 @@ function tokenTap(id) {
   SND.play('province_select'); selected = id; htmlCache.delete($('#tokens')); openProvince(id);
   const tg = reachFrom(id, mineNow());
   $$('#tokens .tok').forEach(t => { t.classList.toggle('sel', t.dataset.id === id); t.classList.toggle('tgt', tg.has(t.dataset.id)); });
+}
+/** v31.13: tapping the general's token on the map moves the general (15.j), like the ⚑ General button. Only the active player's
+ *  own token opens the move picker; any other tap explains why, and never offers an illegal move. */
+function genTokenTap(id) {
+  const s = st(); const pl = s.players.find(p => p.general?.at === id);
+  if (!pl) return;
+  if (pl.id !== C.viewer) { SND.play('error_denied'); toast('That is not your general.'); return; }
+  const g = gateFor(pl.id);
+  const list = (g.live ? g.legal : []).filter(d => d.type === 'MOVE_GENERAL');
+  if (list.length) { SND.play('button_click'); openList('Move your general', list); return; }
+  SND.play('error_denied');
+  toast(G.generalMoveWhy(s, data, pl.id) ?? 'Your general cannot move now.');
+}
+function renderShips(s) {
+  const svg = $('#ships'); if (!svg || !data) return;
+  const sp = data.map.map.tokenSpace;
+  svg.setAttribute('viewBox', `0 0 ${sp.w} ${sp.h}`);
+  svg.innerHTML = shipSegments(s, data).map(g => `<line x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}" stroke="var(--${col(g.player)})" stroke-width="5" stroke-linecap="round"/><circle cx="${g.mx}" cy="${g.my}" r="8" fill="var(--${col(g.player)})" stroke="#fff" stroke-width="1.5"/>`).join('');
 }
 /** v30.3: the provinces this seat may attack, ally with or move to from `id` now (they glow while its sheet is open). */
 function reachFrom(id, legal) {
@@ -696,9 +760,12 @@ let lastUp = null;
 function mapTap(e) {
   if (e.defaultPrevented || e.target.closest('.mapctl, .minimap')) return;
   const tok = e.target.closest('.tok');
-  if (!e.detail && tok) { tokenTap(tok.dataset.id); return; }   // a keyboard or scripted click: the element itself
+  // v31.13: tapping the general's token (the portrait circle on the province) moves the general (15.j), like the ⚑ General button
+  if (!e.detail && tok) { if (e.target.closest('.gen')) { genTokenTap(tok.dataset.id); return; } tokenTap(tok.dataset.id); return; }   // a keyboard or scripted click: the element itself
   // the finger's own point (pointerup): a browser may move a touch's click onto the nearest button (Chrome's touch adjustment)
   const p = lastUp && Math.abs(e.timeStamp - lastUp.t) < 1000 ? lastUp : { x: e.clientX, y: e.clientY }; lastUp = null;
+  const genEl = document.elementFromPoint(p.x, p.y)?.closest('.gen');
+  if (genEl) { const t = genEl.closest('.tok'); if (t) { genTokenTap(t.dataset.id); return; } }
   const c = tapCandidates(p.x, p.y);
   if (!c.length) return;
   if (c.length > 1 && c[1].d - c[0].d < TAP_TIE) { openWhich(c.filter(x => x.d - c[0].d < TAP_TIE).slice(0, 3).map(x => x.id)); return; }
@@ -713,7 +780,7 @@ function openWhich(ids) {
   ids.forEach(flashToken);
 }
 // ------------------------------------------------------------------ the thumb bar: every enabled button opens or plays legal moves only
-const ICON = { ATTACK: '⚔', ALLY: '🤝', MOVE: '➜', BUY_TROOP: '🛒', BUY_GAME_CARD: '🂠', BUY_CATAPULT: '🏹', BUILD_ROAD: '🛣', BUILD_WALL: '🧱', USE_SAVED_RESOURCE: '🏛', PLAY_CARD: '🂠', PREVIEW_TARGET: '🔎', END_TURN: '✓', SELL_CARD: '💰', MOVE_GENERAL: '⚑', ROLL: '🎲', DRAW_CARD: '🂠' };
+const ICON = { ATTACK: '⚔', ALLY: '🤝', MOVE: '➜', BUY_TROOP: '🛒', BUY_GAME_CARD: '🂠', BUY_PRESTIGE: '👑', BUY_CATAPULT: '🏹', BUILD_ROAD: '🛣', BUILD_WALL: '🧱', USE_SAVED_RESOURCE: '🏛', PLAY_CARD: '🂠', PREVIEW_TARGET: '🔎', END_TURN: '✓', SELL_CARD: '💰', MOVE_GENERAL: '⚑', ROLL: '🎲', DRAW_CARD: '🂠' };
 const TITLES = { ATTACK: 'Attack', ALLY: 'Ally', MOVE: 'Move troops' };
 function barModel(s, legal) {
   const f = topFrame(s); const c = G.categorize(legal); const free = !f && s.phase === 'turn' && legal.length > 0;
@@ -727,8 +794,8 @@ function barModel(s, legal) {
   else if (f && legal.length) gold = { k: 'answer', ic: '❗', t: 'Answer', on: true, due: true, go: () => openAsk() };
   else gold = { k: 'end', ic: '✓', t: 'End turn', on: free && c.end.length > 0, go: () => act(c.end[0]) };
   return [mv('ATTACK'), mv('ALLY'), mv('MOVE'),
-    { k: 'buy', ic: '🛒', t: 'Buy', on: free && c.buy.length > 0, go: () => openList('Buy', c.buy, 'One troop per turn from the bank; a Game Card from the deck.') },
-    { k: 'build', ic: '🏛', t: 'Build', on: free && c.build.length > 0, go: () => openList('Build', c.build, 'Roads, Walls and the Catapult; a saved Road or Wall card builds for free.') },
+    { k: 'buy', ic: '🛒', t: 'Buy', on: free && c.buy.length > 0, go: () => openList('Buy', c.buy, '1 troop is 2 Gold, 2 troops are 5 Gold, 3 troops are 10 Gold. Each pack is 1 action and goes to one province. A Game Card is from the deck. 1 Prestige is 20 Gold (banked, permanent).') },
+    { k: 'build', ic: '🏛', t: 'Build', on: free && c.build.length > 0, go: () => openBuildList() },
     { k: 'cards', ic: '🂠', t: 'Cards', on: !!h.owner, badge: h.cards.length, go: () => openCards() },
     { k: 'more', ic: '⋯', t: 'More', on: free && more.length > 0, go: () => openList('More actions', more) },
     gold];
@@ -780,6 +847,46 @@ function wireRows(root, list) {
     if (d.type === 'ALLY' && sheetKind === 'moves') { openAllyConfirm(d); return; }   // v30.1: the Ally confirm sheet (natives, troops needed)
     if (root.id === 'sheet' || root.closest?.('#sheet')) closeSheet(true); act(d.range ? { ...d, _v: val[i] } : d); });
 }
+function openBuildList() {
+  const all = G.categorize(mineNow()).build;
+  const buys = all.filter(d => d.type === 'BUY_MERCHANT_SHIP');
+  const rest = all.filter(d => d.type !== 'BUY_MERCHANT_SHIP');
+  if (!rest.length) { if (buys.length) openShipBuy(); return; }
+  openList('Build', rest, 'Roads, Walls, the Catapult, and moving a Merchant ship. A saved Road or Wall card builds for free.');
+  if (!buys.length) return;
+  $('#sheet .sh-body')?.insertAdjacentHTML('afterbegin', `<button type="button" class="btn gold wide" id="mShipBuy">Buy Merchant ship · ${data.rules.costs.merchantShip} Gold</button>`);
+  const b = $('#mShipBuy'); if (b) b.onclick = () => openShipBuy();
+}
+/** Buy a Merchant ship: picture, then one of your coastal provinces, then a sea-linked partner. */
+function openShipBuy() {
+  const cost = data.rules.costs.merchantShip;
+  let first = null, second = null;
+  const draw = () => {
+    const s = st(); const pid = whoActs(s);
+    const buys = mineNow().filter(d => d.type === 'BUY_MERCHANT_SHIP');
+    const step1 = shipBuyProvinces(s, data, pid);
+    if (first && !step1.includes(first)) { first = null; second = null; }
+    const step2 = first ? shipBuyProvinces(s, data, pid, first) : [];
+    if (second && !step2.includes(second)) second = null;
+    const chips = (ids, step, picked) => ids.map(id => `<button type="button" class="btn${id === picked ? ' gold' : ''}" data-ship-step="${step}" data-prov="${id}">${esc(prov(id))}</button>`).join('') || `<p class="note">${step === 1 ? 'No coastal province of yours can take a new ship.' : first ? 'No open sea link from there.' : 'Pick the first province.'}</p>`;
+    openSheet('ship', `<div class="sh-head"><h2>Buy a Merchant ship<small>${cost} Gold · 1 action</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+      <div class="sh-body"><img class="shipart" src="assets/ships/merchant_ship.png" alt="Merchant ship"><p class="note">1 · Your coastal province</p><div class="opts" id="shipStep1">${chips(step1, 1, first)}</div><p class="note">2 · The province it connects to</p><div class="opts" id="shipStep2">${chips(step2, 2, second)}</div></div>
+      <div class="sh-foot"><button class="btn gold wide" id="shipConfirm" type="button"${first && second ? '' : ' disabled'}>Buy for ${cost} Gold</button></div>`);
+    $$('#sheet [data-ship-step]').forEach(b => b.onclick = () => {
+      if (b.dataset.shipStep === '1') { if (first !== b.dataset.prov) second = null; first = b.dataset.prov; }
+      else second = b.dataset.prov;
+      flashToken(b.dataset.prov); draw();
+    });
+    const ok = $('#shipConfirm');
+    if (ok) ok.onclick = () => {
+      const [a, b] = first < second ? [first, second] : [second, first];
+      const d = buys.find(x => x.action.a === a && x.action.b === b);
+      if (!d) return;
+      closeSheet(true); act(d);
+    };
+  };
+  draw();
+}
 function openList(title, list, note = '') {
   openSheet('list', `<div class="sh-head"><h2>${esc(title)}<small>${list.length} possible now · each costs an action unless it says free</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body">${rowsHtml(list)}${note ? `<p class="note">${esc(note)}</p>` : ''}</div>`);
@@ -828,7 +935,7 @@ function openCards() {
 }
 function openProvince(id, refresh = false) {
   const s = st(); const p = s.provinces[id]; const def = data.provincesById[id]; const legal = mineNow();
-  const m = G.shownMin(s, data, id); const under = p.owner ? isUnderGarrisoned(s, data, id) : false;
+  const m = G.shownMin(s, data, id); const under = p.status === 'allied' ? p.troops < (m?.min ?? 1) : (p.owner ? isUnderGarrisoned(s, data, id) : false);
   const here = G.forProvince(legal, id).filter(d => d.type !== 'END_TURN');
   const owner = p.owner ? pn(p.owner) : null;
   const nb = [...def.land.map(x => [x, 'land']), ...def.sea.map(x => [x, 'sea'])];
@@ -854,7 +961,7 @@ function openProvince(id, refresh = false) {
  *  lists its legal moves, so a prompt can never leave the phone stuck. Map-pick frames open it half-height: tap a row or the map. */
 function openAsk(auto = false) {
   const s = st(); const f = topFrame(s); const legal = mineNow(); if (!f || !legal.length) return;
-  if (s.battle) { battleOff = null; openBattle(); return; }   // v30.1: a battle's prompts are answered inside the battle sheet
+  if (s.battle && !G.skipBattleUi(s, s.battle.att.player, s.battle.def.player)) { battleOff = null; openBattle(); return; }   // v30.1: a battle's prompts are answered inside the battle sheet
   const half = pickFrames.includes(f.kind); const g = gateFor(whoActs(s));
   const kind = f.kind === 'responseWindow' ? f.window : f.kind;
   openSheet('ask', `<div class="sh-head"><h2>${esc(G.frameTitle(s, data))}<small>${esc(pn(whoActs(s)))} · ${esc(G.describePrompt(s, data).replace(/^.*?: /, ''))}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Hide for now">✕</button></div>
@@ -891,12 +998,25 @@ function openLog(refresh = false) {
   const more = s.log.length > logLimit * 2 || all.length >= logLimit;
   const body = `<div class="seg logf" id="logFilter" role="group" aria-label="Show">${LOG_KINDS.filter(([k]) => k !== 'mine' || me).map(([k, t]) => `<button data-lf="${k}" class="${logFilter === k ? 'on' : ''}" aria-pressed="${logFilter === k}">${t}</button>`).join('')}</div>
     <ul class="loglist" id="log">${out.join('') || '<li class="sys"><span>Nothing of this kind yet.</span></li>'}</ul>${more ? '<button class="btn wide" id="logMore" style="margin-top:8px;width:100%">Show older lines</button>' : ''}`;
-  const html = `<div class="sh-head"><h2>Game log<small>newest first · what everyone may see</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+  const html = `<div class="sh-head"><h2>Game log<small>newest first · what everyone may see</small></h2><button class="btn sm" id="bExportLog" type="button">Export complete game log</button><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body" id="logBody">${body}</div>`;
   if (refresh) { const b = $('#logBody'); if (b) { const top = b.scrollTop; b.innerHTML = body; b.scrollTop = top; wireLog(); } return; }
   openSheet('log', html, { side: true }); wireLog();
 }
+function showHowToWin() {
+  const w = G.HOW_TO_WIN;
+  openSheet('how', `<div class="sh-head"><h2>${esc(w.title)}</h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div><div class="sh-body">${w.paragraphs.map(p => `<p>${esc(p)}</p>`).join('')}<p><b>${esc(w.prestige)}</b></p></div><div class="sh-foot"><button class="btn gold wide" data-close>Close</button></div>`);
+}
+function exportFullLog() {
+  if (!C.S) { toast('No game to export yet'); return; }
+  const exp = G.fullLogText(st(), data);
+  const name = `imperator-log-${st().gameId ?? 'game'}.txt`;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([exp.text], { type: 'text/plain' })); a.download = name; document.body.append(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  toast(`Exported ${exp.count} log lines`);
+}
 function wireLog() {
+  const ex = $('#bExportLog'); if (ex) ex.onclick = () => exportFullLog();
   $$('#logFilter [data-lf]').forEach(b => b.onclick = () => { logFilter = b.dataset.lf; SND.play('button_click'); openLog(true); $('#logBody').scrollTop = 0; });
   const m = $('#logMore'); if (m) m.onclick = () => { logLimit += 150; openLog(true); };
 }
@@ -943,8 +1063,10 @@ function displeasedAlert(f) {
 function showGameOver() {
   const s = st(); if (s.phase !== 'finished' || overShown) return; overShown = true;
   const w = G.playerById(s, s.winner); SND.play(G.soundsFor({ type: 'gameWon', pub: { player: s.winner } }, s)[0]);
-  const rows = [...s.players].sort((a, b) => b.prestige - a.prestige).map(p => `<tr><td><span class="sw" style="--c:var(--${col(p.id)})"></span> ${esc(p.name)}</td><td>${p.prestige}</td><td>${ownedBy(s, p.id).length}</td><td>${totalTroops(s, p.id)}</td><td>${p.gold}</td></tr>`).join('');
-  openSheet('over', `<div class="sh-head"><h2>IMPERATOR!<small id="winnerName">${esc(w.name)} wins on turn ${s.turn.number}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Look at the board">✕</button></div>
+  const won = [...s.log].reverse().find(e => e.type === 'gameWon' && e.pub.player === s.winner);
+  const how = won?.pub.goldPrestige ? `${won.pub.prestige} Prestige + ${won.pub.goldPrestige} Gold Prestige (${won.pub.gold} Gold)` : `${w.prestige} Prestige`;
+  const rows = [...s.players].sort((a, b) => b.prestige - a.prestige).map(p => `<tr><td><span class="sw" style="--c:var(--${col(p.id)})"></span> ${esc(p.name)}</td><td>${p.prestige}${goldPrestige(p.gold, data) ? '+' + goldPrestige(p.gold, data) : ''}</td><td>${ownedBy(s, p.id).length}</td><td>${totalTroops(s, p.id)}</td><td>${p.gold}</td></tr>`).join('');
+  openSheet('over', `<div class="sh-head"><h2>IMPERATOR!<small id="winnerName">${esc(w.name)} wins with ${esc(how)} on turn ${s.turn.number}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Look at the board">✕</button></div>
     <div class="sh-body over"><table><tr><th>Player</th><th>⭐</th><th>Prov.</th><th>⚔</th><th>💰</th></tr>${rows}</table></div>
     <div class="sh-foot"><button class="btn gold wide" id="ovNew">New game</button><button class="btn wide" data-close>Look at the board</button></div>`);
   document.body.dataset.over = s.winner; $('#ovNew').onclick = () => toStart();
@@ -997,13 +1119,77 @@ function openAssassinFlow(uid, list) {
   };
   draw();
 }
+/**
+ * Sneak Attack from the Sea! as the desktop's step flow (18.z), in a sheet: 1. coastal origin -> 2. any coastal target -> 3. troops (+ general) -> Play.
+ * Only the engine's legal pairs; Back and Cancel on every step; nothing is played until the last button.
+ */
+/** v31.10: a Sneak Attack target whose natives are not rolled yet is rolled when picked (18.z, 17.h); the flow resumes at the troops step once the roll lands. */
+let sneakResume = null;
+function openSneakFlow(uid, list, start = null) {
+  const s = st(); const nm = data.cardDefsById.sneak_attack_sea?.name ?? 'Sneak Attack from the Sea!';
+  const acts = list.filter(d => d.action.from && d.action.target);
+  const origins = [...new Set(acts.map(d => d.action.from))];
+  const maxFor = from => Math.max(...acts.filter(d => d.action.from === from).map(d => d.range?.max ?? d.action.troops));
+  const targetsFor = from => [...new Set(acts.filter(d => d.action.from === from).map(d => d.action.target))];
+  const hasGen = (from, target) => acts.some(d => d.action.from === from && d.action.target === target && d.action.withGeneral);
+  const find = (from, target, withGeneral) => acts.find(d => d.action.from === from && d.action.target === target && !!d.action.withGeneral === !!withGeneral);
+  const whose = id => { const p = s.provinces[id]; return p.owner ? `${pn(p.owner)}${p.status === 'allied' ? ' (allied)' : ''}` : 'natives'; };
+  const troops = id => { const p = s.provinces[id]; return p.owner ? p.troops : (p.native.present ?? p.native.count ?? 0); };
+  const unrolled = id => { const p = st().provinces[id]; return !p.owner && p.native.rolled === null && id !== 'carthage'; };
+  const defText = id => { const p = st().provinces[id]; return p.owner ? `${p.troops} troops` : `${p.native.present ?? p.native.count ?? '?'} natives`; };
+  const landlocked = data.provinceIds.filter(id => !(data.provincesById[id]?.sea?.length)).map(id => prov(id)).join(', ');
+  const row = (id, a, sub) => `<button class="arow as-prov" ${a}><span class="ic"><span class="sw" style="--c:${s.provinces[id].owner ? cvar(s.provinces[id].owner) : 'var(--native)'};width:16px;height:16px"></span></span><span class="t"><b>${esc(prov(id))}</b><small>${sub}</small></span><span class="go">›</span></button>`;
+  let z = start ? { step: start.step, from: start.from, target: start.target, troops: null, withGeneral: false } : { step: 'origin', from: null, target: null, troops: null, withGeneral: false };
+  const g = gateFor(whoActs(s));
+  const draw = () => {
+    const { step, from, target } = z; let body = '', go = '';
+    if (step === 'origin') body = `<p class="note">Step 1 of 3: sail from one of your coastal provinces. It needs a Road — unless Pompey attacks with his army (15.d). A sea attack, 1 action, no borrowing (18.z).</p><div class="alist">${origins.map(id => { const p = s.provinces[id]; return row(id, `data-sn-origin="${attr(id)}"`, `${p.troops} troops · ${p.road ? 'Road' : 'no Road (Pompey)'} · can send up to ${maxFor(id)}`); }).join('')}</div>`;
+    else if (step === 'target') body = `<p class="note">Step 2 of 3: attack ANY coastal province from <b>${esc(prov(from))}</b> — anywhere on the map. ${esc(landlocked)} have no sea link (18.z).</p><div class="alist">${targetsFor(from).map(id => row(id, `data-sn-target="${attr(id)}"`, `${esc(whose(id))} · ${unrolled(id) ? 'natives · not rolled yet (rolled when you pick it)' : `${troops(id)} troops`}${id === 'roma' ? ' · needs a Battlefield Imperator' : ''}`)).join('')}</div>`;
+    else if (step === 'rolling') body = `<p class="note">Rolling the natives of <b>${esc(prov(target))}</b>… (a d6 roll, 17.h). The attack continues once the roll lands.</p>`;
+    else {
+      const max = maxFor(from);
+      body = `<p class="note">Step 3 of 3: how many troops sail from <b>${esc(prov(from))}</b> to <b>${esc(prov(target))}</b>? (1–${max}; at least 1 stays behind.) Defenders in ${esc(prov(target))}: <b>${esc(defText(target))}</b>. A sea attack: 2 dice, 3 with Pompey, an extra die with Scipio.</p>
+        <div class="alist"><div class="arow"><span class="ic">⚔️</span><span class="t"><b>Troops: <span id="snTroopsV">${z.troops ?? max}</span></b><small>slide to choose</small></span><input type="range" min="1" max="${max}" value="${z.troops ?? max}" id="snTroops" style="flex:1;min-width:110px"></div>
+        ${hasGen(from, target) ? `<button class="arow" id="snGenBtn"><span class="ic">⚑</span><span class="t"><b>Bring the general</b><small>${z.withGeneral ? 'the general sails with the attack' : 'the general stays behind'}</small></span><span class="go">${z.withGeneral ? '●' : '○'}</span></button>` : ''}</div>`;
+      go = `<button class="btn gold wide" id="snGo"${g.live ? '' : ' disabled'}>Play ${esc(nm)} ▶</button>`;
+    }
+    openSheet('sneak', `<div class="sh-head"><img src="${attr(img('card.sneak_attack_sea'))}" alt="" style="width:34px;border-radius:4px"><h2>${esc(nm)}<small>${esc(pn(whoActs(s)))} · choose the attack</small></h2></div>
+      <div class="sh-body" id="sneakFlow" data-step="${step}">${gateNote(g)}${body}</div>
+      <div class="sh-foot"><button class="btn" id="snBack">◀ Back</button><button class="btn" id="snCancel">Cancel</button>${go}</div>`, { sticky: true });
+    $$('#sheet [data-sn-origin]').forEach(x => x.onclick = () => { SND.play('province_select'); flashToken(x.dataset.snOrigin); z = { step: 'target', from: x.dataset.snOrigin, target: null, troops: null, withGeneral: false }; draw(); });
+    $$('#sheet [data-sn-target]').forEach(x => x.onclick = () => {
+      SND.play('province_select'); flashToken(x.dataset.snTarget); const id = x.dataset.snTarget;
+      if (unrolled(id)) {   // v31.10: roll the natives on selection, then resume at the troops step
+        sneakResume = { uid, from: z.from, target: id };
+        z = { ...z, step: 'rolling', target: id, troops: null, withGeneral: false }; draw();
+        const scouted = human({ action: { type: 'PREVIEW_TARGET', playerId: whoActs(st()), target: id, sneak: true } });
+        Promise.resolve(scouted).then(ok => { if (ok === false && sneakResume?.target === id) { sneakResume = null; z = { step: 'target', from: z.from, target: null, troops: null, withGeneral: false }; draw(); } });
+        return;
+      }
+      z = { ...z, step: 'troops', target: id, troops: maxFor(z.from), withGeneral: false }; draw();
+    });
+    const rg = $('#snTroops'); if (rg) rg.oninput = () => { $('#snTroopsV').textContent = rg.value; z.troops = +rg.value; };
+    const gb2 = $('#snGenBtn'); if (gb2) gb2.onclick = () => { z.withGeneral = !z.withGeneral; draw(); };
+    $('#snCancel').onclick = () => { sneakResume = null; closeSheet(); };
+    $('#snBack').onclick = () => {
+      if (z.step === 'origin') { openCards(); return; }
+      if (z.step === 'target') z = { step: 'origin', from: null, target: null, troops: null, withGeneral: false };
+      else if (z.step === 'rolling') { sneakResume = null; z = { ...z, step: 'target', target: null, troops: null, withGeneral: false }; }
+      else z = { ...z, step: 'target', target: null, troops: null, withGeneral: false };
+      draw();
+    };
+    const gb = $('#snGo'); if (gb) gb.onclick = () => { const d = find(z.from, z.target, z.withGeneral); if (!d) return; closeSheet(true); act({ ...d, _v: z.troops ?? maxFor(z.from) }); };
+  };
+  draw();
+}
 /** v30.1: a card with several targets (Revolt!, Bribe the Ally!, ...): pick one row, then the gold Play button. */
 function openCardTargets(uid, list) {
   const s = st(); const def = s.cards[uid].def;
   if (def === 'assassin' && list.some(d => d.action.kills)) { openAssassinFlow(uid, list); return; }
+  if (def === 'sneak_attack_sea') { openSneakFlow(uid, list); return; }
   const nm = data.cardDefsById[def]?.name ?? def; const g = gateFor(whoActs(s)); let pick = null;
-  const intro = def === 'revolt' ? "Choose the enemy province to inspire a revolt in: a rival's conquered province with fewer than 10 troops; never a starting or allied province or Roma (17.c, 17.r, 18.m)."
-    : def === 'bribe_the_ally' ? 'Bribe a province allied to a rival (pay its native count in Gold), or pay 1 Gold to turn one of YOUR OWN allies into a conquered province (18.v, 19.r).' : 'Choose the target.';
+  const intro = def === 'revolt' ? "Choose the enemy province to inspire a revolt in: a rival's conquered province with fewer than 10 troops; never a starting or allied province, never Roma, never a province where its owner's general is stationed (17.c, 17.r, 18.m)."
+    : def === 'bribe_the_ally' ? 'Bribe a province allied to a rival (pay its native count in Gold), or pay 1 Gold to turn one of YOUR OWN allies into a conquered province (it keeps its troops, +1 Prestige) (18.v, 19.r).' : 'Choose the target.';
   openSheet('cardTargets', `<div class="sh-head"><img src="${attr(img('card.' + def))}" alt="" style="width:34px;border-radius:4px"><h2>${esc(nm)}<small>${list.length} possible target(s)</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body" id="cardTargets">${gateNote(g)}<p class="note">${esc(intro)}</p><div class="alist">${list.map((d, i) => { const id = G.mainProvince(d); return `<button class="arow tgt" data-ti="${i}"${id ? ` data-prov="${attr(id)}"` : ''}><span class="ic">🎯</span><span class="t"><b>${esc(d.label)}</b></span><span class="go">○</span></button>`; }).join('')}</div></div>
     <div class="sh-foot"><button class="btn" data-close>Cancel</button><button class="btn gold wide" id="cardGo" disabled>Choose a target first</button></div>`, { half: false });
@@ -1029,10 +1215,10 @@ function genActs(pid) {
     ...(f && legal.length && !rolls.length && !draws.length ? [B('answer', '❗', `${G.frameTitle(s, data)}…`, true, () => (s.battle ? (battleOff = null, openBattle()) : openAsk()), '')] : []),
     ...['ATTACK', 'ALLY', 'MOVE'].map(t => B(t.toLowerCase(), ICON[t], { ATTACK: 'Attack', ALLY: 'Ally', MOVE: 'Move' }[t], free && c.move.some(d => d.type === t), () => openMoves(t), no(f ? 'Finish the current step first.' : `No ${t.toLowerCase()} is possible right now.`))),
     B('buy', '🛒', 'Buy', free && c.buy.length, () => openList('Buy', c.buy), no(f ? 'Finish the current step first.' : 'Nothing to buy now.')),
-    B('build', '🏛', 'Build', free && c.build.length, () => openList('Build', c.build), no(f ? 'Finish the current step first.' : 'Nothing to build now.')),
+    B('build', '🏛', 'Build', free && c.build.length, () => openBuildList(), no(f ? 'Finish the current step first.' : 'Nothing to build now.')),
     B('card', '🂠', 'Card', g.live && heldCards && pid === C.viewer, () => openCards(), no('No card to play.')),
     B('sell', '💰', 'Sell', free && c.sell.length, () => openList('Sell a card', c.sell), no('No card to sell.')),
-    B('general', '⚑', 'General', free && c.general.length, () => openList('Move your general', c.general), no('The general cannot move now.')),
+    B('general', '⚑', 'General', free && c.general.length, () => openList('Move your general', c.general), no(f ? 'Finish the current step first.' : (G.generalMoveWhy(s, data, pid) ?? 'The general cannot move now.'))),   // v31.13: the button stays visible until End Turn, greyed with the reason
     B('more', '⋯', 'More', free && (c.scout.length + c.other.length), () => openList('More actions', [...c.scout, ...c.other]), no('No other action now.')),
     B('end', '✓', 'End turn', free && c.end.length, () => act(c.end[0]), no(f ? 'Finish the current step first.' : 'You cannot end the turn now.')),
   ];
@@ -1040,7 +1226,7 @@ function genActs(pid) {
 function openPlayer(pid, refresh = false) {
   const s = st(); const p = G.playerById(s, pid); const g = p.general ? G.generalView(data, p.general.id) : null;
   const gate = gateFor(pid); const btns = s.phase === 'finished' ? [] : genActs(pid);
-  const html = `<div class="sh-head"><span class="sw" style="--c:var(--${col(pid)});width:16px;height:16px"></span><h2>${esc(p.name)}<small>${p.controller === 'ai' ? 'AI' : 'Human'} · ${p.gold} Gold · ${p.prestige}/${data.rules.winPrestige} Prestige · ${ownedBy(s, pid).length} provinces · ${totalTroops(s, pid)} troops · ${G.handCount(p)} cards</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+  const html = `<div class="sh-head"><span class="sw" style="--c:var(--${col(pid)});width:16px;height:16px"></span><h2>${esc(p.name)}<small>${p.controller === 'ai' ? 'AI · ' + (p.difficulty === 'easy' ? 'Easy' : 'Normal') : 'Human'} · ${p.gold} Gold · ${p.prestige}/${data.rules.winPrestige} Prestige · ${ownedBy(s, pid).length} provinces · ${totalTroops(s, pid)} troops · ${G.handCount(p)} cards</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body" id="genSheet" data-pid="${attr(pid)}" data-live="${gate.live ? '1' : ''}">
       ${btns.length ? `<div class="sec">Roll, draw and actions${gate.live ? '' : ''}</div>${gateNote(gate)}<div class="gvacts" id="gvActs">${btns.map((b, i) => `<button class="gvbtn${b.on && gate.live ? ' live' : ''}${b.k === 'roll' || b.k === 'draw' || b.k === 'answer' ? ' gold' : ''}" id="gv-${b.k}" data-gi="${i}"${b.on && gate.live ? '' : ` disabled title="${attr(b.why)}"`}><span class="ic">${b.ic}</span><span>${esc(b.t)}</span></button>`).join('')}</div>` : ''}
       ${g ? `<div class="cardrow"><img src="${attr(img('general.' + g.id))}" alt=""><div class="t"><b>${esc(g.name)} · ${esc(g.title)}</b>${esc(g.summary)}${p.general?.at ? `<div class="note">Now in ${esc(prov(p.general.at))}.</div>` : ''}</div></div>
@@ -1112,7 +1298,7 @@ function openPop(kind, html, { sticky = true, autoMs = 0 } = {}) {
   return new Promise(res => {
     popDone = res;
     if (C.hostHidden()) closePop();
-    else if (!sticky) popTimer = setTimeout(() => { if (popKind === kind) closePop(); }, autoMs || spd(2600));
+    else if (!sticky) popTimer = setTimeout(() => { if (popKind === kind) closePop(); }, autoMs || spd(5200));
   });
 }
 function closePop() {
@@ -1159,11 +1345,11 @@ async function drawSheet(deck, def, who, caption) {
   const c = G.cardView(data, def);
   await openPop('draw', `${whoBar(who, caption)}<div class="sh-head"><h2 id="drawName">${esc(c.name)}<small>${esc(G.DECK_TITLES[deck]?.[0] ?? deck)}</small></h2></div>
     <div class="sh-body"><div class="pophero"><img class="bigcard" src="${attr(img(c.art))}" alt=""></div><p class="note" style="text-align:center">${esc(c.text)}</p></div>
-    <div class="sh-foot"><button class="btn gold wide" data-popok>OK</button></div>`, { sticky: false, autoMs: spd(2200) });
+    <div class="sh-foot"><button class="btn gold wide" data-popok>OK</button></div>`, { sticky: false, autoMs: spd(4400) });
 }
-/** v27: the "card played" popup, non-blocking: a card at the top that says whose it is and what it did; closes after 8 s or on Close. */
+/** v27: the "card played" popup, non-blocking: a card at the top that says whose it is and what it did; closes after 16 s or on Close. */
 let cpSeq = 0;
-const CARD_VIEW_MS = 8000;
+const CARD_VIEW_MS = 16000;
 function showCardPlay(p) {
   if (!p || C.hostHidden()) return;
   const box = $('#cardPlays');
@@ -1205,8 +1391,12 @@ function battleHtml() {
     <div class="sh-foot" id="bCtl"></div>`;
 }
 function openBattle() {
-  if (!bv) bv = bvFromState(st()); if (!bv) return;
-  if (popKind === 'battle') return;
+  const next = bvFromState(st());
+  const stale = !!(next && bv && G.battleSheetNeedsRebuild(bv.id, next.id));
+  if (next && (!bv || stale)) bv = next;
+  if (!bv) return;
+  refreshFightToDeath();   // v31.13: re-list Fight to the Death (15.h) after a rebuild (bvFromState starts with empty perks)
+  if (popKind === 'battle' && !stale) return;
   if (popDone) closePop();
   battleOff = null;
   const el = $('#pop'); popKind = 'battle'; popSticky = true; el.className = 'sheet pop battle'; el.dataset.kind = 'battle'; el.dataset.sticky = '1';
@@ -1219,6 +1409,19 @@ function openBattle() {
   renderBattleCtl();
 }
 function addPerk(side, text, key = text, replace = false) { if (!bv || !text) return; if (replace || !bv.perks[side].has(key)) bv.perks[side].set(key, text); renderPerks(); }
+/** v31.13: list Fight to the Death (15.h) in the battle sheet from the start of the battle, with its live state — the engine only
+ *  fires the perk through battleDiceAdjusted, after a roll. An adjustment label that already fired is the record of this round's
+ *  die and is never overwritten by the generic line. */
+function refreshFightToDeath() {
+  if (!bv || !st().battle) return;
+  for (const side of ['a', 'd']) {
+    const f = G.fightToDeath(st(), data, side);
+    if (!f) continue;
+    const cur = bv.perks?.[side]?.get('germanicus');
+    if (cur && /\(15\.h\): \+\d$/.test(cur)) continue;   // a dice adjustment already fired: keep its label
+    addPerk(side, G.fightToDeathLine(f), 'germanicus', true);
+  }
+}
 function renderPerks() { if (!bv || popKind !== 'battle') return; for (const k of ['a', 'd']) { const m = bv.perks[k]; $(`#${k}Perks`).innerHTML = m.size ? [...m.values()].map(x => `<li>${esc(x)}</li>`).join('') : ''; } }
 function setCount(k, n) { if (!bv) return; bv[k + 'Count'] = n; const el = popKind === 'battle' && $(`#${k}Count`); if (el) { if (el.textContent !== String(n)) { el.textContent = n; el.classList.remove('hit'); void el.offsetWidth; el.classList.add('hit'); } } }
 const dieSpans = (arr, cls) => arr.map(v => `<span class="d ${cls}">${v}</span>`).join('');
@@ -1230,6 +1433,7 @@ async function animRound(e) {
   for (const r of e.pub.defender.reasons ?? []) if (!plain.test(r)) addPerk('d', r);
   const a = e.pub.attacker.dice, d = e.pub.defender.dice;
   const row = document.createElement('div'); row.className = 'bround'; row.dataset.r = e.pub.round;
+  row._rawA = [...a]; row._rawD = [...d];   // v31.13: the dice as rolled, for the adjustment badges at resolve
   row.innerHTML = `<span class="rn">R${e.pub.round}</span><span class="dice ca">${dieSpans(a.map(() => '?'), 'a rolling')}</span><span class="vs">v</span><span class="dice cd">${dieSpans(d.map(() => '?'), 'n rolling')}</span><span class="cl"></span>`;
   $('#bRounds').append(row); row.scrollIntoView({ block: 'nearest' });
   SND.play('dice_roll_d6', { vol: 0.6 });
@@ -1246,6 +1450,10 @@ async function animResolved(e) {
     dA.forEach((x, i) => { x.textContent = p.attackerFinal[i] ?? x.textContent; }); dD.forEach((x, i) => { x.textContent = p.defenderFinal[i] ?? x.textContent; });
     p.pairs.forEach((q, i) => { const aw = q.winner === 'attacker'; dA[i]?.classList.add(aw ? 'win' : 'lose'); dD[i]?.classList.add(aw ? 'lose' : 'win'); });
     dA.slice(p.pairs.length).forEach(x => x.classList.add('unused')); dD.slice(p.pairs.length).forEach(x => x.classList.add('unused'));
+    // v31.13: mark the die a perk adjusted — the final die minus the die as rolled, per die (15.h, 18.b, 18.c). The badge goes into
+    // the snapshot pushed below, so it survives the sheet being closed and reopened.
+    const badge = (cells, raw, fin) => { const ds = G.dieBadges(raw, fin); cells.forEach((x, i) => { if (ds[i] > 0) { x.classList.add('boost'); x.insertAdjacentHTML('beforeend', `<span class="adj">+${ds[i]}</span>`); } }); };
+    badge(dA, row._rawA, p.attackerFinal); badge(dD, row._rawD, p.defenderFinal);
     $('.cl', row).innerHTML = `<b class="loss">−${p.attackerLoss}</b>/<b class="loss">−${p.defenderLoss}</b> → ${p.attackerTroopsAfter}:${p.defenderTroopsAfter}`;
     if (bv) bv.rounds.push({ html: row.outerHTML });
   }
@@ -1263,7 +1471,7 @@ async function battleResult(sum, sticky) {
   await new Promise(res => {
     popDone = res; popSticky = sticky;
     $('#bpOk').onclick = () => { SND.play('button_click'); closePop(); };
-    if (C.hostHidden()) closePop(); else if (!sticky) popTimer = setTimeout(() => { if (popKind === 'battle') closePop(); }, spd(3500));
+    if (C.hostHidden()) closePop(); else if (!sticky) popTimer = setTimeout(() => { if (popKind === 'battle') closePop(); }, spd(7000));
   });
   bv = null;
 }
@@ -1313,6 +1521,11 @@ async function playEvents(events, before = null) {
   const s = st(); const plan = G.soundPlan(events, s); const shownRevolts = new Set();
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
+    if (G.battleEventHidden(s, e)) {
+      if (e.type === 'battleEnded') { const sum = G.battleSummary(events, i, s, data); toast(`${sum.title}. ${sum.lines[0] ?? ''}`); }
+      if (G.battleChromeClear(e, s, true)) { if (popKind === 'battle') closePop(); bv = null; }
+      continue;
+    }
     for (const n of plan[i]) SND.play(n, { vol: e.type === 'diceRolled' ? 0.7 : 1 });
     switch (e.type) {
       case 'diceRolled': {
@@ -1329,7 +1542,15 @@ async function playEvents(events, before = null) {
         await rollSheet(p); break;
       }
       case 'provinceRevolted': if (!shownRevolts.has(i)) await deliver(G.revoltPopup(events, i, s, data)); break;
-      case 'attackDeclared': bv = null; bv = bvFromState(s) ?? bvFromState(before ?? s); if (bv) openBattle(); break;
+      case 'attackDeclared': {
+        const prev = bv?.id ?? null;
+        bv = null; bv = bvFromState(s) ?? bvFromState(before ?? s);
+        if (popKind === 'battle' && G.battleSheetNeedsRebuild(prev, bv?.id)) { popKind = null; }
+        if (bv) openBattle();
+        break;
+      }
+      case 'merchantBonus': toast(`${pn(e.pub.player)}: Merchant Bonus, ${e.pub.roads} Roads reaching Roma, +${e.pub.gold} Gold`); break;
+      case 'goldPrestige': if (e.pub.goldPrestige) toast(`${pn(e.pub.player)}: Gold Prestige ${e.pub.goldPrestige} from ${e.pub.gold} Gold`); break;
       case 'generalSummoned': {
         if (bv) {
           const name = data.generalsById[e.pub.general]?.name ?? 'General';
@@ -1344,7 +1565,8 @@ async function playEvents(events, before = null) {
       case 'battleStarted': if (!bv) bv = bvFromState(s) ?? bvFromState(before ?? s); openBattle();
         setCount('a', e.pub.attacker); setCount('d', e.pub.defender);
         if (e.pub.perk === 'extraDie') addPerk('a', 'Scipio: an extra die (15.c)', 'scipio');
-        if (e.pub.wallRollsIgnored) addPerk('a', `Wall bonus ignored for the first ${e.pub.wallRollsIgnored} roll(s)`, 'wallIgnored');
+        if (e.pub.wallRollsIgnored) addPerk('a', e.pub.wallRollsIgnored >= 99 ? 'Wall bonus ignored for the whole battle (15.h)' : `Wall bonus ignored for the first ${e.pub.wallRollsIgnored} roll(s)`, 'wallIgnored');
+        refreshFightToDeath();   // v31.13: list Fight to the Death (15.h) up front, with its live state
         await sleep(spd(400)); break;
       case 'enemyFled': addPerk(e.pub.side === 'defender' ? 'a' : 'd', 'Caesar: one enemy troop flees before the battle (15.b)'); break;
       case 'generalPerkTriggered': addPerk(bv && e.actor === bv.defId && bv.defId ? 'd' : 'a', `${data.generalsById[e.pub.general]?.name ?? e.pub.general}: ${e.pub.reason ?? e.pub.effect} (${e.rule})`); break;
@@ -1355,7 +1577,7 @@ async function playEvents(events, before = null) {
       case 'resourceApplied': case 'resourceCardUsed': showCardPlay(G.cardPlayPopup(events, i, s, data)); break;
       case 'battleRoundRolled': await animRound(e); break;
       case 'battleDiceAdjusted': for (const x of e.pub.adjustments ?? []) addPerk(x.side === 'defender' ? 'd' : 'a', G.adjustmentLabel(x, data), x.source, true); break;
-      case 'battleRoundResolved': await animResolved(e); break;
+      case 'battleRoundResolved': await animResolved(e); refreshFightToDeath(); break;   // v31.13: the perk's live state may have changed this round
       case 'battleEnded': {
         await sleep(spd(300));
         const p = G.battleResultPopup(events, i, s, data); const away = p ? queueNews(p) : false;
@@ -1386,6 +1608,18 @@ async function playEvents(events, before = null) {
       default: if (G.isDispleasedResult(e)) await deliver(G.displeasedPopup(events, i, s, data)); break;
     }
   }
+  await maybeAiTurnSummary(events);
+}
+/** v31.7: the desktop's AI turn summary. Offline only, so an online guest is not held up and the host does not stall the room. */
+async function maybeAiTurnSummary(events) {
+  if (C.NET || !events?.some(e => e.type === 'turnEnded')) return;
+  const ended = [...events].reverse().find(e => e.type === 'turnEnded');
+  const pid = ended?.pub?.player; const s = st(); const pl = s?.players?.find(p => p.id === pid);
+  if (!pl || pl.controller !== 'ai') return;
+  const sum = G.aiTurnSummary(G.eventsOfTurn(s.log, pid), s, data, pid);
+  if (sum.skip) return;
+  const body = sum.sections.map(sec => `<div class="sec">${esc(sec.title)}</div><ul class="poplines">${sec.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>`).join('');
+  await openPop('aiTurn', `<div class="sh-head"><h2>${esc(sum.name)}<small>Turn ${sum.turn ?? ''} · what the AI did</small></h2></div><div class="sh-body">${body}<p class="note">OK, or tap outside, to go on.</p></div><div class="sh-foot"><button class="btn gold wide" data-popok id="aiSumOk">OK</button></div>`, { sticky: true });
 }
 
 // ------------------------------------------------------------------ test hook (the same shape as the desktop page's)
@@ -1409,5 +1643,5 @@ window.__imperator = {
   netBreak: () => { if (isGuest()) C.NET.throwOnce = true; },
   keyOf: a => { const d = C.S && G.findDesc(mineNow(), a); return d ? G.descKey(d) : null; },
 };
-$('#popScrim').onclick = () => { if (popKind && !popSticky) closePop(); };
+$('#popScrim').onclick = () => { if (popKind === 'aiTurn' || popKind === 'gameRoll') { closePop(); return; } if (popKind && !popSticky) closePop(); };
 boot();

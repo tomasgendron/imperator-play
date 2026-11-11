@@ -98,6 +98,7 @@ export function validateSetup(data, { players = [], startProvinceMode = data.rul
   players.forEach((p, i) => {
     if (p.name !== undefined && !String(p.name).trim()) err(i, 'name', 'BAD_NAME', `Seat ${i + 1} needs a name.`);
     if (p.controller !== undefined && !CONTROLLERS.includes(p.controller)) err(i, 'controller', 'BAD_CONTROLLER', `Seat ${i + 1} is Human or AI.`);
+    if (p.difficulty !== undefined && !['normal', 'easy'].includes(p.difficulty)) err(i, 'difficulty', 'BAD_DIFFICULTY', `Seat ${i + 1}: an AI seat is Normal or Easy (v31.12).`);
     if (p.general && p.general !== 'random') {
       if (!data.generalsById[p.general]) err(i, 'general', 'UNKNOWN_GENERAL', `Unknown general "${p.general}".`);
       else if (gens.includes(p.general)) err(i, 'general', 'GENERAL_TAKEN', `Two players cannot have the same general: ${data.generalsById[p.general].name} is already taken (15.e).`);
@@ -147,7 +148,7 @@ export function createGame(data, { seed, players, options = {} }) {
   check(players.length <= Math.min(data.rules.maxPlayers, data.generals.length), 'TOO_MANY_PLAYERS', `At most ${Math.min(data.rules.maxPlayers, data.generals.length)} players (only ${data.generals.length} generals are defined, Q4).`, '15.e');
   const v = validateSetup(data, { players, startProvinceMode: options.startProvinceMode, allowCloseStarts: options.allowCloseStarts });
   if (!v.ok) fail(v.errors[0].code, v.errors[0].message);
-  const ps = players.map((p, i) => ({ id: p.id ?? 'p' + (i + 1), name: p.name ?? 'Player ' + (i + 1), color: p.color ?? PALETTE[i], general: p.general === 'random' ? null : p.general ?? null, controller: p.controller ?? 'human', startProvince: p.startProvince && p.startProvince !== 'random' ? p.startProvince : null, startSide: p.startSide ?? null }));
+  const ps = players.map((p, i) => ({ id: p.id ?? 'p' + (i + 1), name: p.name ?? 'Player ' + (i + 1), color: p.color ?? PALETTE[i], general: p.general === 'random' ? null : p.general ?? null, controller: p.controller ?? 'human', difficulty: p.difficulty ?? 'normal', startProvince: p.startProvince && p.startProvince !== 'random' ? p.startProvince : null, startSide: p.startSide ?? null }));
   check(new Set(ps.map(p => p.id)).size === ps.length, 'BAD_PLAYERS', 'Player ids must be unique.');
   const preset = ps.filter(p => p.general).map(p => p.general);
   for (const g of preset) check(data.generalsById[g], 'UNKNOWN_GENERAL', `Unknown general "${g}".`);
@@ -197,7 +198,7 @@ function placeStart(ctx, pid, id) {
   const { state, data } = ctx;
   const p = state.provinces[id]; const pl = mustPlayer(state, pid);
   // v31.4: a start is 5 troops and no native roll (20.n). Other provinces still roll natives when first attacked (17.h).
-  Object.assign(p, { owner: pid, status: 'starting', startingOf: pid, troops: data.rules.startingTroops, native: { rolled: 0, count: 0, present: 0 } });
+  Object.assign(p, { owner: pid, status: 'starting', startingOf: pid, troops: data.rules.startingTroops, native: { rolled: 0, count: 0, present: 0 }, road: true });
   pl.startProvince = id;
   if (pl.general) pl.general.at = id;
   emit(ctx, 'startProvinceChosen', { actor: pid, rule: '4.b, 20.n', pub: { player: pid, province: id, troops: data.rules.startingTroops } });
@@ -304,7 +305,7 @@ define('CHOOSE_START_PROVINCE', {
 function startFirstTurn(ctx) {
   const { state } = ctx;
   state.phase = 'turn'; state.setup = null;
-  state.turn = { number: 1, round: 1, activePlayerId: state.turnOrder[0], step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, sub: {} };
+  state.turn = { number: 1, round: 1, activePlayerId: state.turnOrder[0], step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} };
   emit(ctx, 'turnStarted', { actor: state.turnOrder[0], rule: '17.a', pub: { number: 1, round: 1, player: state.turnOrder[0] } });
 }
 

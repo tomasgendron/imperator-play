@@ -17,7 +17,7 @@
 //                   bye     {reason}
 import { viewFor, eventsFor } from '../engine/view.js';
 export const PROTO = 2;   // M12: updates carry viewFor views and only the new events
-export const TYPES = ['hello', 'welcome', 'lobby', 'act', 'reject', 'update', 'ping', 'pong', 'resync', 'bye', 'pick'];
+export const TYPES = ['hello', 'welcome', 'lobby', 'act', 'reject', 'update', 'ping', 'pong', 'resync', 'bye', 'pick', 'hold'];
 
 /** A message as a plain object, or null when it is not one of ours (wrong shape, unknown type, wrong protocol in a hello). */
 export function parse(msg) {

@@ -24,7 +24,7 @@ function loadPeer() {
     document.head.append(sc);
   });
 }
-export async function makeTransport() { return netMode() === 'local' ? createBroadcastTransport() : netMode() === 'fakepeer' ? createPeerTransport((await import('../net/fakepeer.js')).FakePeer) : createPeerTransport(await loadPeer()); }   // v30.5.1: fakepeer = the PeerJS path's size rule, between tabs (tests)
+export async function makeTransport(opts) { return netMode() === 'local' ? createBroadcastTransport() : netMode() === 'fakepeer' ? createPeerTransport((await import('../net/fakepeer.js')).FakePeer, opts) : createPeerTransport(await loadPeer(), opts); }   // v30.5.1: fakepeer = the PeerJS path's size rule, between tabs (tests)
 export { whyText };
 
 /**
@@ -69,6 +69,7 @@ export function createGuest(page) {
         page.busyJoin(false); page.say('The game did not arrive from the host. Asking again… Tap Retry, or check the host is online.', true);
         page.retry?.(() => { if (!mineNet()) return; page.say('Asking the host for the game again…'); c.retryState(); }); },
       // v30.5.1: a game in progress with several free seats: "Which player are you?" (the player names; one tap joins that seat)
+      onHold: () => { if (mineNet()) page.say('Waiting for the host to give you a seat…'); },
       onPick: (c, seats) => { if (!mineNet()) return; page.busyJoin(false); page.say('This game is already running. Which player are you?');
         page.pick?.(seats, i => { if (!mineNet()) return; page.pick?.(null); page.busyJoin(true); page.say(`Joining as ${seats.find(x => x.i === i)?.name ?? 'that player'}…`); c.pick(i); }); },
       // v31.3: a long full sync (a Large Map 1 game: ~50-60 pieces) shows how far it is
@@ -85,6 +86,7 @@ export function createGuest(page) {
         if (r === 'HOST_LEFT' && !c.ended) return;   // M14: not final: the host may resume; the client reconnects (onStatus)
         if (['BUILD_MISMATCH', 'FULL', 'STARTED', 'NO_FREE_SEAT'].includes(r)) { if (r === 'STARTED' || r === 'NO_FREE_SEAT') forgetSeat(store, n.code || code); page.pick?.(null); end(null); return; }   // v30.5.1: a refused saved seat is stale: forget it   // the refusal's words are shown (onReject)
         if (r === 'NO_ANSWER') { end(JOIN_END_TEXT.NO_ANSWER); return; }
+        if (r === 'DECLINED') { end(JOIN_END_TEXT.DECLINED); return; }
         if (r === 'GAME_OVER') forgetSeat(store, n.code);
         if (r === 'GAME_OVER' && page.inGame()) { n.lost = 'The game is over; the host closed the room.'; page.banner(); return; }
         lost(r === 'SEAT_REMOVED' ? 'The host removed your seat.' : r === 'REPLACED' ? 'You joined this game from another tab; this tab is disconnected.' : r === 'GAME_OVER' ? 'The game is over; the host closed the room.' : 'The host ended the connection.'); },

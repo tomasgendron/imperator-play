@@ -9,7 +9,7 @@ import * as G from './model.js';
 import { createSound } from './sound.js';
 import { HostRoom, PING_MS } from '../../net/host.js';
 import { GuestClient, HOST_AWAY_MS, JOIN_END_TEXT, whyText } from '../../net/guest.js';
-import { rememberSeat, forgetSeat, seatFor, tokensFor, latestSeat, parseJoin } from '../../net/seats.js';
+import { rememberSeat, forgetSeat, seatFor, tokensFor, parseJoin } from '../../net/seats.js';
 import { createPeerTransport, createBroadcastTransport } from '../../net/transport.js';
 import { roomCode, normCode } from '../../net/protocol.js';
 import { createController } from '../core/controller.js';
@@ -100,6 +100,10 @@ async function boot() {
   if (typeof ResizeObserver === 'function') new ResizeObserver(() => placeSideMarks()).observe($('#tokens'));   // v31.1: the side markers follow a resize
   try { const b = await (await fetch('BUILD.json', { cache: 'no-store' })).json(); C.uiLabel = b.uiLabel ?? `v23 · ${b.stamp}`; } catch { C.uiLabel = 'v23 · (no BUILD.json)'; }
   $('#tbVer').textContent = C.uiLabel;
+  const netNudge = () => { try { C.NET?.transport?.nudge?.(); } catch { /* */ } };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) netNudge(); });
+  addEventListener('online', netNudge);
+  addEventListener('pageshow', netNudge);
   $('#speed').value = String(C.speed); if (!$('#speed').value) { $('#speed').value = '1'; C.speed = 1; }
   wireStatic();
   const jc = new URLSearchParams(location.search).get('join');
@@ -108,9 +112,8 @@ async function boot() {
   joinClaim = normCode(new URLSearchParams(location.search).get('claim') || '') || null;   // v30.5 links' ?claim= (ignored since v30.5.1: one room code)
   wireGuard();
   renderSetup();
+  window.__imperatorMarkBooted?.();
   document.body.dataset.ready = '1';
-  // v30.5: a join link for a room this browser has a seat in (or ?was= its old code) goes straight back to the seat
-  if (jc && (seatFor(lsx(), jc) || (joinWas && seatFor(lsx(), joinWas))) && $('#joinName').value.trim()) joinGame();
 }
 // v30.5 (Q181): leave-protection while a game runs: the back button stays on the game and asks (Stay / Leave); an online game also
 // warns on close/reload (beforeunload). The setup screen and the lobby are never guarded. Leaving keeps the saved seat (Rejoin).
@@ -372,6 +375,7 @@ function startGame() {
   SND.play('deck_shuffle'); enterGame();
 }
 function enterGame() {
+  window.__imperatorMarkBooted?.();
   $('#toast').classList.remove('on');
   document.body.className = 'screen-game'; document.body.dataset.screen = 'game'; applyTabsHidden();
   closeBattlePop(); closeModal();
@@ -398,7 +402,7 @@ function loadPeer() {
     document.head.append(sc);
   });
 }
-async function makeTransport() { return netMode() === 'local' ? createBroadcastTransport() : netMode() === 'fakepeer' ? createPeerTransport((await import('../../net/fakepeer.js')).FakePeer) : createPeerTransport(await loadPeer()); }   // v30.5.1: fakepeer = the PeerJS path's size rule, between tabs (tests)
+async function makeTransport(opts) { return netMode() === 'local' ? createBroadcastTransport() : netMode() === 'fakepeer' ? createPeerTransport((await import('../../net/fakepeer.js')).FakePeer, opts) : createPeerTransport(await loadPeer(), opts); }   // v30.5.1: fakepeer = the PeerJS path's size rule, between tabs (tests)
 const joinLink = (code, was = null) => `${location.origin}${location.pathname}?join=${code}${was ? '&was=' + was : ''}${netMode() ? '&net=' + netMode() : ''}`;
 const SEAT_TOKEN_KEY = 'imperator.online.seat';
 let joinWas = '';   // M14: ?was=OLD in a join link: the host resumed the game under a new code
@@ -422,7 +426,6 @@ function renderOnline() {
   const card = $('.setupcard'); card.classList.toggle('joining', playWhere === 'join'); card.classList.toggle('hosting', playWhere === 'host');
   $('#hostBox').hidden = playWhere !== 'host'; $('#joinBox').hidden = playWhere !== 'join';
   $('#startGame').hidden = playWhere === 'join';
-  renderRejoin();
   document.body.dataset.joining = playWhere === 'join' ? '1' : '';   // M14: no Save / Load in the top bar while joining (a guest has nothing to save)
   if (playWhere === 'host') {
     seats.forEach((x, i) => { if (x.controller === 'remote') x.name = remoteName(i) || `Online ${i + 1}`; });
@@ -430,17 +433,6 @@ function renderOnline() {
     $('#hostCode').textContent = code ?? '…'; $('#hostLink').value = code ? joinLink(code) : ''; $('#hostCopy').disabled = !code;
     syncRoom();
   }
-}
-/** v30.5: the setup screen's small "Rejoin game CODE" (a seat this browser holds in an online game: 48 h, until that game is over). */
-function renderRejoin() {
-  let b = $('#joinRejoin'); const e = playWhere === 'host' ? null : latestSeat(lsx());
-  const live = e && C.NET?.role === 'guest' && C.NET.code === e.code && C.NET.client?.status === 'connected';
-  if (!e || live) { if (b) b.hidden = true; return; }
-  if (!b) { b = document.createElement('button'); b.type = 'button'; b.id = 'joinRejoin'; b.className = 'btn sm gold'; $('#playWhere').after(b); }
-  b.hidden = false; b.dataset.code = e.code; b.textContent = `↩ Rejoin game ${e.code}`; b.title = `Your seat${e.name ? ` (${e.name})` : ''} in room ${e.code} is saved in this browser`;
-  b.style.marginLeft = '8px';
-  b.onclick = () => { const code = b.dataset.code; const x = seatFor(lsx(), code); if (playWhere !== 'join') setPlayWhere('join');
-    $('#joinCode').value = code; joinWas = ''; joinClaim = null; if (!$('#joinName').value.trim()) $('#joinName').value = x?.name || 'Guest'; joinGame(); };
 }
 const syncRoom = () => { if (C.NET?.role === 'host' && document.body.dataset.screen === 'setup') C.NET.room.configure(seats.map(x => ({ kind: x.controller === 'remote' ? 'remote' : x.controller === 'ai' ? 'ai' : 'local', name: x.name.trim() || 'Host' }))); };
 /** Can the host start? Every Online seat needs its player (connected), and exactly one seat is the host's own. */
@@ -474,6 +466,9 @@ function hostNet(t, code, salt) {
     onWantState: room => { if (C.NET?.room === room && C.S) netPush(); },   // v30.5.1: a seat came into a resumed game before any move
     onClaimed: (room, i, info) => queueMicrotask(() => { if (C.NET?.room !== room || !C.S) return; if (info?.wasAI) seatBack(i);
       toast(`A player joined with the room code and plays ${st().players[i]?.name ?? 'a seat'}`); render(); }),
+    onJoinRequest: (room, req) => queueMicrotask(() => { if (C.NET?.room !== room) return; toast(`${req.name} is trying to join`); showJoinAsk(room, req); }),
+    onJoinGone: (room, peer) => { if (C.NET?.room === room) hideJoinAsk(peer); },
+    onLeft: (room, i, name) => { if (C.NET?.room === room) toast(`${name} disconnected`); },
   } });
   C.NET.ping = setInterval(() => { if (!C.NET?.quiet) C.NET?.room?.tick(); }, PING_MS);   // quiet: tests only (a host that stops answering)
   return C.NET;
@@ -492,13 +487,15 @@ async function resumeOnline(obj) {
   let t = null, code = null, err = null;
   for (let k = 0; k < 5 && !t; k++) {
     const c = k === 0 ? on.code : roomCode();
-    let x; try { x = await makeTransport(); await x.open({ role: 'host', code: c }); t = x; code = c; }
+    let x; try { x = await makeTransport(k === 0 ? { timeoutMs: 25000 } : undefined); await x.open({ role: 'host', code: c, reclaim: k === 0 }); t = x; code = c; }
     catch (e) { err = e; try { x?.close(); } catch { /* */ } if (e.code !== 'ROOM_TAKEN') break; }
   }
   if (!t) { playWhere = 'local'; show('Could not reopen the room: ' + (err?.message ?? 'no network')); renderSetup(); return false; }
+  try {
   hostNet(t, code, on.salt ?? newSalt());
   C.NET.room.restore({ ...on.room, code, started: true }); C.NET.me = on.me;   // v30.5.1: a resumed game is past the lobby, always
   C.S = ns; netPush(); closeModal(); enterGame();   // v30.5.1: the room holds the whole current state from the start (every join gets it)
+  } catch (e) { show(e?.stack || e?.message || String(e)); window.__imperatorBootError?.(e); return false; }
   if (code === on.code) toast(`Online game resumed: room ${code}. Your friends' pages reconnect by themselves.`);
   else openModal(`<div class="ask" id="resumedNew"><h2>Resumed under a new code</h2><p>The old room code <b>${esc(on.code)}</b> is taken, so the game is open under <b class="roomcode" id="resumedCode">${esc(code)}</b>.</p>
     <p>Send this link to your friends (their seats are kept; a page still trying the old code can also type the new one):</p><p><input id="resumedLink" readonly size="52" value="${attr(joinLink(code, on.code))}"> <button class="btn sm" id="resumedCopy">Copy link</button></p><button class="btn gold" data-close>OK</button></div>`);
@@ -587,6 +584,7 @@ async function joinGame() {
   const n = { role: 'guest', code, transport: t, me: null, q: [], pending: false, shown: null, healOff: 0 };
   const inGame = () => C.S && document.body.dataset.screen === 'game';
   n.client = new GuestClient({ transport: t, makeTransport, build: C.uiLabel, name, token, tokens, claim, data, hooks: {
+    onHold: () => { if (C.NET === n) say('Waiting for the host to give you a seat…'); },
     onWelcome: (c, m) => { n.code = c.code; if (C.NET === n) { pendDone(); joinPickClear(); } else n.pending = false; rememberSeat(store, c.code, { token: m.token, seat: m.seat, name: m.name, was: was || null }); if (claim) joinClaim = null;
       if (!inGame()) say(`Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}, ${SEAT_COLOR_NAMES[m.seat]}). ${m.started ? 'Loading the game in progress…' : 'Waiting for the host to start…'}`); },
     // v30.5.1: welcomed into a game in progress but no game state came: never sit silently (the client keeps asking too)
@@ -614,6 +612,7 @@ async function joinGame() {
       if (r === 'HOST_LEFT' && !c.ended) return;   // M14: not final: the host may resume the game; the client reconnects (onStatus)
       if (['BUILD_MISMATCH', 'FULL', 'STARTED', 'NO_FREE_SEAT'].includes(r)) { if (r === 'STARTED' || r === 'NO_FREE_SEAT') forgetSeat(store, n.code || code); $('#joinGo').disabled = false; joinPickClear(); netLeave(); return; }
       if (r === 'NO_ANSWER') { $('#joinGo').disabled = false; netLeave(); say(JOIN_END_TEXT.NO_ANSWER, true); return; }   // v30.5: never a silent "Connecting…"
+      if (r === 'DECLINED') { $('#joinGo').disabled = false; netLeave(); say(JOIN_END_TEXT.DECLINED, true); return; }
       if (r === 'GAME_OVER') forgetSeat(store, n.code);
       if (r === 'GAME_OVER' && inGame()) { n.lost = 'The game is over; the host closed the room.'; renderNetBanner(); return; }
       netLost(r === 'SEAT_REMOVED' ? 'The host removed your seat.' : r === 'REPLACED' ? 'You joined this game from another tab; this tab is disconnected.' : 'The host ended the connection.'); },
@@ -632,6 +631,23 @@ async function joinGame() {
 }
 /** M14: the online strip in the game: for the host, the room code and its link; for a guest, the link to the host (reconnecting,
  *  the host away, given up, or the seat played by the AI for now). body[data-net-status] is for tests. */
+function showJoinAsk(room, req) {
+  window.__imperatorMarkBooted?.();
+  let box = $('#joinAsk');
+  if (!box) { box = document.createElement('div'); box.id = 'joinAsk'; box.className = 'joinask'; document.body.append(box); }
+  const row = document.createElement('div'); row.className = 'joinrow'; row.dataset.peer = req.peer;
+  const tag = s => s.yours ? 'their seat' : s.ai ? 'AI' : s.open ? 'open' : 'away';
+  row.innerHTML = `<b>${esc(req.name)} wants to join</b><div class="joinseats">${req.seats.map(s => `<button type="button" class="btn${s.i === req.suggested ? ' gold' : ''}" data-seat="${s.i}">${esc(s.name)} <span class="small">(${tag(s)})</span></button>`).join(' ') || '<span class="small">No seat can be given.</span>'}</div><button type="button" class="btn" data-decline>Decline</button>`;
+  box.append(row); box.hidden = false;
+  const gone = () => { row.remove(); if (!box.children.length) box.hidden = true; };
+  row.querySelectorAll('[data-seat]').forEach(b => b.onclick = () => { if (room.assign(req.peer, +b.dataset.seat)) gone(); });
+  row.querySelector('[data-decline]').onclick = () => { room.decline(req.peer); gone(); };
+}
+function hideJoinAsk(peer) {
+  const box = $('#joinAsk'); if (!box) return;
+  [...box.children].filter(el => el.dataset.peer === peer).forEach(el => el.remove());
+  if (!box.children.length) box.hidden = true;
+}
 function renderNetBanner() {
   const el = $('#netBanner'); if (!el) return;
   const game = C.S && document.body.dataset.screen === 'game';
@@ -2187,4 +2203,4 @@ window.__imperator = {
   netBreak: () => { if (C.NET?.role === 'guest') C.NET.throwOnce = true; }, keyOf: a => { const d = C.S && G.findDesc(mineNow(), a); return d ? G.descKey(d) : null; },
   sounds: () => SND.played.slice(-80), label: () => C.uiLabel,
 };
-boot();
+boot().catch(e => { console.error(e); window.__imperatorBootError?.(e); });

@@ -44,6 +44,9 @@ export function createHost(page) {
       // v30.5.1: a device took a free seat with the room code: an AI seat goes back to a player at once
       onWantState: room => { if (C.NET?.role === 'host' && C.NET.room === room && C.S) push(); },   // v30.5.1: a seat came into a resumed game before any move
       onClaimed: (room, i, info) => queueMicrotask(() => { if (C.NET?.role !== 'host' || C.NET.room !== room || !C.S) return; if (info?.wasAI) back(i); page.claimed?.(i, info); }),
+      onJoinRequest: (room, req) => queueMicrotask(() => { if (C.NET?.role !== 'host' || C.NET.room !== room) return; page.toast?.(`${req.name} is trying to join`); page.joinAsk?.(room, req); }),
+      onJoinGone: (room, peer) => { if (C.NET?.role === 'host' && C.NET.room === room) page.joinGone?.(peer); },
+      onLeft: (room, i, name) => { if (C.NET?.role === 'host' && C.NET.room === room) page.toast?.(`${name} disconnected`); },
       onAct: (i, action, reply, fresh) => { C.NET.inbox.push({ i, action, reply, fresh }); if (!C.busy) drain(); else nudge(i); },
     } });
     C.NET.ping = setInterval(() => { if (!C.NET?.quiet) C.NET?.room?.tick(); }, PING_MS);   // quiet: tests only
@@ -114,7 +117,7 @@ export function createHost(page) {
     let t = null, code = null, err = null;
     for (let k = 0; k < 5 && !t; k++) {
       const c = k === 0 ? on.code : roomCode();
-      let x; try { x = await makeTransport(); await x.open({ role: 'host', code: c }); t = x; code = c; }
+      let x; try { x = await makeTransport(k === 0 ? { timeoutMs: 25000 } : undefined); await x.open({ role: 'host', code: c, reclaim: k === 0 }); t = x; code = c; }
       catch (e) { err = e; try { x?.close(); } catch { /* */ } if (e.code !== 'ROOM_TAKEN') break; }
     }
     if (!t) throw new Error('Could not reopen the room: ' + (err?.message ?? 'no network'));
@@ -148,6 +151,7 @@ export function createHost(page) {
     if (document.hidden) { W.hiddenAt = Date.now(); page.autosave(); if (C.NET.inbox.length) page.closePops(); return; }
     const ms = W.hiddenAt ? Date.now() - W.hiddenAt : 0; W.hiddenAt = 0; W.awayMs = ms;
     wakeAsk();
+    try { C.NET.transport?.nudge?.(); } catch { /* */ }
     try { C.NET.room.tick(); } catch { /* */ }
     pushAll();
     if (ms >= 2000) page.away(ms);

@@ -149,10 +149,31 @@ export function peerFrames(s, id, max = MAX_FRAME_BYTES) {
   return parts.map((x, j) => ({ k: 'c', id, i: j, n: parts.length, s: x }));
 }
 
+const logNet = (what, detail) => { try { console.warn('[net]', what, detail ?? ''); } catch { /* */ } };
+/** PeerJS puts the RTCPeerConnection on the DataConnection. Log its ICE state: a failed relay used to look like "the host is unreachable". */
+function watchIce(conn, onDead) {
+  const arm = () => {
+    const pc = conn?.peerConnection; if (!pc || pc.__imperatorIce) return;
+    pc.__imperatorIce = true;
+    const deadish = () => ['disconnected', 'failed', 'closed'].includes(pc.iceConnectionState) || ['disconnected', 'failed', 'closed'].includes(pc.connectionState);
+    const report = () => {
+      logNet('ice', { peer: conn.peer ?? conn._who ?? null, ice: pc.iceConnectionState, pc: pc.connectionState });
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed' || pc.connectionState === 'connected') { clearTimeout(conn.__dead); return; }
+      if (!deadish()) return;
+      clearTimeout(conn.__dead);
+      conn.__dead = setTimeout(() => { if (deadish()) { logNet('connection-dead', { peer: conn.peer ?? conn._who ?? null, ice: pc.iceConnectionState, pc: pc.connectionState }); onDead?.(); } }, 1200);
+    };
+    pc.addEventListener('iceconnectionstatechange', report);
+    pc.addEventListener('connectionstatechange', report);
+    report();
+  };
+  arm(); setTimeout(arm, 0);
+}
 /** PeerJS (WebRTC data channels) with the free PeerJS Cloud signalling server (0.peerjs.com). The room code is the host's peer id
- *  (`imperator-<CODE>`). Messages are JSON strings, split into chunks when long. `Peer` is the PeerJS constructor (src/vendor). */
+ *  (`imperator-<CODE>`). Messages are JSON strings, split into chunks when long. `Peer` is the PeerJS constructor (src/vendor).
+ *  `reclaim`: a host reload keeps retrying the same id while the cloud still lists the old socket (unavailable-id). */
 export function createPeerTransport(Peer, { iceServers = ICE_SERVERS, timeoutMs = 20000, debug = 1 } = {}) {
-  const ev = hub(); let peer = null; const conns = new Map(); const parts = new Map(); let seq = 0;
+  const ev = hub(); let peer = null; const conns = new Map(); const parts = new Map(); let seq = 0; let watchTimer = null;
   const wire = conn => {
     const who = conn._who;
     conn.on('data', d => {
@@ -168,35 +189,111 @@ export function createPeerTransport(Peer, { iceServers = ICE_SERVERS, timeoutMs 
   };
   return {
     get id() { return peer?.id ?? null; },
-    open({ role, code }) {
+    open({ role, code, reclaim = false }) {
       return new Promise((resolve, reject) => {
-        let done = false; let signalled = false;
+        let done = false; let signalled = false; const started = Date.now();
         const finish = (f, v) => { if (!done) { done = true; clearTimeout(timer); f(v); } };
-        const timer = setTimeout(() => { finish(reject, classifyPeerFailure(null, { signalled, timedOut: true })); try { peer?.destroy(); } catch { /* */ } }, timeoutMs);
+        const onTimeout = () => { finish(reject, classifyPeerFailure(null, { signalled, timedOut: true })); try { peer?.destroy(); } catch { /* */ } };
+        let timer = setTimeout(onTimeout, timeoutMs);
+        const arm = ms => { clearTimeout(timer); timer = setTimeout(onTimeout, ms); };
         const opts = { debug, config: { iceServers } };
-        const fail = e => { if (!done) { finish(reject, classifyPeerFailure(e, { signalled })); try { peer.destroy(); } catch { /* */ } } else if (debug > 1) console.warn('peer', e); };
-        if (role === 'host') {
-          peer = new Peer(peerIdOf(code), opts);
-          peer.on('open', () => { signalled = true; finish(resolve, { code: normCode(code) }); });
-          peer.on('connection', conn => { conn._who = conn.peer; conn.on('open', () => { const old = conns.get(conn.peer); conns.set(conn.peer, conn); if (old && old !== conn) try { old.close(); } catch { /* */ } wire(conn); ev.emitPeer(conn.peer); }); });
-          peer.on('disconnected', () => { try { peer.reconnect(); } catch { /* */ } });   // lost the signalling server: existing games keep running
-        } else {
-          peer = new Peer(opts);
-          peer.on('open', () => {
-            signalled = true;
-            const conn = peer.connect(peerIdOf(code), { reliable: true, serialization: 'json' }); conn._who = HOST;
-            conn.on('open', () => { conns.set(HOST, conn); wire(conn); finish(resolve, { code: normCode(code) }); });
+        const comeBack = () => {
+          logNet('disconnected', peer?.id ?? role);
+          try { peer?.reconnect(); } catch (e) { logNet('reconnect-failed', e?.message ?? e); }
+        };
+        const listen = () => {
+          peer.on('disconnected', comeBack);
+          // A single webrtc error is often one bad ICE candidate. Do not abort; the timer decides.
+          peer.on('error', e => {
+            logNet('error', { type: e?.type ?? null, message: e?.message ?? '', signalled, role });
+            if (e?.type === 'webrtc') return;
+            if (!done && role === 'host' && reclaim && e?.type === 'unavailable-id' && Date.now() - started < timeoutMs - 1500) {
+              logNet('reclaim', normCode(code));
+              try { peer.destroy(); } catch { /* */ }
+              setTimeout(startPeer, 1000);
+              return;
+            }
+            if (!done) { finish(reject, classifyPeerFailure(e, { signalled })); try { peer.destroy(); } catch { /* */ } }
           });
-        }
-        // A single webrtc error is often one bad ICE candidate (PeerJS emits it and keeps negotiating). Do not abort; the timer decides.
-        peer.on('error', e => { if (e?.type === 'webrtc') { if (debug > 1) console.warn('webrtc', e); return; } fail(e); });
+        };
+        const startPeer = () => {
+          if (done) return;
+          if (role === 'host') {
+            peer = new Peer(peerIdOf(code), opts);
+            listen();
+            peer.on('open', id => {
+              signalled = true; logNet('open', { role, id });
+              if (!watchTimer) {
+                watchTimer = setInterval(() => {
+                  if (!peer || peer.destroyed) return;
+                  if (peer.disconnected || peer.open === false) {
+                    logNet('host-reconnect', { id: peer.id, disconnected: !!peer.disconnected, open: peer.open });
+                    try { peer.reconnect(); } catch (e) { logNet('reconnect-failed', e?.message ?? String(e)); }
+                  }
+                }, 2000);
+                watchTimer.unref?.();
+              }
+              finish(resolve, { code: normCode(code) });
+            });
+            peer.on('connection', conn => {
+              const describe = extra => ({ peer: conn.peer, open: !!conn.open, metadata: conn.metadata ?? null, label: conn.label ?? null, reliable: conn.reliable ?? null, serialization: conn.serialization ?? null, ice: conn.peerConnection?.iceConnectionState ?? null, ...extra });
+              logNet('connection', describe());
+              conn._who = conn.peer; watchIce(conn, () => { if (conns.get(conn.peer) === conn) { conns.delete(conn.peer); try { conn.close(); } catch { /* */ } ev.emitClose(conn.peer); } });
+              const arm = () => {
+                if (conns.get(conn.peer) === conn && conn.__wired) return;
+                conn.__wired = true;
+                logNet('connection-open', describe());
+                const old = conns.get(conn.peer); conns.set(conn.peer, conn);
+                if (old && old !== conn) { logNet('connection-replace', { peer: conn.peer }); try { old.close(); } catch { /* a stale channel for this peer id */ } }
+                wire(conn); ev.emitPeer(conn.peer);
+              };
+              conn.on('open', arm);
+              if (conn.open) arm();
+              conn.on('close', () => logNet('connection-close', describe()));
+              conn.on('error', e => logNet('connection-error', describe({ type: e?.type ?? null, message: e?.message ?? String(e) })));
+              conn.on('iceStateChanged', state => logNet('connection-ice', describe({ ice: state })));
+            });
+          } else {
+            peer = new Peer(opts);
+            listen();
+            peer.on('open', id => {
+              signalled = true; logNet('open', { role, id });
+              if (timeoutMs >= 20000) arm(45000);   // TURN can take longer than the signalling handshake
+              const conn = peer.connect(peerIdOf(code), { reliable: true, serialization: 'json' }); conn._who = HOST;
+              watchIce(conn);
+              conn.on('open', () => { conns.set(HOST, conn); wire(conn); finish(resolve, { code: normCode(code) }); });
+              conn.on('error', e => logNet('conn-error', { type: e?.type ?? null, message: e?.message ?? String(e), peer: HOST }));
+            });
+          }
+        };
+        startPeer();
       });
     },
+    /** Call when the page wakes up: a backgrounded tab's signalling socket is often dead while the id is still registered. */
+    nudge() {
+      if (!peer || peer.destroyed) return;
+      if (peer.disconnected || peer.open === false) {
+        logNet('nudge', peer.id);
+        try { peer.reconnect(); } catch (e) { logNet('reconnect-failed', e?.message ?? e); }
+      }
+    },
+    /** Drop a stale data channel (a guest whose browser died) so a new one can take the seat. */
+    drop(id) { const c = conns.get(id); if (!c) return; conns.delete(id); try { c.close(); } catch { /* */ } },
+    /** False when this peer's data channel is already gone, so the seat can be offered again. */
+    isOpen(id) {
+      const c = conns.get(id); if (!c?.open) return false;
+      const pc = c.peerConnection;
+      if (!pc) return true;
+      const dead = ['disconnected', 'failed', 'closed'];
+      return !dead.includes(pc.iceConnectionState) && !dead.includes(pc.connectionState);
+    },
     send(to, obj) {
-      const c = conns.get(to); if (!c || !c.open) return;
-      for (const f of peerFrames(JSON.stringify(obj), ++seq)) c.send(f);
+      const c = conns.get(to); if (!c || !c.open) { logNet('send-drop', { to, open: !!c?.open, type: obj?.t }); return; }
+      const frames = peerFrames(JSON.stringify(obj), ++seq);
+      if (obj?.t === 'update') logNet('send-update', { to, full: !!obj.full, seq: obj.seq, frames: frames.length, bytes: frames.reduce((n, f) => n + frameBytes(f), 0) });
+      for (const f of frames) c.send(f);
     },
     onMessage: ev.onMessage, onPeer: ev.onPeer, onPeerClose: ev.onPeerClose, onProgress: ev.onProgress,
-    close() { for (const c of conns.values()) try { c.close(); } catch { /* */ } conns.clear(); try { peer?.destroy(); } catch { /* */ } peer = null; },
+    close() { clearInterval(watchTimer); watchTimer = null; for (const c of conns.values()) try { c.close(); } catch { /* */ } conns.clear(); try { peer?.destroy(); } catch { /* */ } peer = null; },
   };
 }

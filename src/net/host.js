@@ -24,8 +24,16 @@ export class HostRoom {
     Object.assign(this, { transport, build, code, data, hooks, now, rnd, timers, probeMs });
     this.seats = seats.map((x, i) => ({ i, kind: x.kind, name: x.kind === 'remote' ? '' : x.name, peer: null, token: null, connected: false, lastSeen: 0, playerId: null }));
     this.started = false; this.last = null; this.pingN = 0;
+    this.pending = new Map();   // peer id -> { name, m, suggested } waiting for the host to assign a seat
     transport.onMessage((p, m) => this.receive(p, m));
-    transport.onPeerClose(p => { const s = this.bySeatPeer(p); if (s) { s.connected = false; s.peer = null; this.changed(s.i); } });
+    transport.onPeerClose(p => this.peerGone(p));
+  }
+  peerGone(p) {
+    if (this.pending.delete(p)) this.hooks.onJoinGone?.(this, p);
+    const s = this.bySeatPeer(p); if (!s) return;
+    const name = s.name || `Seat ${s.i + 1}`;
+    s.connected = false; s.peer = null; this.changed(s.i);
+    this.hooks.onLeft?.(this, s.i, name);
   }
   /** v31.3: `data` may be a function (the page's current map: Small Map 1 or Large Map 1, chosen after the room opened). */
   dataNow() { return typeof this.data === 'function' ? this.data() : this.data; }
@@ -64,6 +72,8 @@ export class HostRoom {
     this.hooks.onAct?.(seat.i, action, error => { if (error) this.reject(peer, error.code ?? 'ILLEGAL', error.message ?? String(error), { seq: m.seq }); }, fresh);
   }
   hello(peer, m) {
+    console.warn('[net] hello', { peer, name: m.name ?? '', token: m.token ? 'yes' : 'no', back: !!m.back, pick: m.pick ?? null, started: this.started });
+    this.reapDead();
     if (m.proto !== PROTO || m.build !== this.build) {
       this.reject(peer, 'BUILD_MISMATCH', m.proto !== PROTO ? BUILD_MISMATCH(this.build, `an incompatible version (protocol ${m.proto})`) : BUILD_MISMATCH(this.build, m.build ?? 'an unknown version'));
       this.transport.send(peer, msg('bye', { reason: 'BUILD_MISMATCH' })); return;
@@ -71,9 +81,12 @@ export class HostRoom {
     // v30.5: a hello carries every seat token this browser holds (`tokens`, newest first; `token` as before), so a typed new code
     // (the host resumed under a new room code) still finds the seat
     // (the extra `tokens` only find a seat nobody holds right now: another player's seat on a shared browser is never taken by them)
-    const extra = (Array.isArray(m.tokens) ? m.tokens.slice(0, 16) : []).filter(t => typeof t === 'string' && t);
-    let seat = m.token ? this.seats.find(s => s.token && s.token === m.token) ?? null : null;
-    if (!seat && extra.length) seat = this.seats.find(s => s.token && extra.includes(s.token) && !(s.connected && s.peer && s.peer !== peer)) ?? null;
+    let seat = this.seatForHello(peer, m);
+    // v31.21: the first join and a mid-game join are the same hello. The host assigns the seat. A saved token only pre-selects it.
+    if (this.hooks.onJoinRequest) {
+      if (this.started && this.last?.state?.phase === 'finished') { this.reject(peer, 'GAME_OVER', 'This game is over.'); this.transport.send(peer, msg('bye', { reason: 'GAME_OVER' })); return; }
+      this.queueJoin(peer, m, seat); return;
+    }
     if (!seat && this.started) {
       // a reconnect (`back`) whose token no longer finds a seat is another game under this code (or her seat went to another device)
       if (m.back) { this.reject(peer, 'STARTED', STARTED_MSG); this.transport.send(peer, msg('bye', { reason: 'STARTED' })); return; }
@@ -100,25 +113,82 @@ export class HostRoom {
     }
     this.seatIn(peer, seat);
   }
-  seatIn(peer, seat) {
-    if (seat.peer && seat.peer !== peer) this.transport.send(seat.peer, msg('bye', { reason: 'REPLACED' }));   // the same player from a new tab
+  /** A seat whose data channel has already closed is not "online", even if the close event has not been delivered yet. */
+  reapDead() {
+    if (!this.transport.isOpen) return;
+    for (const s of this.seats) {
+      if (!s.peer || this.transport.isOpen(s.peer)) continue;
+      console.warn('[net] reap', { seat: s.i, peer: s.peer, name: s.name });
+      s.connected = false; s.peer = null;
+    }
+  }
+  /** The seat a hello's token points at, or null. A saved token is a hint, never a requirement. */
+  seatForHello(peer, m) {
+    const extra = (Array.isArray(m.tokens) ? m.tokens.slice(0, 16) : []).filter(t => typeof t === 'string' && t);
+    let seat = m.token ? this.seats.find(s => s.token && s.token === m.token) ?? null : null;
+    if (!seat && extra.length) seat = this.seats.find(s => s.token && extra.includes(s.token) && !(s.connected && s.peer && s.peer !== peer)) ?? null;
+    return seat;
+  }
+  /** Seats the host may give this joiner: an open or away Online seat, an AI seat, and their own seat even if it still looks connected. */
+  offerSeats(peer, suggested) {
+    return this.seats.filter(s => {
+      if (s.kind === 'local') return false;
+      if (suggested && s.i === suggested.i) return true;
+      const liveOther = s.connected && s.peer && s.peer !== peer;
+      if (!this.started) return s.kind === 'remote' && !liveOther;
+      if (s.kind === 'ai') return true;
+      return !liveOther;
+    }).map(s => ({ i: s.i, name: s.name || `Player ${s.i + 1}`, ai: s.kind === 'ai', away: !s.connected, open: s.kind === 'remote' && !s.token, yours: !!(suggested && s.i === suggested.i) }));
+  }
+  queueJoin(peer, m, suggested) {
+    const name = cleanName(m.name, suggested?.i ?? 0);
+    const offered = this.offerSeats(peer, suggested);
+    console.warn('[net] seat-decision', { peer, name, suggested: suggested?.i ?? null, offered: offered.map(s => ({ i: s.i, ai: s.ai, away: s.away, yours: s.yours })) });
+    this.pending.set(peer, { name, m, suggested: suggested?.i ?? null });
+    try { this.transport.send(peer, msg('hold', { name })); } catch { /* the link may already be gone */ }
+    this.hooks.onNotice?.(this, 'joining', { peer, name });
+    this.hooks.onJoinRequest?.(this, { peer, name, suggested: suggested?.i ?? null, seats: offered });
+  }
+  /** The host picked a seat for a waiting joiner. A matching token keeps that seat's token; any other seat replaces it. */
+  assign(peer, i) {
+    const req = this.pending.get(peer); if (!req) return false;
+    const seat = this.seats[i];
+    if (!seat || !this.offerSeats(peer, req.suggested == null ? null : this.seats[req.suggested]).some(s => s.i === i)) return false;
+    this.pending.delete(peer);
+    const same = req.suggested === i && seat.token && req.m.token === seat.token;
+    console.warn('[net] assign', { peer, seat: i, name: seat.name, sameToken: same, kind: seat.kind, wasConnected: !!seat.connected });
+    if (same) this.seatIn(peer, seat, { assigned: true });
+    else this.takeOver(peer, seat, req.m, { assigned: true });
+    return true;
+  }
+  /** The host refused this joiner. */
+  decline(peer) {
+    if (!this.pending.has(peer)) return false;
+    this.pending.delete(peer);
+    this.reject(peer, 'DECLINED', 'The host declined the join.');
+    this.transport.send(peer, msg('bye', { reason: 'DECLINED' }));
+    this.hooks.onJoinGone?.(this, peer);
+    return true;
+  }
+  seatIn(peer, seat, { assigned = false } = {}) {
+    if (seat.peer && seat.peer !== peer) { try { this.transport.send(seat.peer, msg('bye', { reason: 'REPLACED' })); } catch { /* a dead channel */ } try { this.transport.drop?.(seat.peer); } catch { /* */ } }
     Object.assign(seat, { peer, connected: true, lastSeen: this.now(), sentTo: null });   // sentTo null: its next update has the whole log
-    this.transport.send(peer, msg('welcome', { proto: PROTO, build: this.build, code: this.code, seat: seat.i, token: seat.token, name: seat.name, started: !!this.started }));
+    this.transport.send(peer, msg('welcome', { proto: PROTO, build: this.build, code: this.code, seat: seat.i, token: seat.token, name: seat.name, started: !!this.started, ...(assigned ? { assigned: true } : {}) }));
     this.changed(seat.i);
-    if (this.started && this.last) this.sendUpdate(seat, this.last, { full: true });   // v30.5.1: every join mid-game gets the whole current view at once, explicitly
-    // v30.5.1: a game resumed from a save has no step cached until its next move: ask the page for the current one (it calls update(),
-    // which sends every connected seat its own view), so a join into a game in progress never leaves the guest in the waiting lobby
-    else if (this.started) this.hooks.onWantState?.(this, seat.i);
+    try {
+      if (this.started && this.last) this.sendUpdate(seat, this.last, { full: true });   // every join mid-game gets the whole current view at once
+      else if (this.started) this.hooks.onWantState?.(this, seat.i);   // a resumed game may not have a step cached until the page pushes one
+    } catch (e) { console.warn('[net] sendUpdate failed', e?.stack || e?.message || e); }
   }
   /** v30.5.1: the seats a joiner may take in a game in progress: an AI seat, or a guest seat whose player is offline. Never the host's
    *  own seat, never a guest seat whose player is online. */
   freeSeats() { return this.started ? this.seats.filter(x => x.kind === 'ai' || (x.kind === 'remote' && !x.connected)) : []; }
-  takeOver(peer, seat, m) {
+  takeOver(peer, seat, m, opts = {}) {
     const wasAI = seat.kind === 'ai';
-    if (seat.peer && seat.peer !== peer) { try { this.transport.send(seat.peer, msg('bye', { reason: 'REPLACED' })); } catch { /* */ } }   // the old device (asleep)
+    if (seat.peer && seat.peer !== peer) { try { this.transport.send(seat.peer, msg('bye', { reason: 'REPLACED' })); } catch { /* */ } try { this.transport.drop?.(seat.peer); } catch { /* */ } }
     seat.token = newToken(this.rnd);   // the old device's token stops working: the seat is this device's now
     if (!seat.name) seat.name = cleanName(m.name, seat.i);
-    this.seatIn(peer, seat);
+    this.seatIn(peer, seat, opts);
     this.hooks.onClaimed?.(this, seat.i, { wasAI });   // the page: an AI seat goes back to a human player at once
   }
   /** The host changed the setup (lobby only): seat kinds and the names of the host's and AI seats. A guest keeps its seat when it is

@@ -15,7 +15,7 @@ import { createController } from '../ui/core/controller.js';
 import { createMapView } from './map.js';
 import { createGuest, NAME_KEY, normCode, HOST_AWAY_MS, PEND_RETRY_MS, whyText } from './guest.js';
 import { createHost, onlineSave, joinLink } from './host.js';
-import { latestSeat, seatFor, forgetSeat, parseJoin } from '../net/seats.js';
+import { forgetSeat, parseJoin } from '../net/seats.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -50,12 +50,23 @@ const NETG = createGuest({
 const isGuest = () => C.NET?.role === 'guest';
 const isHost = () => C.NET?.role === 'host';
 // v30.4: the host side (./host.js): the room, the guests' moves, the wake lock and the background warning
+addEventListener('online', () => { try { C.NET?.transport?.nudge?.(); } catch { /* */ } });
+addEventListener('pageshow', () => { try { C.NET?.transport?.nudge?.(); } catch { /* */ } });
 const NETH = createHost({
   C, data: () => data, st: () => st(), full: () => C.full(), current, inGame, render: () => render(), autosave: () => autosave(), schedule: () => schedule(),
   toast: m => toast(m), closePops: () => { if (popDone) closePop(); }, popupWaiting: () => !!popDone,
   lobby: () => { if (playWhere === 'host' && document.body.dataset.screen === 'setup') renderHostBox(); },
   cancelled: () => playWhere !== 'host' || document.body.dataset.screen !== 'setup',
   claimed: i => { const nm = C.full().players[i]?.name ?? 'a seat'; toast(`A player joined with the room code and plays ${nm}`); render(); },
+  joinAsk: (room, req) => {
+    const tag = s => s.yours ? 'their seat' : s.ai ? 'AI' : s.open ? 'open' : 'away';
+    openSheet('joinask', `<div class="sh-head"><h2>${esc(req.name)} wants to join<small>Assign a seat, or decline</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+      <div class="sh-body"><div class="opts">${req.seats.map(s => `<button type="button" class="btn${s.i === req.suggested ? ' gold' : ''}" data-seat="${s.i}">${esc(s.name)} <span class="small">(${tag(s)})</span></button>`).join('') || '<p class="note">No seat can be given.</p>'}</div></div>
+      <div class="sh-foot"><button class="btn wide" id="mJoinDecline" type="button">Decline</button></div>`);
+    $$('#sheet [data-seat]').forEach(b => b.onclick = () => { if (room.assign(req.peer, +b.dataset.seat)) closeSheet(true); });
+    const d = $('#mJoinDecline'); if (d) d.onclick = () => { room.decline(req.peer); closeSheet(true); };
+  },
+  joinGone: () => { if (document.body.dataset.sheet === 'joinask') closeSheet(true); },
   away: ms => hostBack(ms), wake: () => { if (inGame()) renderNetBar(); else { const e = $('#hWake'); if (e) e.innerHTML = wakeText(); } },
 });
 /** The seat this screen shows: online, always this phone's own seat (a guest gets only its view; a host plays only its own seat);
@@ -152,16 +163,9 @@ async function boot() {
   joinWas = normCode(q.get('was') || '');   // M14: the host resumed under a new code (the old one was taken)
   joinClaim = normCode(q.get('claim') || '') || null;   // v30.5 links' ?claim= (ignored since v30.5.1: one room code)
   addEventListener('pagehide', e => { try { if (isHost()) { if (C.S) autosave(); if (!e.persisted) NETH.leave(); } else C.NET?.client?.leave(); } catch { /* */ } });   // as the desktop: the host frees the link at once
-  // v30.5: back from the iPhone's page cache (another app, a swipe away and back): the guest left on pagehide, so it rejoins its seat
-  addEventListener('pageshow', e => { if (!e.persisted || !isGuest() || !C.NET.client.ended) return; const code = C.NET.code; NETG.join(code, savedName() || seatFor(lsx(), code)?.name || 'Guest'); });
   wireGuard();
   renderStart();
   document.body.dataset.ready = '1';
-  // v30.5: a join link this phone already has a seat for (the same room, or ?was= its old code), or a rejoin link: straight back in
-  if (joinCode) {
-    const own = seatFor(lsx(), joinCode) ?? (joinWas ? seatFor(lsx(), joinWas) : null); const nm = (joinName ?? savedName()) || own?.name || '';
-    if ((own || joinClaim) && nm) { joinName = nm; renderStart(); NETG.join(joinCode, nm, joinWas, joinClaim).catch(e => NETGsay(`Join failed: ${e.message}`)); }
-  }
 }
 
 // ------------------------------------------------------------------ v31.2: the map (21.a), as on the desktop: Small Map 1 or Large Map 1 (19
@@ -224,7 +228,6 @@ function renderStart() {
   el.innerHTML = `<div class="hero"><span class="ver" id="mVer">${esc(C.uiLabel.split(' · ')[0])} · mobile</span><h1>IMPERATOR</h1><p>2 or 3 players · win with ${data.rules.winPrestige} Prestige</p></div>
   <div class="form">
     <div class="seg" role="group" aria-label="Where the players are">${[['local', '📱 This phone'], ['host', '🌐 Host'], ['join', '🔗 Join']].map(([k, t]) => `<button data-where="${k}" class="${playWhere === k ? 'on' : ''}" aria-pressed="${playWhere === k}">${t}</button>`).join('')}</div>
-    ${rejoinHtml()}
     ${playWhere === 'host' ? `<div class="grp" id="hostBox">${hostBoxHtml()}</div>` : ''}
     ${playWhere === 'join' ? joinBoxHtml() : ''}
     ${online ? '' : `<div class="grp" id="seatsGrp"><h3>Players <span class="seg" style="padding:2px;border-radius:11px">${[2, 3].map(n => `<button data-n="${n}" class="${seats.length === n ? 'on' : ''}" style="min-width:52px" aria-pressed="${seats.length === n}">${n}</button>`).join('')}</span></h3>
@@ -263,7 +266,6 @@ function renderStart() {
   if ($('#mStart')) $('#mStart').onclick = startGame;
   if ($('#mHow')) $('#mHow').onclick = () => showHowToWin();
   if (playWhere === 'join') wireJoin(el);
-  wireRejoin(el);
   if (playWhere === 'host') wireHostBox(el);
   $('#mResume').onclick = () => { const t = autosaveText(); if (t) loadFrom(t); };
   $('#mLoad').onclick = () => openSaves('load');
@@ -327,20 +329,6 @@ let joinPick = null;
 const pickHtml = () => (joinPick?.retry ? `<div class="pick"><button type="button" class="btn wide" data-retry>Retry</button></div>` : joinPick ? `<div class="pick" role="group" aria-label="Which player are you?">${joinPick.seats.map(x => `<button type="button" class="btn wide" data-pick="${x.i}">${esc(x.name)}${x.ai ? ' <small>(AI now)</small>' : ' <small>(offline)</small>'}</button>`).join('')}</div>` : '');
 function bindPick() { $$('#mPick [data-pick]').forEach(b => b.onclick = () => joinPick?.choose(+b.dataset.pick)); $$('#mPick [data-retry]').forEach(b => b.onclick = () => joinPick?.retry?.()); }
 const NETGsay = m => { joinMsg = { m, bad: true }; const e = $('#mJoinStatus'); if (e) { e.textContent = m; e.classList.add('bad'); } else toast(m); };
-/** v30.5: the start screen's "Rejoin game" (a seat this phone holds in an online game; kept for 48 h, until that game is over, or Forget). */
-function rejoinHtml() {
-  const e = latestSeat(lsx()); if (!e || playWhere === 'host') return '';
-  if (isGuest() && C.NET.code === e.code && C.NET.client.status === 'connected') return '';
-  return `<div class="grp rejoin" id="rejoinGrp"><button class="btn gold wide" id="mRejoin" data-code="${attr(e.code)}">↩ Rejoin game ${esc(e.code)}</button>
-    <p class="note" style="margin:4px 2px 0">Your seat${e.name ? ` (${esc(e.name)})` : ''} in room ${esc(e.code)} is saved on this phone. <button type="button" class="linkbtn" id="mForget">Forget it</button></p></div>`;
-}
-function wireRejoin(el) {
-  const b = $('#mRejoin', el); if (!b) return;
-  b.onclick = () => { const code = b.dataset.code; const e = seatFor(lsx(), code); SND.play('button_click');
-    playWhere = 'join'; joinCode = code; joinWas = ''; joinClaim = null; joinName = (joinName || savedName() || e?.name || '').trim() || 'Guest';
-    joinMsg = null; renderStart(); NETG.join(code, joinName).catch(x => NETGsay(`Join failed: ${x.message}`)); };
-  const f = $('#mForget', el); if (f) f.onclick = () => { if (!window.confirm(`Forget your seat in room ${b.dataset.code}? You can still come back with a rejoin link from the host.`)) return; forgetSeat(lsx(), b.dataset.code); renderStart(); };
-}
 function lobbyHtml(m) {
   const rows = (m.seats ?? []).map(x => `<li><span class="sw" style="--c:var(--p${x.i + 1})"></span><b>${esc(x.kind === 'remote' ? x.name || 'waiting for a player…' : x.name)}</b> <span class="small">${x.kind === 'local' ? '(host)' : x.kind === 'ai' ? '(AI)' : x.taken ? (x.connected ? '(online)' : '(away)') : ''}${C.NET?.client?.seat === x.i ? ' ← you' : ''}</span></li>`).join('');
   return rows ? `<b>Players</b><ul>${rows}</ul>` : '';

@@ -260,7 +260,10 @@ export function readSave(input, data) {
   if (!o || o.schema !== SAVE_SCHEMA) throw new Error(`This is not an Imperator save (schema "${o?.schema ?? 'missing'}", expected "${SAVE_SCHEMA}").`);
   const state = o.snapshot; const made = o.meta?.appVersion ? ` It was made by ${o.meta.appVersion}.` : '';
   if (!state || typeof state !== 'object' || !Array.isArray(state.players)) throw new Error('This save has no game in it (the snapshot is missing).' + made);
-  if (state.schemaVersion !== SCHEMA_VERSION) throw new Error(`This save was made by ${state.schemaVersion < SCHEMA_VERSION ? 'an older' : 'a newer'} build (game format ${state.schemaVersion}; this build reads format ${SCHEMA_VERSION}), so it cannot be loaded.${made} The file itself is not changed. Start a new game, or run the build that made it.`);
+  if (state.schemaVersion !== SCHEMA_VERSION) {
+    if (state.schemaVersion < SCHEMA_VERSION) throw new Error(`This save was made by an older build (game format ${state.schemaVersion}; this build reads format ${SCHEMA_VERSION}), so it cannot be loaded.${made} The file itself is not changed. Start a new game, or run the build that made it.`);
+    throw new Error(`This save was made by a newer build (game format ${state.schemaVersion}; this build reads format ${SCHEMA_VERSION}), so it cannot be loaded.${made} The file itself is not changed. Run the build that made it.`);
+  }
   if (!Array.isArray(state.ships)) state.ships = [];   // v31.5: saves from before Merchant ships
   if (!state.throwaway) state.throwaway = { game: [], resource: [], displeased: [] };   // v31.11: saves from before the throwaway pile
   for (const p of state.players) if (!['normal', 'easy'].includes(p.difficulty)) p.difficulty = 'normal';   // v31.12: saves from before AI difficulty

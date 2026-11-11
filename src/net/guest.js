@@ -30,6 +30,7 @@ export const JOIN_END_TEXT = {
   NO_ROOM: 'Room not found: check the code. If it is right, the host\'s page is closed or asleep (host offline): ask the host to open it.',
   NETWORK: SIGNALLING_TEXT,
   HOST_UNREACHABLE: HOST_UNREACHABLE_TEXT,
+  DECLINED: 'The host declined the join.',
 };
 /** Short reason in the reconnect banner. A failed host link is not called a signalling outage. */
 export const whyText = w => ({ LINK_LOST: 'the link dropped', HOST_LEFT: 'the host left the game', NO_ROOM: 'the room is not open', NETWORK: 'network error', HOST_UNREACHABLE: JOIN_END_TEXT.HOST_UNREACHABLE, TIMEOUT: 'no answer', RETRY: 'retrying' })[w] ?? String(w ?? 'no link').toLowerCase().replace(/_/g, ' ');
@@ -73,7 +74,7 @@ export class GuestClient {
   /** The link is gone (or the host said HOST_LEFT): reconnect with the token, or (no factory / no seat yet) end as in M11. */
   linkLost(why) {
     if (this.ended) return;
-    if (!this.makeTransport || !this.token) { this.ended = 'HOST_GONE'; this.hooks.onHostGone?.(this); return; }
+    if (!this.makeTransport || (!this.token && this.seat == null)) { this.ended = 'HOST_GONE'; this.hooks.onHostGone?.(this); return; }
     if (this.status === 'reconnecting') return;
     try { this.transport.close(); } catch { /* */ }
     this.attempt = 0; this.why = why; this.scheduleRetry();
@@ -135,8 +136,9 @@ export class GuestClient {
     if (this.hostAway) { this.hostAway = false; if (this.status === 'connected') this.hooks.onStatus?.(this, 'connected', { back: true }); }
     switch (m.t) {
       case 'welcome': {
+        console.warn('[net] guest welcome', { seat: m.seat, started: !!m.started, assigned: !!m.assigned });
         const again = this.status === 'reconnecting' || this.status === 'lost';
-        if (again && m.token !== this.token) { this.notOurs(this.transport, 'NOT_OUR_ROOM'); break; }   // another game under this code
+        if (again && this.token && m.token !== this.token && !m.assigned) { this.notOurs(this.transport, 'NOT_OUR_ROOM'); break; }   // another game under this code (a host assignment sends assigned)
         this.seat = m.seat; this.token = m.token; this.tokens = []; this.claim = null; this.pickI = null; this.choices = null; this.name = m.name ?? this.name; this.code = m.code ?? this.code;
         this.timers.clearTimeout(this.timer); this.attempt = 0;
         if (again) this.reconnects++;
@@ -147,6 +149,7 @@ export class GuestClient {
       case 'lobby': this.lobby = m; this.hooks.onLobby?.(this, m); break;
       // v30.5.1: a game in progress with several free seats: "Which player are you?" (no answer timeout while she chooses)
       case 'pick': if (this.status !== 'connecting') break; this.timers.clearTimeout(this.timer); this.pickI = null; this.choices = m.seats ?? []; this.hooks.onPick?.(this, this.choices); break;
+      case 'hold': if (this.status === 'connected') break; this.timers.clearTimeout(this.timer); this.holding = true; this.hooks.onHold?.(this, m); this.timer = this.timers.setTimeout(() => { if (!this.ended && this.status !== 'connected') { this.ended = 'NO_ANSWER'; try { this.transport.close(); } catch { /* */ } this.hooks.onBye?.(this, 'NO_ANSWER'); } }, 120000); break;
       case 'ping': {
         this.transport.send(HOST, msg('pong', { n: m.n }));
         // v26.1 heartbeat: the host's last update is not the one this guest has (dropped, discarded on a gap, never applied): resync.
@@ -160,6 +163,7 @@ export class GuestClient {
         break;
       }
       case 'update': {
+        console.warn('[net] guest update', { seq: m.seq, full: !!m.full, events: m.events?.length ?? 0 });
         // M12: the view has no log; the log is kept here from the events (the whole log when `full`). A gap: ask for everything.
         if (!m.full && m.from !== this.logTo) { this.resync('GAP'); return; }
         if (m.resync || (m.full && this.resyncAsked)) m.resynced = true;

@@ -87,6 +87,16 @@ export function createController(view) {
       });   // v26.1: an update that came during the alert
       return true;
     }
+    // v31.22: an off-turn Game Card draw resolves itself — the defender's battle-won card and a Game Roll reward card for a player
+    // who is not the active turn player. The DRAW_CARD descriptor is the one a manual click would send, so the seeded-RNG draw
+    // (and the card drawn) is identical, and the reveal popup is the normal cardDrawn flip/sheet. On-turn draws keep the click.
+    // A guest never draws here: the host resolves every human seat's off-turn draw.
+    const off = G.offTurnDraw(full(), view.data());
+    if (off && c.NET?.role !== 'guest') {
+      const fid = topFrame(full())?.id;
+      c.aiTimer = later(() => { c.aiTimer = null; if (!c.busy && topFrame(full())?.id === fid) { const d = G.offTurnDraw(full(), view.data()); if (d) apply(d.action); else view.render(); } }, spd(400));
+      return true;
+    }
     return false;
   }
   /** The DRAW from Rome Is Displeased this screen may make for frame `f` (null: not this screen's draw). */

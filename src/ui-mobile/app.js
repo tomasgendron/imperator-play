@@ -639,7 +639,7 @@ function renderSteps(s, legal) {
   const rollDue = legal.find(d => d.type === 'ROLL' && f0?.purpose !== 'battleRound' && f0?.purpose !== 'loyalty');
   const rollBtn = rollDue ? `<button type="button" class="btn sm gold" id="bRollTop" ${C.busy ? 'disabled' : ''}>🎲 ${esc(rollDue.label)}</button>` : '';
   setHTML(el, (s.phase === 'setup' ? '<span class="step cur"><i>0</i>Setup</span>' : s.phase === 'finished' ? `<span class="step cur"><i>★</i>${esc(pn(s.winner))} wins</span>`
-    : G.STEP_CHIPS.map(([k], i) => `<span class="step ${i < si ? 'done' : i === si ? 'cur' : ''}"><i>${i < si ? '✓' : i + 1}</i>${names[k]}</span>`).join('<span class="step-sep">›</span>') + (used ? `<span class="actcount" id="actCount" title="Actions used this turn">${used}</span>` : '')) + rollBtn);
+    : G.STEP_CHIPS.map(([k], i) => `<span class="step ${i < si ? 'done' : i === si ? 'cur' : ''}"><i>${i < si ? '✓' : i + 1}</i>${names[k]}</span>${i === 3 && used ? `<span class="actcount" id="actCount" title="Actions used this turn">${used}</span>` : ''}`).join('<span class="step-sep">›</span>')) + rollBtn);   // v31.22: the move counter sits right next to the "4. Actions" step, not after the row
   const rt = $('#bRollTop'); if (rt) rt.onclick = () => { if (!C.busy) act(rollDue); };
   const f = f0; const w = whoActs(s); let p;
   if (s.phase === 'finished') p = `<b>${esc(pn(s.winner))} wins the game.</b> Menu → New game to play again.`;
@@ -835,6 +835,59 @@ function wireRows(root, list) {
     if (d.type === 'ALLY' && sheetKind === 'moves') { openAllyConfirm(d); return; }   // v30.1: the Ally confirm sheet (natives, troops needed)
     if (root.id === 'sheet' || root.closest?.('#sheet')) closeSheet(true); act(d.range ? { ...d, _v: val[i] } : d); });
 }
+/** v31.22: the survivors slider popup (approved mockup; the desktop's wireSurvivors, sending through act() instead of human()). */
+function wireSurvivors(root, legal, sp, after) {
+  const slider = root.querySelector('[data-sv="slider"]');
+  const genBox = root.querySelector('[data-sv="general"]');
+  const confirm = root.querySelector('[data-sv="confirm"]');
+  if (!slider || !confirm) return;
+  const sync = () => {
+    const stay = +slider.value, back = sp.own - stay;
+    const at = G.survivorsSplitAt(sp, stay);
+    slider.style.setProperty('--split', (sp.own ? (back / sp.own) * 100 : 0) + '%');
+    const set = (role, total, ok, min, name, short) => {
+      const card = root.querySelector(`[data-sv-card="${role}"]`);
+      if (card) card.classList.toggle('is-under', !ok);
+      const big = root.querySelector(`[data-sv-count="${role}"]`);
+      if (big) { big.textContent = total; big.className = 'sv-big ' + (ok ? 'ok' : 'under'); }
+      const delta = root.querySelector(`[data-sv-delta="${role}"]`);
+      if (delta) delta.textContent = role === 'origin' ? (back === 0 ? 'No troops return' : `${back} return${back === 1 ? 's' : ''} here`) : `${stay} stay${stay === 1 ? 's' : ''} here`;
+      const st = root.querySelector(`[data-sv-status="${role}"]`);
+      if (st) { st.className = 'sv-status ' + (ok ? 'ok' : 'under'); st.innerHTML = ok ? `Garrison met — needs min ${min}` : `UNDER-GARRISONED<span class="sv-short">${esc(name)} has ${total} of min ${min} — short by ${short} troop${short === 1 ? '' : 's'}</span>`; }
+    };
+    set('origin', at.originTotal, at.originOk, sp.minOrigin, sp.originName, at.shortOrigin);
+    set('target', at.targetTotal, at.targetOk, sp.minTarget, sp.targetName, at.shortTarget);
+    const ro = root.querySelector('[data-sv-readout]');
+    if (ro) ro.innerHTML = `<span class="${at.originOk ? 'ok' : 'under'}">${back} return to ${esc(sp.originName)}</span> · <span class="${at.targetOk ? 'ok' : 'under'}">${stay} stay in ${esc(sp.targetName)}</span>`;
+    const banner = root.querySelector('[data-sv="banner"]');
+    if (banner) {
+      banner.className = 'sv-banner ' + (at.bothOk ? 'ok' : 'under');
+      banner.innerHTML = at.bothOk ? `✓ Both provinces meet their minimum garrison — ${esc(sp.originName)} ${at.originTotal} / min ${sp.minOrigin} · ${esc(sp.targetName)} ${stay} / min ${sp.minTarget}.`
+        : `⚠ ${[!at.originOk ? `${esc(sp.originName)} is under-garrisoned (${at.originTotal} of min ${sp.minOrigin})` : '', !at.targetOk ? `${esc(sp.targetName)} is under-garrisoned (${stay} of min ${sp.minTarget})` : ''].filter(Boolean).join(' and ')}. Move the slider back between the marks to garrison both.`;
+    }
+    const genBack = !!genBox?.checked;
+    const sub = root.querySelector('[data-sv-gensub]');
+    if (sub) sub.textContent = genBack ? `Ticked: ${sp.generalName} returns to ${sp.originName} with the returning troops, and protects ${sp.originName}.` : `Unchecked: ${sp.generalName} stays in ${sp.targetName} with the troops holding it, and protects ${sp.targetName}.`;
+    root.querySelectorAll('[data-sv-genhere]').forEach(b => b.classList.toggle('show', (b.dataset.svGenhere === 'origin') === genBack));
+    const dn = root.querySelector('[data-sv="down"]'), up = root.querySelector('[data-sv="up"]');
+    if (dn) dn.disabled = stay <= sp.stayMin;
+    if (up) up.disabled = stay >= sp.stayMax;
+    confirm.textContent = `Confirm — ${stay} stay in ${sp.targetName} · ${back === 0 ? 'none return to ' + sp.originName : back + ' return to ' + sp.originName}${sp.generalName ? ' · ' + sp.generalName + (genBack ? ' goes back' : ' stays') : ''}`;
+  };
+  slider.addEventListener('input', sync);
+  if (genBox) genBox.addEventListener('change', sync);
+  const step = d => { slider.value = Math.max(sp.stayMin, Math.min(sp.stayMax, +slider.value + d)); sync(); };
+  root.querySelector('[data-sv="down"]')?.addEventListener('click', () => step(-1));
+  root.querySelector('[data-sv="up"]')?.addEventListener('click', () => step(1));
+  confirm.onclick = () => {
+    const stay = +slider.value, back = sp.own - stay;
+    const genBack = !!genBox?.checked;
+    const d = legal.find(x => x.type === 'PLACE_SURVIVORS' && (x.action.generalBack ?? false) === genBack) ?? legal.find(x => x.type === 'PLACE_SURVIVORS');
+    if (!d || C.busy) { SND.play('error_denied'); return; }
+    SND.play('button_click'); if (after) after(); act(d.range ? { ...d, _v: back } : d);
+  };
+  sync();
+}
 function openBuildList() {
   const all = G.categorize(mineNow()).build;
   const buys = all.filter(d => d.type === 'BUY_MERCHANT_SHIP');
@@ -955,6 +1008,7 @@ function openAsk(auto = false) {
   openSheet('ask', `<div class="sh-head"><h2>${esc(G.frameTitle(s, data))}<small>${esc(pn(whoActs(s)))} · ${esc(G.describePrompt(s, data).replace(/^.*?: /, ''))}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Hide for now">✕</button></div>
     <div class="sh-body" id="askBody" data-ask="${attr(kind)}">${gateNote(g)}${askBody(s, f, legal, g)}${half ? '<p class="note">You can also tap a glowing province on the map.</p>' : ''}<p class="note">Hidden for now? The gold “Answer” button opens this again.</p></div>`, { half });
   wireRows($('#sheet'), legal);
+  if (f.kind === 'placeSurvivors') wireSurvivors($('#sheet'), legal, G.survivorsSplit(s, data, f), () => closeSheet(true));   // v31.22
   $$('#sheet [data-ai]').forEach(b => b.onclick = () => { closeSheet(true); act(legal[+b.dataset.ai]); });
   $$('#sheet [data-ak]').forEach(b => b.onclick = () => { const d = legal.find(x => G.descKey(x) === b.dataset.ak); if (d) { closeSheet(true); act(d); } });
   document.body.dataset.askFrame = f.id;
@@ -1240,7 +1294,8 @@ function askBody(s, f, legal, g) {
   }
   const threat = (s.battle?.def?.player && (f.player === s.battle.def.player || (f.kind === 'chooseBattleCards' && f.role === 'defender'))) ? incomingHtml(f.player) : '';
   const threatBox = threat ? `<div class="incoming" id="incomingAsk">${threat}</div>` : '';
-  if (f.kind === 'returnReinforcements' || f.kind === 'placeSurvivors' || f.kind === 'placeTroops') {
+  if (f.kind === 'placeSurvivors') return G.placeSurvivorsHtml(s, data, f);   // v31.22: the slider popup (approved mockup), wired in openAsk
+  if (f.kind === 'returnReinforcements' || f.kind === 'placeTroops') {
     const ids = [f.target, f.origin, f.from, ...(f.allowed ?? [])].filter(Boolean);
     const note = [...new Set(ids)].map(id => G.garrisonStayText(s, data, id)).filter(Boolean).join(' ');
     return `${note ? `<p class="note garrison-note" id="garStay">${esc(note)}</p>` : ''}${f.kind === 'returnReinforcements' ? '<p class="note">Sending them home is optional: 0 leaves every survivor in the defended province (18.y).</p>' : ''}${rowsHtml(legal, !g.live)}`;
@@ -1259,7 +1314,7 @@ function openAllyConfirm(d) {
 let drawCallHidden = null;
 function renderDrawCall(s) {
   const f = topFrame(s); const humans = s.players.filter(p => G.isHuman(s, p.id)).length;
-  const on = !!f && f.kind === 'draw' && f.deck === 'game' && f.reason === 'reward' && humans >= 2 && !C.busy && drawCallHidden !== f.id && !popKind;
+  const on = !!f && f.kind === 'draw' && f.deck === 'game' && f.reason === 'reward' && humans >= 2 && !C.busy && drawCallHidden !== f.id && !popKind && !G.offTurnDraw(s, data);   // v31.22: an off-turn reward draw resolves itself, so there is no Draw button to show
   if (!on) { if (sheetKind === 'drawcall') closeSheet(true); return; }
   if (sheetKind === 'drawcall' && $('#sheet').dataset.frame === f.id) return;
   const g = gateFor(f.player); const d = g.legal.find(x => x.type === 'DRAW_CARD');

@@ -677,7 +677,7 @@ defineRoll('extraRevoltRoll', (ctx, f) => {
 
 function conquer(ctx, b, after) {
   const { state, data } = ctx; const A = b.att.player; const t = b.target; const p = state.provinces[t];
-  const prev = p.owner; const wasStart = p.status === 'starting'; const pl = mustPlayer(state, A);
+  const prev = p.owner; const wasStart = p.status === 'starting'; const wasAlly = p.status === 'allied'; const pl = mustPlayer(state, A);
   let own = b.att.own; let gain = data.rules.prestige.conquest; let back = 0;
   if (prev) {                                                     // the previous owner's general escapes (Q86)
     const g = generalOf(state, prev);
@@ -710,7 +710,10 @@ function conquer(ctx, b, after) {
   emit(ctx, 'provinceConquered', { actor: A, rule: '17.y', pub: { battleId: b.id, player: A, province: t, from: prev, troops: p.troops, min, underGarrisoned: t !== 'roma' && p.troops < min } });
   awardPrestige(ctx, A, gain, t === 'roma' ? 'roma' : t === 'carthage' && gain === data.rules.prestige.carthage ? 'carthage' : 'conquest', t === 'roma' ? '12.g' : '12.f');
   if (state.phase !== 'turn') return;
-  if (prev) { emit(ctx, 'provinceLost', { actor: prev, rule: '12.f', pub: { player: prev, province: t, to: A } }); awardPrestige(ctx, prev, -data.rules.prestige.loss, 'provinceLost', '12.f'); if (state.phase !== 'turn') return; }
+  // v31.22: losing an ALLIED province in battle costs the owner NO prestige (Tomas's ruling, 2026-11-11). The attacker still gains
+  // the +1 conquest prestige above; a conquered / starting / held province still loses 1. wasAlly is captured before the status
+  // overwrite above (the province is 'conquered' by the time this runs). The provinceLost event still fires either way.
+  if (prev) { emit(ctx, 'provinceLost', { actor: prev, rule: '12.f', pub: { player: prev, province: t, to: A, allied: wasAlly } }); if (!wasAlly) awardPrestige(ctx, prev, -data.rules.prestige.loss, 'provinceLost', '12.f'); if (state.phase !== 'turn') return; }
   if (t === 'roma' && state.carthage.neutral) {                   // Carthage is back (12.g, 16.n)
     const n = data.rules.carthageBackTroops; Object.assign(state.carthage, { neutral: false, defeated: false, decreeLegionsLost: 0 });
     state.provinces.carthage.native = { rolled: n, count: n, present: n }; state.provinces.carthage.healAtTurn = null;

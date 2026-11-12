@@ -74,6 +74,21 @@ export function humanLegal(state, data, pid) {
   if (f && f.kind === 'roll' && !f.player) return [];   // an automatic deal/roll with nobody to ask: the page runs it itself
   return legalActions(state, data).filter(d => d.playerId === pid || d.action.playerId === pid);
 }
+/** v31.22: an off-turn Game Card draw that the controller resolves by itself (no Draw click). True only for a human who is NOT the
+ *  active turn player: the defender's battle-won card (battle.js, reason 'battleWon') and a Game Roll reward card (turn.js,
+ *  reason 'reward'). On-turn draws — the roller's own reward card, the Resources step, a purchase — return null and keep the
+ *  Draw click, as do Rome Is Displeased draws and any draw for an AI seat (the AI already resolves its own). Returns the
+ *  DRAW_CARD descriptor, so the automatic draw is exactly the action a manual click would send (same seeded-RNG draw). */
+export function offTurnDraw(state, data) {
+  const f = topFrame(state);
+  if (!f || f.kind !== 'draw' || f.deck !== 'game') return null;
+  if (f.reason !== 'battleWon' && f.reason !== 'reward') return null;
+  if (state.phase !== 'turn' || !state.turn) return null;
+  if (f.player === state.turn.activePlayerId) return null;
+  if (!isHuman(state, f.player)) return null;
+  return humanLegal(state, data, f.player).find(d => d.type === 'DRAW_CARD') ?? null;
+}
+
 /** v26.1 (the stuck Revolt Roll): null while the game can go on; otherwise why it cannot: a pending prompt with no legal move for
  *  anyone (whoever must act has none). The page flags it at once (with a save to send) instead of leaving a silent dead end. */
 export function deadEnd(state, data) {
@@ -758,6 +773,108 @@ export function garrisonStayText(state, data, id) {
   if (p.troops < min) return `${name}: minimum ${min}, already under it (${p.troops} here; at least ${floor} must stay).`;
   return `${name}: minimum ${min} — keep ${must} to stay at minimum (${may} may leave).`;
 }
+
+const escHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const clamp01 = v => Math.max(0, Math.min(1, v));
+/**
+ * v31.22: the survivors slider (approved mockup, Tomas 2026-11-11). ONE slider splits the survivors between the two provinces:
+ * the origin province is ALWAYS on the left, the conquered (target) province ALWAYS on the right — cards, slider ends, threshold
+ * marks, min strip and confirm text. The slider value is `stay` (troops staying in the target, stayMin..own); back = own - stay.
+ * stayMin is own - maxBack: at least 1 survivor stays, except Roma where all may return (17.y, engine rule — the frame's maxBack).
+ * Minimums come from minGarrison, as the task specifies: the target is safe while stay >= minTarget, the origin while
+ * originTroops + back >= minOrigin. Default split sends back only what the origin needs to reach its minimum (and no more than
+ * leaves the target at its minimum) — the conservative default, not the mockup's 9/9 example split.
+ */
+export function survivorsSplit(state, data, f) {
+  const origin = f.origin, target = f.target, own = f.own, maxBack = f.maxBack;
+  const originTroops = state.provinces[origin]?.troops ?? 0;
+  const minTarget = minGarrison(state, data, target).min;
+  const minOrigin = minGarrison(state, data, origin).min;
+  const stayMin = Math.max(0, own - maxBack);
+  const stayMax = own;
+  const span = Math.max(1, stayMax - stayMin);
+  // Thresholds on the stay slider: the target reaches its minimum at stay = minTarget; the origin drops to its minimum at
+  // stay = own + originTroops - minOrigin (above that, too few return). The safe band is where both hold.
+  const safeLo = Math.max(stayMin, minTarget), safeHi = Math.min(stayMax, own + originTroops - minOrigin);
+  let back = Math.max(0, minOrigin - originTroops);
+  if (own - back < minTarget) back = Math.max(0, own - minTarget);
+  back = Math.max(0, Math.min(maxBack, back));
+  const general = state.players.find(p => p.id === f.player)?.general;
+  return {
+    origin, target, own, maxBack, originTroops, minTarget, minOrigin, stayMin, stayMax,
+    destTick: clamp01((minTarget - stayMin) / span), origTick: clamp01((own + originTroops - minOrigin - stayMin) / span),
+    safeLo, safeHi, safe: safeLo <= safeHi,
+    safeLoFrac: clamp01((safeLo - stayMin) / span), safeHiFrac: clamp01((safeHi - stayMin) / span),
+    defaultStay: own - back, defaultBack: back,
+    generalName: general ? (data.generalsById[general.id]?.name ?? 'General') : null,
+    originName: provName(data, origin), targetName: provName(data, target),
+  };
+}
+/** The split for one slider position: counts, whether each province meets its minimum, and the shortfalls. Pure, so tests drive it. */
+export function survivorsSplitAt(split, stay) {
+  const back = split.own - stay;
+  const originTotal = split.originTroops + back;
+  const targetOk = stay >= split.minTarget, originOk = originTotal >= split.minOrigin;
+  return {
+    stay, back, originTotal, targetTotal: stay, targetOk, originOk, bothOk: targetOk && originOk,
+    shortTarget: Math.max(0, split.minTarget - stay), shortOrigin: Math.max(0, split.minOrigin - originTotal),
+  };
+}
+/** The survivors popup HTML (desktop ask box and mobile sheet share it; each page wires its own controls). The Confirm button
+ *  repeats the split in words; the general is a single checkbox when he took part in the attack. */
+export function placeSurvivorsHtml(state, data, f) {
+  const sp = survivorsSplit(state, data, f);
+  const at = survivorsSplitAt(sp, sp.defaultStay);
+  const pct = v => (v * 100).toFixed(1) + '%';
+  const card = (role, name, count, min, status, under) => `<div class="sv-card sv-${role}${under ? ' is-under' : ''}" data-sv-card="${role}">
+      <span class="sv-role">${role === 'origin' ? 'You attacked from here' : 'Newly conquered'}</span>
+      <h3>${escHtml(name)}</h3>
+      <div class="sv-total"><span class="sv-big${under ? ' under' : ' ok'}" data-sv-count="${role}">${count}</span><span class="sv-unit">troops</span>
+      <span class="sv-minpill">min ${min}</span></div>
+      <div class="sv-delta" data-sv-delta="${role}"></div>
+      <div class="sv-status${under ? ' under' : ' ok'}" data-sv-status="${role}">${status}</div>
+      ${f.general ? `<span class="sv-genhere" data-sv-genhere="${role}">⚑ General here</span>` : ''}</div>`;
+  const statusFor = (ok, total, min, name, short) => ok ? `Garrison met — needs min ${min}`
+    : `UNDER-GARRISONED<span class="sv-short">${escHtml(name)} has ${total} of min ${min} — short by ${short} troop${short === 1 ? '' : 's'}</span>`;
+  const genRow = f.general ? `<label class="sv-genrow" data-sv-genrow><input type="checkbox" data-sv="general">
+      <span class="sv-gtext"><span class="sv-gtitle">${escHtml(sp.generalName)} goes back to ${escHtml(sp.originName)}</span>
+      <span class="sv-gsub" data-sv-gensub></span></span></label>` : '';
+  return `<div class="sv" data-sv-root data-own="${sp.own}" data-maxback="${sp.maxBack}" data-origintroops="${sp.originTroops}"
+      data-mintarget="${sp.minTarget}" data-minorigin="${sp.minOrigin}" data-staymin="${sp.stayMin}" data-staymax="${sp.stayMax}"
+      data-general="${f.general ? escHtml(sp.generalName) : ''}">
+    <p class="sv-sub">You conquered <b>${escHtml(sp.targetName)}</b> from <b>${escHtml(sp.originName)}</b>. <b>${sp.own} survivor${sp.own === 1 ? '' : 's'}</b> — decide where they stand.</p>
+    <div class="sv-cards">
+      ${card('origin', sp.originName, at.originTotal, sp.minOrigin, statusFor(at.originOk, at.originTotal, sp.minOrigin, sp.originName, at.shortOrigin), !at.originOk)}
+      ${card('target', sp.targetName, at.targetTotal, sp.minTarget, statusFor(at.targetOk, at.targetTotal, sp.minTarget, sp.targetName, at.shortTarget), !at.targetOk)}
+    </div>
+    <div class="sv-slider">
+      <p class="sv-readout" data-sv-readout></p>
+      <div class="sv-row">
+        <button type="button" class="sv-step" data-sv="down" aria-label="Send one more troop back to ${escHtml(sp.originName)}">−</button>
+        <div class="sv-wrap">
+          <input type="range" data-sv="slider" min="${sp.stayMin}" max="${sp.stayMax}" step="1" value="${sp.defaultStay}"${sp.stayMin === sp.stayMax ? ' disabled' : ''}
+            aria-label="Troops staying in ${escHtml(sp.targetName)}. Move left to send more back to ${escHtml(sp.originName)}, right to keep more in ${escHtml(sp.targetName)}. ${escHtml(sp.targetName)} needs at least ${sp.minTarget}, ${escHtml(sp.originName)} at least ${sp.minOrigin}.">
+          <span class="sv-tick sv-tick-target" style="left:${pct(sp.destTick)}" title="${escHtml(sp.targetName)} min ${sp.minTarget}"></span>
+          <span class="sv-tick sv-tick-origin" style="left:${pct(sp.origTick)}" title="${escHtml(sp.originName)} min ${sp.minOrigin}"></span>
+        </div>
+        <button type="button" class="sv-step" data-sv="up" aria-label="Keep one more troop in ${escHtml(sp.targetName)}">+</button>
+      </div>
+      <div class="sv-ticklabels"><span class="sv-tl-target" style="left:${pct(sp.destTick)}">min ${sp.minTarget} ▲</span><span class="sv-tl-origin" style="left:${pct(sp.origTick)}">▲ min ${sp.minOrigin}</span></div>
+      ${sp.safe ? `<div class="sv-safezone"><span class="sv-safebar" style="left:${pct(sp.safeLoFrac)};width:${pct(sp.safeHiFrac - sp.safeLoFrac)}"></span></div>
+      <p class="sv-safecap">Between the two marks, both provinces stay garrisoned</p>` : ''}
+      <div class="sv-minstrip">
+        <div class="sv-mincell sv-min-origin">${escHtml(sp.originName)} · min ${sp.minOrigin}<span class="sv-minsub">Met while ${sp.minOrigin} or more return</span></div>
+        <div class="sv-mincell sv-min-target">${escHtml(sp.targetName)} · min ${sp.minTarget}<span class="sv-minsub">Met while ${sp.minTarget} or more stay</span></div>
+      </div>
+      <div class="sv-ends"><span class="sv-end-origin">← More return to ${escHtml(sp.originName)}</span><span class="sv-end-target">More stay in ${escHtml(sp.targetName)} →</span></div>
+      <div class="sv-banner ok" data-sv="banner" role="status"></div>
+      <p class="sv-note">Minimum garrisons: <b>${escHtml(sp.originName)} min ${sp.minOrigin}</b> · <b>${escHtml(sp.targetName)} min ${sp.minTarget}</b> — ${sp.own} survivors cover both, with ${Math.max(0, sp.own - sp.minTarget - Math.max(0, sp.minOrigin - sp.originTroops))} to spare.</p>
+    </div>
+    ${genRow}
+    <button type="button" class="btn gold sv-confirm" data-sv="confirm"></button>
+  </div>`;
+}
+
 /**
  * The minimum the province panel shows. Conquered and starting provinces use the garrison minimum.
  * An allied province shows the perk threshold: natives + 1, with Pompey −1 and Garrison Requirement −1, never below 1 (19.r, 19.g).

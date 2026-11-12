@@ -827,3 +827,64 @@ body[data-map="large1"] .tok.wn{width:auto;min-width:max(16px,2.5cqw);padding:0 
 .maprow{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:14px}.maprow>b{font-size:1.15em}
 body:not([data-screen="game"]) #bTables{display:none}
 @media (max-width:1180px){header #consoleLink{display:none}header .btn{padding-left:7px;padding-right:7px}}   /* v31.3: the top bar (with Hide/Show tables) fits at 1024 px */
+
+/* v31.22: Place the survivors — one slider between the two provinces (approved mockup). Origin ALWAYS left, conquered target ALWAYS right. */
+.sv-sub{margin:2px 0 12px;font-size:1.02em}
+.sv-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.sv-card{border-radius:12px;padding:12px 14px;border:2px solid;background:#fffdf6}
+.sv-card.sv-origin{border-color:#31597a}
+.sv-card.sv-target{border-color:#8c2f22;text-align:right}
+.sv-card.is-under{border-color:#bc2418;background:#fdf0ec}
+.sv-role{font-size:.76rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+.sv-origin .sv-role{color:#31597a}.sv-target .sv-role{color:#8c2f22}
+.sv-card h3{margin:2px 0 0;font-size:1.25rem;line-height:1.1}
+.sv-total{margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sv-target .sv-total{justify-content:flex-end}
+.sv-big{font-size:2rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.sv-big.ok{color:#2e7d32}.sv-big.under{color:#bc2418}
+.sv-unit{font-size:.9rem;color:#6d5c40}
+.sv-minpill{font-size:.82rem;font-weight:700;border:1.5px solid #8a6d1f;color:#6d5410;background:#fdf3d3;border-radius:6px;padding:2px 8px}
+.sv-delta{margin-top:4px;font-size:.92rem;font-weight:600}
+.sv-origin .sv-delta{color:#31597a}.sv-target .sv-delta{color:#8c2f22}
+.sv-status{margin-top:7px;font-size:.86rem;font-weight:700;line-height:1.3}
+.sv-status.ok{color:#2e7d32}.sv-status.under{color:#bc2418;text-transform:uppercase;letter-spacing:.03em}
+.sv-short{display:block;text-transform:none;letter-spacing:0;font-weight:600;font-size:.84rem}
+.sv-genhere{display:none;margin-top:9px;font-size:.8rem;font-weight:700;background:#fdf3d3;border:1px solid #d9b84a;color:#6d5410;border-radius:999px;padding:4px 10px}
+.sv-genhere.show{display:inline-flex}
+.sv-target .sv-genhere{margin-left:auto}
+.sv-slider{margin-top:18px}
+.sv-readout{text-align:center;font-size:1.1rem;font-weight:700;margin:0 0 4px;font-variant-numeric:tabular-nums}
+.sv-readout .ok{color:#2e7d32}.sv-readout .under{color:#bc2418}
+.sv-row{display:flex;align-items:center;gap:10px}
+.sv-step{flex:none;width:44px;height:44px;border-radius:50%;font-size:1.35rem;font-weight:700;border:1.5px solid #c9b98f;background:#fffdf6;color:#4c3d22;cursor:pointer;display:grid;place-items:center;padding:0}
+.sv-step:disabled{opacity:.35;cursor:default}
+.sv-wrap{position:relative;flex:1;min-width:0}
+.sv-wrap input[type="range"]{width:100%;-webkit-appearance:none;appearance:none;height:44px;background:transparent;cursor:pointer;margin:0;display:block}
+.sv-wrap input[type="range"]::-webkit-slider-runnable-track{height:14px;border-radius:999px;border:1px solid rgba(60,45,15,.35);background:linear-gradient(90deg,#31597a 0 var(--split,50%),#8c2f22 var(--split,50%) 100%)}
+.sv-wrap input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:36px;height:36px;margin-top:-12px;border-radius:50%;background:#fdf9ec;border:3px solid #8a6d1f;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+.sv-wrap input[type="range"]::-moz-range-track{height:14px;border-radius:999px;border:1px solid rgba(60,45,15,.35);background:linear-gradient(90deg,#31597a 0 var(--split,50%),#8c2f22 var(--split,50%) 100%)}
+.sv-wrap input[type="range"]::-moz-range-thumb{width:30px;height:30px;border-radius:50%;background:#fdf9ec;border:3px solid #8a6d1f;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+.sv-tick{position:absolute;top:50%;width:5px;height:28px;transform:translate(-50%,-50%);border-radius:3px;pointer-events:none;z-index:3;background:#fff6cf;border:1.5px solid #7a5c00}
+.sv-tick-target{background:#f3d3cb;border-color:#8c2f22}
+.sv-tick-origin{background:#cfdfeb;border-color:#31597a}
+.sv-ticklabels{position:relative;height:20px;margin:1px 54px 0}
+.sv-ticklabels span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap;font-size:.74rem;font-weight:700}
+.sv-tl-target{color:#8c2f22}.sv-tl-origin{color:#31597a}
+.sv-safezone{margin:2px 54px 0;position:relative;height:9px}
+.sv-safebar{position:absolute;top:0;height:9px;border-radius:999px;background:#2e7d32;opacity:.55}
+.sv-safecap{margin:5px 0 0;text-align:center;font-size:.85rem;font-weight:600;color:#2e7d32}
+.sv-minstrip{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px}
+.sv-mincell{font-size:.88rem;font-weight:700;line-height:1.3}
+.sv-minsub{display:block;font-size:.8rem;font-weight:600;color:#6d5c40}
+.sv-min-origin{color:#31597a}.sv-min-target{color:#8c2f22;text-align:right}
+.sv-ends{display:flex;justify-content:space-between;gap:10px;margin-top:8px;font-size:.9rem;font-weight:600}
+.sv-end-origin{color:#31597a}.sv-end-target{color:#8c2f22;text-align:right}
+.sv-banner{margin-top:14px;border-radius:12px;padding:11px 15px;font-weight:700;font-size:.98rem;line-height:1.35}
+.sv-banner.ok{background:#eef4e2;border:1.5px solid #9db877;color:#3c5420}
+.sv-banner.under{background:#fbe9e5;border:1.5px solid #bc2418;color:#8f1d12}
+.sv-note{margin:10px 0 0;text-align:center;font-size:.88rem;color:#6d5c40}
+.sv-genrow{margin-top:16px;display:flex;gap:12px;align-items:flex-start;cursor:pointer;border:1.5px solid #c9b98f;background:#fffdf6;border-radius:12px;padding:13px 15px}
+.sv-genrow input[type="checkbox"]{width:26px;height:26px;flex:none;margin:2px 0 0;accent-color:#8c2f22;cursor:pointer}
+.sv-gtitle{font-weight:700;font-size:1.02rem;display:block}
+.sv-gsub{display:block;margin-top:2px;font-size:.92rem;color:#6d5c40}
+.sv-confirm{margin-top:14px;width:100%;min-height:52px;font-size:1.04rem}

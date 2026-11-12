@@ -161,6 +161,10 @@ export const generalProtects = (state, id) => {
 };
 /** Can this conquered province revolt right now? 10+ troops never revolts (17.c, 18.m, 19.d); it still counts toward the threshold. */
 export const canRevolt = (state, data, id) => state.provinces[id].troops < data.rules.revoltImmuneAtTroops && !generalProtects(state, id);
+/** Small-empire protection (18.m, 18.v; decided by Vidi 2026-11-11): a player holding 2 or fewer provinces cannot be targeted by
+ * Revolt! or by a rival's Bribe the Ally!. The count is every province they own — starting, conquered and allied, plus Roma if held
+ * (provincesOf includes a held Roma: its owner is the holder). This does NOT change the Revolt Roll (17.c, 18.m). */
+export const isSmallEmpire = (state, pid) => provincesOf(state, pid).length <= 2;
 /** Why a province cannot revolt right now (for the log): the general's protection, or the 10+ rule. */
 export const revoltImmuneReason = (state, data, id) => generalProtects(state, id)
   ? 'the general is stationed here, so it cannot revolt'

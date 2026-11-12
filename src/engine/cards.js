@@ -17,22 +17,29 @@ const rivals = (state, pid) => state.players.filter(p => p.id !== pid && !p.out)
 const defOf = (state, uid) => state.cards[uid].def;
 
 // ------------------------------------------------------------------ pure target selectors (shared with legalActions / AI)
-/** Revolt! targets (18.m, Q38): a rival's CONQUERED province (not a start province, not allied, never Roma), fewer than 10 troops. */
+/** Revolt! targets (18.m, Q38): a rival's CONQUERED province (not a start province, not allied, never Roma), fewer than 10 troops,
+ * and never a province of a player with 2 or fewer provinces (small-empire protection, 18.m, v31.23). */
 export const revoltTargets = (state, data, pid) => Object.keys(state.provinces).sort().filter(id => {
   const p = state.provinces[id];
-  return p.owner && p.owner !== pid && !playerOf(state, p.owner).out && p.status === 'conquered' && id !== 'roma' && S.canRevolt(state, data, id);
+  return p.owner && p.owner !== pid && !playerOf(state, p.owner).out && p.status === 'conquered' && id !== 'roma' && S.canRevolt(state, data, id) && !S.isSmallEmpire(state, p.owner);
 });
 /** Rival conquered provinces that WOULD be Revolt! targets but for the owner's general stationed there (18.m, v31.10): for the denial reason. */
 export const revoltGeneralBlocked = (state, data, pid) => Object.keys(state.provinces).sort().filter(id => {
   const p = state.provinces[id];
   return p.owner && p.owner !== pid && !playerOf(state, p.owner).out && p.status === 'conquered' && id !== 'roma' && p.troops < data.rules.revoltImmuneAtTroops && S.generalProtects(state, id);
 });
-/** Why Revolt! has no target right now: the general's protection, or no province under 10 troops (18.m). */
+/** Rival conquered provinces that WOULD be Revolt! targets but for the owner's small empire (18.m, v31.23): for the denial reason. */
+export const revoltSmallEmpireBlocked = (state, data, pid) => Object.keys(state.provinces).sort().filter(id => {
+  const p = state.provinces[id];
+  return p.owner && p.owner !== pid && !playerOf(state, p.owner).out && p.status === 'conquered' && id !== 'roma' && S.canRevolt(state, data, id) && S.isSmallEmpire(state, p.owner);
+});
+/** Why Revolt! has no target right now: the general's protection, the small-empire rule, or no province under 10 troops (18.m). */
 const revoltNoTarget = (state, data, pid) => {
   const blocked = revoltGeneralBlocked(state, data, pid);
-  return blocked.length
-    ? { reason: 'the general is stationed in every rival conquered province under 10 troops', message: `The general is stationed in every rival conquered province with fewer than 10 troops (${blocked.map(id => nm(data, id)).join(', ')}), so none can revolt: Revolt! cannot be played and stays in your hand (18.m).` }
-    : { reason: 'no rival conquered province under 10 troops', message: 'No rival holds a conquered province with fewer than 10 troops: Revolt! cannot be played and stays in your hand (18.m).' };
+  if (blocked.length) return { reason: 'the general is stationed in every rival conquered province under 10 troops', message: `The general is stationed in every rival conquered province with fewer than 10 troops (${blocked.map(id => nm(data, id)).join(', ')}), so none can revolt: Revolt! cannot be played and stays in your hand (18.m).` };
+  const small = revoltSmallEmpireBlocked(state, data, pid);
+  if (small.length) return { reason: 'every rival conquered province under 10 troops belongs to a player with 2 or fewer provinces', message: `Every rival conquered province with fewer than 10 troops (${small.map(id => `${nm(data, id)} (${playerOf(state, state.provinces[id].owner)?.name ?? state.provinces[id].owner})`).join(', ')}) belongs to a player with 2 or fewer provinces, so none can revolt: Revolt! cannot be played and stays in your hand (18.m).` };
+  return { reason: 'no rival conquered province under 10 troops', message: 'No rival holds a conquered province with fewer than 10 troops: Revolt! cannot be played and stays in your hand (18.m).' };
 };
 /**
  * Assassin! targets (18.e, 18.i, 12.g, 12.l, 16.n; Vidi 2026-10-22): any province you do not control (a rival's, allied ones included,
@@ -51,10 +58,11 @@ export const assassinTargets = (state, pid, data = null) => Object.keys(state.pr
 });
 /** How many troops the Assassin must kill: as many as legally possible, up to 2 (18.e). */
 export const assassinKills = (state, data, pid) => Math.min(data.rules.assassin?.kills ?? 2, assassinTargets(state, pid, data).reduce((t, id) => t + strikeTroops(state, id) - 1, 0));
-/** Bribe the Ally! targets (18.v, Q32): a province allied to a rival (never Carthage), with the Gold cost = its native count. */
+/** Bribe the Ally! targets (18.v, Q32): a province allied to a rival (never Carthage), with the Gold cost = its native count,
+ * and never a province of a player with 2 or fewer provinces (small-empire protection, 18.v, v31.23). */
 export const bribeTargets = (state, data, pid) => Object.keys(state.provinces).sort().filter(id => {
   const p = state.provinces[id];
-  return p.owner && p.owner !== pid && !playerOf(state, p.owner).out && p.status === 'allied' && id !== 'carthage' && !S.generalProtects(state, id);
+  return p.owner && p.owner !== pid && !playerOf(state, p.owner).out && p.status === 'allied' && id !== 'carthage' && !S.generalProtects(state, id) && !S.isSmallEmpire(state, p.owner);
 }).map(id => ({ province: id, cost: bribeCost(state, id) }));
 export const bribeCost = (state, id) => state.provinces[id].native.count ?? 0;
 /** Rival allied provinces that would be Bribe targets but for their owner's general stationed there (18.v, 17.c). */
@@ -62,12 +70,18 @@ export const bribeGeneralBlocked = (state, data, pid) => Object.keys(state.provi
   const p = state.provinces[id];
   return p.owner && p.owner !== pid && !playerOf(state, p.owner).out && p.status === 'allied' && id !== 'carthage' && S.generalProtects(state, id);
 });
-/** Why Bribe the Ally! has no target right now: the general's protection, or no allied province at all (18.v). */
+/** Rival allied provinces that WOULD be Bribe targets but for their owner's small empire (18.v, v31.23): for the denial reason. */
+export const bribeSmallEmpireBlocked = (state, data, pid) => Object.keys(state.provinces).sort().filter(id => {
+  const p = state.provinces[id];
+  return p.owner && p.owner !== pid && !playerOf(state, p.owner).out && p.status === 'allied' && id !== 'carthage' && !S.generalProtects(state, id) && S.isSmallEmpire(state, p.owner);
+});
+/** Why Bribe the Ally! has no target right now: the general's protection, the small-empire rule, or no allied province at all (18.v). */
 const bribeNoTarget = (state, data, pid) => {
   const blocked = bribeGeneralBlocked(state, data, pid);
-  return blocked.length
-    ? { reason: 'the general is stationed in every province allied to a rival', message: `The general is stationed in every province allied to a rival (${blocked.map(id => nm(data, id)).join(', ')}), so none can be bribed: Bribe the Ally! cannot be played and stays in your hand (18.v).` }
-    : { reason: 'no province is allied to a rival, and you have no allied province of your own (Carthage never counts)', message: 'No province is allied to a rival and you have no allied province to turn into a conquered one: Bribe the Ally! cannot be played and stays in your hand (18.v).' };
+  if (blocked.length) return { reason: 'the general is stationed in every province allied to a rival', message: `The general is stationed in every province allied to a rival (${blocked.map(id => nm(data, id)).join(', ')}), so none can be bribed: Bribe the Ally! cannot be played and stays in your hand (18.v).` };
+  const small = bribeSmallEmpireBlocked(state, data, pid);
+  if (small.length) return { reason: 'every province allied to a rival belongs to a player with 2 or fewer provinces', message: `Every province allied to a rival (${small.map(id => `${nm(data, id)} (${playerOf(state, state.provinces[id].owner)?.name ?? state.provinces[id].owner})`).join(', ')}) belongs to a player with 2 or fewer provinces, so none can be bribed: Bribe the Ally! cannot be played and stays in your hand (18.v).` };
+  return { reason: 'no province is allied to a rival, and you have no allied province of your own (Carthage never counts)', message: 'No province is allied to a rival and you have no allied province to turn into a conquered one: Bribe the Ally! cannot be played and stays in your hand (18.v).' };
 };
 /** Bribe the Ally! second use (18.v, 19.r; Vidi 2026-10-25): your own allied provinces (never Carthage), cost 1 Gold to the bank. */
 export const bribeOwnTargets = (state, data, pid) => Object.keys(state.provinces).sort().filter(id => {

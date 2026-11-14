@@ -75,7 +75,7 @@ export function describePrompt(state, data) {
   if (!f) return `${head}: ${who} chooses an action.`;
   const what = {
     roll: `rolls the ${f.die} (${f.purpose})`, draw: `draws a ${f.deck} card (${f.reason})`, placeTroops: `places ${f.count} troop(s)`,
-    resourceBuild: `builds the ${f.piece} or saves the card`, chooseProvince: { taxTroop: 'chooses the province that pays the tax troop', decreeLegion: 'chooses the province that sends the Decree legion', removedProvince: 'chooses the province the Emperor restores (18.q)', removedTroops: 'chooses where the removed troops go' }[f.purpose] ?? 'chooses where the survivors go',
+    resourceBuild: `builds the ${f.piece} or saves the card`, chooseProvince: { taxTroop: 'chooses the province that pays the tax troop', decreeLegion: 'chooses the province that sends the Decree legion', removedProvince: 'chooses the province the Emperor restores (18.q)', removedTroops: 'chooses where the removed troops go', bribeReinforce: 'moves troops into the newly-bribed ally from one of their own provinces (0 = move none, up to the move limit, no route needed — 18.v)' }[f.purpose] ?? 'chooses where the survivors go',
     chooseBorrow: `chooses how many natives to borrow (0-${f.max})`, chooseBattleCards: 'chooses battle cards', choosePerk: 'chooses a general perk',
     responseWindow: { revoltResponse: `may play Kill Revolt leader! to stop the revolt in ${f.province}`, displeasedResponse: `may play Busy Little Bee! to redirect ${f.def}` }[f.window] ?? 'may sound the Horn of Titus Pullus or pass',
     discardCards: `loses ${f.count} saved card(s) to the Emperor's tax`, battleContinue: 'continues the battle or retreats', placeSurvivors: `places the survivors (up to ${f.maxBack} back)`,
@@ -199,6 +199,7 @@ const T = {
   generalMoved: (e, st, d) => `${pn(st, e.pub.player)}'s general moves from ${prov(d, e.pub.from)} to ${prov(d, e.pub.to)} (free, 15.j).`,
   allyMadeConquered: (e, st, d) => `${pn(st, e.pub.player)} pays ${G(e.pub.gold)} to the bank: allied ${prov(d, e.pub.province)} becomes a conquered province (keeps its ${e.pub.troops} troops, +${e.pub.prestige ?? 1} Prestige, 18.v).`,
   allyBribed: (e, st, d) => `${pn(st, e.pub.player)} bribes ${prov(d, e.pub.province)} away from ${pn(st, e.pub.from)} for ${G(e.pub.gold)}: ${e.pub.switched} troop switches sides, ${e.pub.lost} lost, ${e.pub.fled} flee.`,
+  bribeReinforced: (e, st, d) => e.pub.n ? `${pn(st, e.pub.player)} moves ${e.pub.n} troop(s) into ${prov(d, e.pub.province)} from ${prov(d, e.pub.from)} after the bribe (18.v).` : `${pn(st, e.pub.player)} moves no troops into ${prov(d, e.pub.province)} after the bribe (18.v).`,
   displeasedRedirected: (e, st) => `${pn(st, e.pub.player)} plays Busy Little Bee! (${G(e.pub.gold)} to ${e.pub.goldTo === 'roma' ? 'Roma' : pn(st, e.pub.goldTo)}): ${pn(st, e.pub.to)} suffers ${e.pub.def} instead.`,
   displeasedDeferred: (e, st, d) => `${pn(st, e.pub.player)} loses all their bonus troops to Roma at the start of their next turn (${d?.cardDefsById?.[e.pub.def]?.name ?? e.pub.def}${e.pub.redirectedBy ? `, sent by ${pn(st, e.pub.redirectedBy)}'s Busy Little Bee!` : ''}, 18.r).`,
   displeasedNoEffect: (e, st) => `${e.pub.def}: no effect on ${pn(st, e.pub.player)} (${e.pub.reason}).`,

@@ -75,6 +75,7 @@ export function createGuest(page) {
         page.retry?.(() => { if (!mineNet()) return; page.say('Asking the host for the game again…'); c.retryState(); }); },
       // v30.5.1: a game in progress with several free seats: "Which player are you?" (the player names; one tap joins that seat)
       onHold: () => { if (mineNet()) page.say('Waiting for the host to give you a seat…'); },
+      onChat: (c, m) => { if (mineNet()) page.onChat?.(m); },   // v31.27 (Update 2): a chat line relayed by the host (including our own)
       onPick: (c, seats) => { if (!mineNet()) return; page.busyJoin(false); page.say('This game is already running. Which player are you?');
         page.pick?.(seats, i => { if (!mineNet()) return; page.pick?.(null); page.busyJoin(true); page.say(`Joining as ${seats.find(x => x.i === i)?.name ?? 'that player'}…`); c.pick(i); }); },
       // v31.3: a long full sync (a Large Map 1 game: ~50-60 pieces) shows how far it is
@@ -171,6 +172,14 @@ export function createGuest(page) {
     if (n.client.status !== 'connected') { page.toast('Reconnecting to the host: wait a moment'); return false; }
     n.pending = true; n.client.act(action); pendWatch(); page.freezeControls(); return true;
   }
+  /** v31.27 (Update 2): a chat line to the host, which relays it to every screen (including this one). */
+  function chat(text) {
+    const n = C.NET;
+    if (n.lost) { page.toast(n.lost); return false; }
+    if (n.client.status !== 'connected') { page.toast('Reconnecting to the host: wait a moment'); return false; }
+    if (!n.client.chat(text)) return false;
+    return true;
+  }
   function pendWatch() {
     const n = C.NET; clearTimeout(n.pendSlow); clearTimeout(n.pendRetry); n.slow = false;
     n.pendSlow = setTimeout(() => { if (C.NET === n && n.pending) { n.slow = true; page.banner(); } }, PEND_SLOW_MS);
@@ -196,5 +205,5 @@ export function createGuest(page) {
     const c = n.client;
     return n.lost ? 'ended' : c.status === 'connected' && c.hostAway ? 'hostAway' : c.status === 'connected' && c.ai ? 'ai' : c.status === 'connected' && n.pending && n.slow ? 'waiting' : c.status;
   }
-  return { join, leave, forget, send, drain, heal, notDue, status, pendDone };
+  return { join, leave, forget, send, chat, drain, heal, notDue, status, pendDone };
 }

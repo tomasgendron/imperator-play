@@ -9,7 +9,7 @@ import { topFrame } from './core.js';
 import * as S from './selectors.js';
 import { attackTargets, summonGeneralTarget } from './battle.js';
 import { generalMoveTargets, sellableCards } from './turn.js';
-import { TURN_PLAYS, heldLongEnough, revoltTargets, bribeTargets, bribeOwnTargets, assassinTargets, assassinKills, strikeTroops, sneakAttacks } from './cards.js';
+import { TURN_PLAYS, heldLongEnough, revoltTargets, bribeTargets, bribeOwnTargets, maxBribeReinforce, assassinTargets, assassinKills, strikeTroops, sneakAttacks } from './cards.js';
 
 const nm = (data, id) => data.provincesById[id]?.name ?? id;
 /** How many troops must stay so the province remains at its minimum (and the global floor). Shown wherever troops are asked to move. */
@@ -82,7 +82,12 @@ export function legalActions(state, data) {
         }
         break;
       }
-      case 'chooseProvince': for (const id of f.options) add({ type: 'CHOOSE_PROVINCE', province: id }, `${{ taxTroop: 'Pay the tax troop from', decreeLegion: 'Send the Decree legion from', removedProvince: 'The Emperor restores', removedTroops: 'Move the troops to' }[f.purpose] ?? 'Send the survivors to'} ${nm(data, id)}`); break;
+      case 'chooseProvince': for (const id of f.options) {
+        // v31.27 (18.v): after a rival bribe, move troops into the new ally from ONE own province — 0 is allowed (decline),
+        // up to the move limit, no route needed. The slider (desktop optionsHtml / mobile rowsHtml) carries the count.
+        if (f.purpose === 'bribeReinforce') { const max = maxBribeReinforce(state, data, id); add({ type: 'CHOOSE_PROVINCE', province: id, troops: max }, `Reinforce ${nm(data, f.target)} from ${nm(data, id)}: move 0-${max} troops (no route needed; ${stayNote(state, data, id)})`, { field: 'troops', min: 0, max }); continue; }
+        add({ type: 'CHOOSE_PROVINCE', province: id }, `${{ taxTroop: 'Pay the tax troop from', decreeLegion: 'Send the Decree legion from', removedProvince: 'The Emperor restores', removedTroops: 'Move the troops to' }[f.purpose] ?? 'Send the survivors to'} ${nm(data, id)}`);
+      } break;
       // battles (M2)
       case 'chooseBorrow':
         add({ type: 'CHOOSE_BORROW', count: f.max }, `Borrow natives from ${nm(data, f.from)} (0-${f.max})`, { field: 'count', min: 0, max: f.max });

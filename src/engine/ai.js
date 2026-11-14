@@ -311,6 +311,22 @@ export function chooseAction(state, data, opts = {}) {
         return p0 - p1 > 0.15 ? best.action : byType('PASS')[0].action;
       }
       break;   // Kill Revolt leader! and Busy Little Bee!: the 1-ply look-ahead below compares playing with passing
+    case 'chooseProvince':
+      if (f.purpose === 'bribeReinforce') {   // v31.27 (18.v): after bribing a rival's ally, move troops in when a source has
+        // surplus — try 0 (decline), the amount that brings the new ally to its Game Roll reward minimum (19.r), half, and max
+        // from each source, and keep the best 1-ply score. The cap already keeps every source at its minimum garrison, so even
+        // the max move never strips one; with a single source legalActions has one entry and the early return above takes its
+        // max, which is safe for the same reason.
+        const need = Math.max(0, S.alliedRewardNeed(state, data, f.target) - state.provinces[f.target].troops);
+        let best = null;
+        for (const d of legal.filter(x => x.type === 'CHOOSE_PROVINCE')) {
+          const mx = d.range?.max ?? 0;
+          const tries = [...new Set([0, Math.min(mx, need), Math.ceil(mx / 2), mx])].filter(n => n >= 0 && n <= mx);
+          for (const n of tries) { const v = oneply({ ...d.action, troops: n }); if (!best || v > best.v) best = { v, a: { ...d.action, troops: n } }; }
+        }
+        return best?.a ?? legal[0].action;
+      }
+      break;   // other chooseProvince frames (tax, decree legion, survivors): the generic 1-ply below compares the provinces
     default: break;
   }
 

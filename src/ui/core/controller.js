@@ -47,11 +47,22 @@ export function createController(view) {
     const r = G.play(c.S, action);
     if (remote) remote(r.error);   // M11: a guest's move; the engine's checks decide, its error goes back to that guest only
     if (r.error) { if (!remote) { view.sound('error_denied'); view.toast(r.error.message + (r.error.rule ? ` (${r.error.rule})` : '')); } return false; }
-    c.S = r.session; c.busy = true; document.body.dataset.busy = '1';
+    c.S = r.session;
+    // v31.27 (Update 4): resolve off-turn Game Card draws BEFORE the events animate (model.js resolveOffTurnDraws:
+    // the exact DRAW_CARD action a click would send, so the seeded-RNG card is identical). The old path could only
+    // fire from schedule() -> humanAuto, which never runs while apply() waits on the sticky Game Roll popup (a human
+    // roll keeps it open until OK, and online the non-roller's screen is sticky too) — so the draw waited on a click
+    // that might never come. The draw's own events join the batch, so its card reveal still animates (after the popup
+    // is dismissed); the net push below sends the final state, so guests see the drawn card in the same update.
+    const firstEvs = current(c.S).events ?? [];
+    const drew = G.resolveOffTurnDraws(c.S, view.data());
+    if (drew.drew.length) c.S = drew.session;
+    c.busy = true; document.body.dataset.busy = '1';
     if (c.NET?.role === 'host') view.netPush();
     view.freezeControls();
     view.applied({ fromAi });      // desktop: the builder closes (not for an AI move) and the prompt overlay goes
-    const evs = c.NET?.role === 'host' && c.NET.me ? eventsFor(current(c.S).events, c.NET.me) : current(c.S).events;   // M12: the host sees its seat's events
+    const allEvs = [...firstEvs, ...drew.events];
+    const evs = c.NET?.role === 'host' && c.NET.me ? eventsFor(allEvs, c.NET.me) : allEvs;   // M12: the host sees its seat's events
     if (!hostHidden()) { try { await view.playEvents(evs, before); } catch (e) { console.warn('animation', e); } }   // v26.1: a hidden host does not animate
     c.busy = false; document.body.dataset.busy = '';
     autosave(); view.render(); schedule();
@@ -91,6 +102,8 @@ export function createController(view) {
     // who is not the active turn player. The DRAW_CARD descriptor is the one a manual click would send, so the seeded-RNG draw
     // (and the card drawn) is identical, and the reveal popup is the normal cardDrawn flip/sheet. On-turn draws keep the click.
     // A guest never draws here: the host resolves every human seat's off-turn draw.
+    // v31.27 (Update 4): apply() now pre-resolves these before the events animate, so this timer is only the fallback for a
+    // draw frame that arrives without an apply (a loaded save) — the popup can no longer hold a draw hostage.
     const off = G.offTurnDraw(full(), view.data());
     if (off && c.NET?.role !== 'guest') {
       const fid = topFrame(full())?.id;

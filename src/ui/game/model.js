@@ -2,7 +2,7 @@
 // The page keeps a console session (src/ui/consoleModel.js) and asks this module who looks at the screen, what a human may do
 // now (grouped for the phase bar, the map and the builder), what a card looks like, which sounds an event plays, and how a save file reads.
 import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets } from '../../engine/index.js';
-import { newSession, play, aiToMove, aiMove, stateOf, formatEvent, describePrompt } from '../consoleModel.js';
+import { newSession, play, aiToMove, aiMove, stateOf, current, formatEvent, describePrompt } from '../consoleModel.js';
 
 export { newSession, play, aiToMove, aiMove, stateOf, describePrompt };
 export { roadNetwork, shipSegments, goldPrestige };
@@ -87,6 +87,28 @@ export function offTurnDraw(state, data) {
   if (f.player === state.turn.activePlayerId) return null;
   if (!isHuman(state, f.player)) return null;
   return humanLegal(state, data, f.player).find(d => d.type === 'DRAW_CARD') ?? null;
+}
+/** v31.27 (Update 4): resolve every pending off-turn Game Card draw in `session` right now, with no popup involved.
+ *  The controller calls this inside apply(), before the events animate, so an off-turn draw no longer waits behind the
+ *  Game Roll popup: that popup is sticky whenever a human rolls (gameRollPopup: `sticky: rollerHuman`), and apply()
+ *  cannot finish — so schedule() and its 400 ms humanAuto timer cannot run — until somebody clicks OK. Online that
+ *  left the non-rolling human's reward card undrawn (the guest can never fix it herself: the host resolves every
+ *  human seat's off-turn draw). Each draw here is the exact DRAW_CARD action a click would send (offTurnDraw), so the
+ *  seeded-RNG card is identical; the returned `events` are the draws' own events, in order, for the caller to animate
+ *  with the rest of the batch (the card-reveal flip still shows, after the popup is dismissed). The roller's own reward
+ *  card, on-turn draws and AI seats are untouched (offTurnDraw returns null for them), and a session with no off-turn
+ *  draw comes back unchanged. At most 10 draws: a chain cannot run away. */
+export function resolveOffTurnDraws(session, data) {
+  let s = session; const events = []; const drew = [];
+  for (let k = 0; k < 10; k++) {
+    const d = offTurnDraw(stateOf(s), data);
+    if (!d) break;
+    const reason = topFrame(stateOf(s))?.reason ?? null;
+    const r = play(s, d.action);
+    if (r.error) break;   // a legal descriptor cannot fail; never spin on it
+    s = r.session; events.push(...(current(s).events ?? [])); drew.push({ player: d.action.playerId, reason });
+  }
+  return { session: s, events, drew };
 }
 
 /** v26.1 (the stuck Revolt Roll): null while the game can go on; otherwise why it cannot: a pending prompt with no legal move for
@@ -223,7 +245,7 @@ export function frameTitle(state, data) {
   if (!f) return null;
   const T = {
     roll: 'Roll the dice', draw: 'Draw a card', setupGeneral: 'Choose your general', setupSide: 'Choose your side (west or east)', setupStartProvince: 'Choose your start province',
-    placeTroops: 'Place troops', resourceBuild: 'Build now or save the card', chooseProvince: 'Choose a province', chooseBorrow: 'Borrow natives?',
+    placeTroops: 'Place troops', resourceBuild: 'Build now or save the card', chooseProvince: f.purpose === 'bribeReinforce' ? 'Reinforce your new ally' : 'Choose a province', chooseBorrow: 'Borrow natives?',
     chooseBattleCards: 'Battle cards', choosePerk: 'General perk', battleContinue: 'Continue the battle?', placeSurvivors: 'Place the survivors',
     returnReinforcements: 'Send the Horn troops home?',
     discardCards: "The Emperor's tax", responseWindow: { revoltResponse: 'A province revolts!', displeasedResponse: 'Rome is displeased with you', defenceAnnounced: 'You are attacked!' }[f.window] ?? 'Your answer',

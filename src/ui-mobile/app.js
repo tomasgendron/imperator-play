@@ -15,6 +15,7 @@ import { createController } from '../ui/core/controller.js';
 import { createMapView } from './map.js';
 import { createGuest, NAME_KEY, normCode, HOST_AWAY_MS, PEND_RETRY_MS, whyText } from './guest.js';
 import { createHost, onlineSave, joinLink } from './host.js';
+import * as Chat from '../net/chat.js';   // v31.27 (Update 2): the in-game player chat (Menu → 💬 Chat)
 import { forgetSeat, parseJoin } from '../net/seats.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -46,6 +47,7 @@ const NETG = createGuest({
   retry: fn => { joinPick = fn ? { retry: fn } : null; const e = $('#mPick'); if (e) { e.innerHTML = pickHtml(); bindPick(); } },   // v30.5.1: no game state arrived
   pick: (seats, choose) => { joinPick = seats ? { seats, choose } : null; const e = $('#mPick'); if (e) { e.innerHTML = pickHtml(); bindPick(); } },
   lost: msg => { SND.play('error_denied'); openSheet('netlost', `<div class="sh-head"><h2>Disconnected</h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div><div class="sh-body" id="netLostBox"><p>${esc(msg)}</p></div><div class="sh-foot"><button class="btn gold wide" data-close>OK</button><button class="btn wide" id="nlLeave">Back to the start</button></div>`); $('#nlLeave').onclick = () => { closeSheet(true); toStart(); }; },
+  onChat: m => addChat(m),   // v31.27 (Update 2): a chat line relayed by the host (including our own)
 });
 const isGuest = () => C.NET?.role === 'guest';
 const isHost = () => C.NET?.role === 'host';
@@ -68,6 +70,7 @@ const NETH = createHost({
   },
   joinGone: () => { if (document.body.dataset.sheet === 'joinask') closeSheet(true); },
   away: ms => hostBack(ms), wake: () => { if (inGame()) renderNetBar(); else { const e = $('#hWake'); if (e) e.innerHTML = wakeText(); } },
+  onChat: m => addChat(m),   // v31.27 (Update 2): a guest's chat line arrived (host.js relays it on)
 });
 /** The seat this screen shows: online, always this phone's own seat (a guest gets only its view; a host plays only its own seat);
  *  else the hot-seat viewer. */
@@ -501,6 +504,7 @@ function enterGame(fresh) {
   document.body.dataset.screen = 'game'; $('#start').hidden = true; $('#app').hidden = false; closeSheet(true);
   C.viewer = C.NET?.me ?? null; C.aiPaused = false; C.busy = false; selected = null; document.body.dataset.netLost = ''; overShown = false; lastRoll = null; askSeen = null;
   if (popKind) closePop(); $('#cardPlays').innerHTML = ''; battleOff = null;   // nothing of the last game stays on screen
+  chatLog.clear(); chatRendered = -1;   // v31.27: a new game starts with an empty chat (ephemeral, never saved)
   requestAnimationFrame(() => { MV.start(0.45, 0.5); });
   $('#maphint').hidden = !fresh; if (fresh) setTimeout(() => { $('#maphint').hidden = true; }, 4000);
   autosave(); render(); schedule(); guard();
@@ -559,6 +563,7 @@ function render() {
   if (sheetKind === 'province' && selected) openProvince(selected, true);
   else if (sheetKind === 'log') openLog(true);
   else if (sheetKind === 'player' && $('#genSheet')) openPlayer($('#genSheet').dataset.pid, true);
+  if (sheetKind === 'chat') renderChatList();   // v31.27: new lines arrive while the chat sheet is open
   // v30.1: the battle sheet is open while a battle runs (its prompts live inside it); ▾ hides it until the gold button or the next battle
   const hideB = s.battle && G.skipBattleUi(s, s.battle.att.player, s.battle.def.player);
   if (hideB && popKind === 'battle' && !popDone) { closePop(); bv = null; }
@@ -1113,11 +1118,62 @@ function wireLog() {
   const m = $('#logMore'); if (m) m.onclick = () => { logLimit += 150; openLog(true); };
 }
 const SPEEDS = [['1.6', 'Slow'], ['1', 'Normal'], ['0.35', 'Fast'], ['0.05', 'Instant']];
+/** v31.27 (Update 2): the player chat — Menu → 💬 Chat opens this sheet (the phone has no Which Die? panel to replace).
+ *  Same rules as the desktop panel: in-game only, ephemeral (never the log, never a save, a new game starts empty);
+ *  online the host relays every line to every screen; a guest renders its own line when the host broadcasts it back.
+ *  Hot-seat: the shared screen, sender = the player whose turn/view it is (meNow). Solo vs AI: the box stays visible
+ *  but disabled, with a note. Emoji taps send at once; an emoji-only line renders big. */
+let chatLog = Chat.createChatLog();
+let chatRendered = -1, chatSoloShown = null;
+const chatSolo = () => !C.S || G.humans(st()).length < 2;
+function addChat(m) { if (chatLog.add(m)) renderChatList(); }
+function sendChat(text) {
+  const clean = Chat.cleanChatText(text);
+  if (!clean || !C.S || chatSolo()) return false;
+  const me = C.NET?.me ?? meNow(st());
+  const m = Chat.makeChatMessage({ from: me ?? null, name: G.nameOf(st(), me), text: clean });
+  if (C.NET?.role === 'host') { addChat(m); C.NET.room.broadcastChat(m); return true; }
+  if (C.NET?.role === 'guest') return NETG.chat(clean);   // the line renders when the host broadcasts it back
+  addChat(m); return true;   // hot-seat: the shared screen
+}
+function chatListHtml() {
+  const s = C.S ? st() : null;
+  if (!chatLog.list.length) return '<p class="note">No messages yet — say hello, or tap an emoji below.</p>';
+  return chatLog.list.map(m => m.emoji
+    ? `<div style="line-height:1.4;margin:2px 0"><b style="color:var(--${s ? col(m.from) : 'p1'})">${esc(m.name)}</b> <span style="font-size:1.7em;line-height:1">${esc(m.text)}</span></div>`
+    : `<div style="line-height:1.35;margin:2px 0"><b style="color:var(--${s ? col(m.from) : 'p1'})">${esc(m.name)}</b> <span>${esc(m.text)}</span></div>`).join('');
+}
+function renderChatList() {
+  const list = $('#mChatList'); if (!list) return;
+  const solo = chatSolo();
+  if (chatRendered === chatLog.version && chatSoloShown === solo) return;
+  chatRendered = chatLog.version; chatSoloShown = solo;
+  list.innerHTML = chatListHtml();
+  list.scrollTop = list.scrollHeight;
+  const inp = $('#mChatInput'), btn = $('#mChatSend'), em = $('#mChatEmojis'), note = $('#mChatNote');
+  if (inp) inp.disabled = solo;
+  if (btn) btn.disabled = solo;
+  if (em) em.style.opacity = solo ? '0.4' : '';
+  if (note) { note.hidden = !solo; if (solo) note.textContent = 'Only you in this game — chat needs another human player (online or pass-and-play).'; }
+}
+function openChat() {
+  if (!inGame()) return;
+  openSheet('chat', `<div class="sh-head"><h2>💬 Chat<small>in-game only · not saved</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body"><div id="mChatList" style="min-height:120px;max-height:46vh;overflow-y:auto"></div>
+    <div id="mChatEmojis" style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">${Chat.CHAT_EMOJIS.map(e => `<button type="button" data-emoji="${e}" aria-label="Send ${e}" style="font-size:1.5em;line-height:1;padding:4px 8px">${e}</button>`).join('')}</div>
+    <p class="note" id="mChatNote" hidden></p></div>
+    <div class="sh-foot"><input id="mChatInput" type="text" maxlength="200" placeholder="Message the other players…" autocomplete="off" style="flex:1;min-width:0"><button class="btn gold" id="mChatSend">Send</button></div>`);
+  chatRendered = -1; renderChatList();
+  $$('#mChatEmojis [data-emoji]').forEach(b => b.onclick = () => { if (sendChat(b.dataset.emoji)) SND.play('button_click'); });
+  const go = () => { const inp = $('#mChatInput'); if (inp && sendChat(inp.value)) { inp.value = ''; SND.play('button_click'); } };
+  $('#mChatSend').onclick = go;
+  $('#mChatInput').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+}
 function openMenu() {
   // v30.3: grouped (Game, Settings, View); a guest (v30.2) has nothing to save, load or pause: the host keeps the game
   const sec = (t, items) => `<div class="sec">${t}</div><div class="alist">${items.map(([k, t2, sub]) => `<button class="arow" data-m="${k}"><span class="t"><b>${t2}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span></button>`).join('')}</div>`;
-  const game = isGuest() ? [['decks', '🂠 The decks', 'every card in each deck · cards left']]
-    : [['save', '💾 Save…', 'on this phone (3 slots) or as a file'], ['load', '📂 Load…', 'a saved game, the autosave or a file'], ['decks', '🂠 The decks', 'every card in each deck · cards left'], ...(C.S && st().phase !== 'finished' ? [['pause', C.aiPaused ? '▶ Resume the AI' : '⏸ Pause the AI', '']] : [])];
+  const game = isGuest() ? [['chat', '💬 Chat', 'messages to the other players'], ['decks', '🂠 The decks', 'every card in each deck · cards left']]
+    : [['chat', '💬 Chat', 'messages to the other players'], ['save', '💾 Save…', 'on this phone (3 slots) or as a file'], ['load', '📂 Load…', 'a saved game, the autosave or a file'], ['decks', '🂠 The decks', 'every card in each deck · cards left'], ...(C.S && st().phase !== 'finished' ? [['pause', C.aiPaused ? '▶ Resume the AI' : '⏸ Pause the AI', '']] : [])];
   const speed = `<div class="seg" id="mnSpeed" role="group" aria-label="AI and animation speed">${SPEEDS.map(([v, t]) => `<button data-speed="${v}" class="${String(C.speed) === v ? 'on' : ''}" aria-pressed="${String(C.speed) === v}">${t}</button>`).join('')}</div>`;
   openSheet('menu', `<div class="sh-head"><h2>Menu<small>${esc(C.uiLabel)}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body menu">${sec('Game', game)}
@@ -1128,7 +1184,8 @@ function openMenu() {
   $$('#sheet [data-speed]').forEach(b => b.onclick = () => { C.speed = Number(b.dataset.speed) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } SND.play('button_click'); $$('#sheet [data-speed]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); });
   $$('#sheet [data-m]').forEach(b => b.onclick = () => {
     const k = b.dataset.m; closeSheet(true);
-    if (k === 'save') openSaves('save');
+    if (k === 'chat') openChat();
+    else if (k === 'save') openSaves('save');
     else if (k === 'load') openSaves('load');
     else if (k === 'decks') openDecks();
     else if (k === 'pause') { C.aiPaused = !C.aiPaused; render(); schedule(); }
@@ -1281,7 +1338,7 @@ function openCardTargets(uid, list) {
   if (def === 'sneak_attack_sea') { openSneakFlow(uid, list); return; }
   const nm = data.cardDefsById[def]?.name ?? def; const g = gateFor(whoActs(s)); let pick = null;
   const intro = def === 'revolt' ? "Choose the enemy province to inspire a revolt in: a rival's conquered province with fewer than 10 troops; never a starting or allied province, never Roma, never a province where its owner's general is stationed, never a province of a player with 2 or fewer provinces (17.c, 17.r, 18.m)."
-    : def === 'bribe_the_ally' ? 'Bribe a province allied to a rival (pay its native count in Gold) — never one whose owner has 2 or fewer provinces — or pay 1 Gold to turn one of YOUR OWN allies into a conquered province (it keeps its troops, +1 Prestige) (18.v, 19.r).' : 'Choose the target.';
+    : def === 'bribe_the_ally' ? 'Bribe a province allied to a rival (pay its native count in Gold) — never one whose owner has 2 or fewer provinces — or pay 1 Gold to turn one of YOUR OWN allies into a conquered province (it keeps its troops, +1 Prestige) (18.v, 19.r). After a rival bribe you may move troops in from any one of your provinces (18.v).' : 'Choose the target.';
   openSheet('cardTargets', `<div class="sh-head"><img src="${attr(img('card.' + def))}" alt="" style="width:34px;border-radius:4px"><h2>${esc(nm)}<small>${list.length} possible target(s)</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body" id="cardTargets">${gateNote(g)}<p class="note">${esc(intro)}</p><div class="alist">${list.map((d, i) => { const id = G.mainProvince(d); return `<button class="arow tgt" data-ti="${i}"${id ? ` data-prov="${attr(id)}"` : ''}><span class="ic">🎯</span><span class="t"><b>${esc(d.label)}</b></span><span class="go">○</span></button>`; }).join('')}</div></div>
     <div class="sh-foot"><button class="btn" data-close>Cancel</button><button class="btn gold wide" id="cardGo" disabled>Choose a target first</button></div>`, { half: false });
@@ -1345,6 +1402,8 @@ function askBody(s, f, legal, g) {
   const threat = (s.battle?.def?.player && (f.player === s.battle.def.player || (f.kind === 'chooseBattleCards' && f.role === 'defender'))) ? incomingHtml(f.player) : '';
   const threatBox = threat ? `<div class="incoming" id="incomingAsk">${threat}</div>` : '';
   if (f.kind === 'placeSurvivors') return G.placeSurvivorsHtml(s, data, f);   // v31.22: the slider popup (approved mockup), wired in openAsk
+  // v31.27 (18.v): the bribe leaves just 1 troop in the new ally — this prompt moves more in, from any one province.
+  if (f.kind === 'chooseProvince' && f.purpose === 'bribeReinforce') return `${threatBox}<p class="note">The bribe leaves just 1 troop in ${esc(prov(f.target))} — move more in now from any ONE of your provinces, however far away (no route needed). Set 0 to move none. Part of the bribe, not a second action (18.v).</p>${rowsHtml(legal, !g.live)}`;
   if (f.kind === 'returnReinforcements' || f.kind === 'placeTroops') {
     const ids = [f.target, f.origin, f.from, ...(f.allowed ?? [])].filter(Boolean);
     const note = [...new Set(ids)].map(id => G.garrisonStayText(s, data, id)).filter(Boolean).join(' ');

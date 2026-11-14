@@ -87,6 +87,20 @@ const bribeNoTarget = (state, data, pid) => {
 export const bribeOwnTargets = (state, data, pid) => Object.keys(state.provinces).sort().filter(id => {
   const p = state.provinces[id]; return p.owner === pid && p.status === 'allied' && id !== 'carthage';
 }).map(id => ({ province: id, cost: data.rules.bribeOwnAllyGold ?? 1, own: true }));
+/** v31.27 (Tomas 2026-11-14, 18.v): after a RIVAL bribe, troops that may be moved into the newly-allied province from one of
+ * the briber's own provinces. The cap is the stricter of the normal move limit (maxLeaving: the source keeps its floor of 1,
+ * a held Roma keeps 10) and the source's minimum garrison — so the source never drops below its minimum, which is what the
+ * batch spec means by "maxLeaving — cannot strip the source below its minimum garrison". For a starting or allied source the
+ * two agree (minimum 1 = the floor); for a conquered source the minimum is the binding one (natives + 1, 17.f). No route or
+ * adjacency is required: "from any one province" (Tomas's words) means any province the briber owns, however far away. */
+export const maxBribeReinforce = (state, data, id) => {
+  const p = state.provinces[id];
+  if (!p || p.owner === null) return 0;
+  const keep = Math.max(S.minGarrison(state, data, id).min, p.status === 'held' ? data.rules.romaFloorOnHold : data.rules.provinceFloor);
+  return Math.max(0, p.troops - keep);
+};
+/** Sources for the reinforce prompt: the briber's own provinces except the target itself, with at least 1 troop to spare. */
+export const bribeReinforceSources = (state, data, pid, target) => S.provincesOf(state, pid).filter(id => id !== target && maxBribeReinforce(state, data, id) >= 1);
 /** Sneak Attack from the Sea! origins (18.z): your own coastal provinces that can send a troop — with a Road, or Pompey with the army (15.d). */
 export const sneakOrigins = (state, data, pid) => S.provincesOf(state, pid).filter(id => S.isCoastal(data, id) && S.maxLeaving(state, data, id) >= 1
   && (state.provinces[id].road || (playerOf(state, pid).general?.id === 'pompey' && playerOf(state, pid).general?.at === id && S.generalPerksActive(state, pid))));
@@ -316,9 +330,28 @@ TURN_PLAYS.bribe_the_ally = {
       else if (cand.length === 1) moveSurvivors(ctx, plan.owner, plan.target, flee, general, cand[0], '18.v');
       else pushFrame(ctx, { kind: 'chooseProvince', purpose: 'bribeSurvivors', player: plan.owner, options: cand, from: plan.target, survivors: flee, general });
     }
+    // v31.27 (Tomas 2026-11-14, 18.v): the bribe no longer just leaves 1 troop there — the briber may now move troops into the
+    // newly-allied province from any ONE of their own provinces, as part of the bribe resolution (no extra action: the bribe
+    // already used the 1-non-battle-card slot, 18.h). Pushed last, so it sits on top of any bribeSurvivors frame and the briber
+    // answers first. No frame when nothing can move: the bribe simply leaves the 1 troop, as before. The frame lives in
+    // state.pending, so it survives saves like every other frame.
+    const sources = bribeReinforceSources(state, data, pid, plan.target);
+    if (sources.length) pushFrame(ctx, { kind: 'chooseProvince', purpose: 'bribeReinforce', player: pid, target: plan.target, options: sources });
   },
 };
 provinceChoiceHandlers.bribeSurvivors = (ctx, f, a) => moveSurvivors(ctx, f.player, f.from, f.survivors, f.general, a.province, '18.v');
+/** The bribe-reinforce answer (18.v, v31.27): move 0..max troops from the chosen source into the newly-allied province.
+ * 0 is legal — moving none is how the briber declines. No route is checked: any owned province may send troops. */
+provinceChoiceHandlers.bribeReinforce = (ctx, f, a) => {
+  const { state, data } = ctx;
+  check(S.controls(state, f.player, a.province), 'NOT_YOURS', `${nm(data, a.province)} is not one of your provinces.`, '18.v');
+  const n = a.troops ?? 0;
+  check(isInt(n) && n >= 0, 'BAD_TROOPS', 'troops must be a whole number >= 0.', '18.v');
+  const max = maxBribeReinforce(state, data, a.province);
+  check(n <= max, 'TOO_MANY', `At most ${max} troop(s) may leave ${nm(data, a.province)} (it keeps its minimum garrison, 17.f).`, '18.v');
+  if (n > 0) { changeTroops(ctx, a.province, -n); changeTroops(ctx, f.target, n); }
+  emit(ctx, 'bribeReinforced', { actor: f.player, rule: '18.v', pub: { player: f.player, province: f.target, from: a.province, n } });
+};
 
 /** Sneak Attack from the Sea! (18.z, muse batch): in the Actions step, attack any coastal province from one of your coastal
  * provinces with a Road (Pompey with the army is exempt, 15.d). A sea attack (2 dice; Pompey 3, Scipio an extra die), costs

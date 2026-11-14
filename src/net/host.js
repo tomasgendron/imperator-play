@@ -4,6 +4,7 @@
 // test's consoleModel.play) does, so the engine's own checks (NOT_YOUR_TURN, NOT_YOUR_PROMPT, illegal moves) decide, and any
 // `dice` a guest sends is stripped before that (only the host's state.rng rolls).
 import { PROTO, parse, msg, seatView, seatEvents, cleanAction, token as newToken } from './protocol.js';
+import { cleanChatText, CHAT_EMOJIS } from './chat.js';   // v31.27: chat rides the room (a guest talks to the host, the host relays)
 import { humanLegal } from '../ui/game/model.js';
 
 export const PING_MS = 5000, AWAY_MS = 15000;
@@ -58,6 +59,16 @@ export class HostRoom {
       else if (seat && this.started) this.hooks.onWantState?.(this, seat.i);   // v30.5.1: nothing cached yet (a resumed game): the page sends it
       return; }
     if (m.t === 'bye') { if (seat) { seat.connected = false; seat.peer = null; this.changed(seat.i); } return; }
+    // v31.27 (Update 2): a guest's chat line. Only from a seated player, only once the game has started (there is no chat
+    // in the lobby), only non-empty text. The sender's name comes from this seat table, never from the guest's message,
+    // so a guest cannot speak as someone else; the page (hooks.onChat) shows it and broadcasts it to every screen.
+    if (m.t === 'chat') {
+      if (!seat || !this.started) return;
+      const text = cleanChatText(m.text);
+      if (!text) return;
+      this.hooks.onChat?.(this, { from: seat.playerId, name: seat.name || `Player ${seat.i + 1}`, text, emoji: CHAT_EMOJIS.includes(text) });
+      return;
+    }
     if (m.t !== 'act') return;
     if (!seat) return this.reject(peer, 'NOT_SEATED', 'You have no seat in this game.', { seq: m.seq });
     if (!this.started) return this.reject(peer, 'NOT_STARTED', 'The game has not started yet.', { seq: m.seq });
@@ -191,6 +202,10 @@ export class HostRoom {
     this.seatIn(peer, seat, opts);
     this.hooks.onClaimed?.(this, seat.i, { wasAI });   // the page: an AI seat goes back to a human player at once
   }
+  /** v31.27 (Update 2): send one chat message to every connected guest (the host's own screen shows it directly, so
+   *  the host never gets its own broadcast back). The sender's own screen gets it through this broadcast too, so every
+   *  screen sees every message exactly once, in the same order. */
+  broadcastChat(m) { const line = msg('chat', m); for (const s of this.seats) if (s.peer) this.transport.send(s.peer, line); }
   /** The host changed the setup (lobby only): seat kinds and the names of the host's and AI seats. A guest keeps its seat when it is
    *  still Online, otherwise moves to a free Online seat, otherwise is told its seat is gone. Sends the lobby only when it changed. */
   configure(seats) {

@@ -54,6 +54,10 @@ button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:poin
 .players{flex:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:7px 7px 6px;background:var(--bg2)}
 .pl{position:relative;min-height:var(--tap);display:flex;flex-direction:column;gap:3px;text-align:left;padding:6px 7px 6px 7px;border-radius:var(--r);background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--c);overflow:hidden}
 .pl.active{background:linear-gradient(180deg,color-mix(in srgb,var(--c) 30%,var(--panel)) 0%,var(--panel) 75%);border-color:var(--c);box-shadow:0 0 0 2px color-mix(in srgb,var(--c) 55%,transparent),0 0 16px color-mix(in srgb,var(--c) 45%,transparent)}
+/* v31.27 (Tomas 2026-11-14): the desktop's light-grey non-active panel (#e9e9e9) makes no sense on the dark mobile theme
+ * (light text on a pale card would be unreadable), so the mobile equivalent is the reverse — non-active cards go DARKER
+ * (#211915, below --panel #2b221c), and the active card keeps its player-colour gradient + glow, so it still stands out. */
+.pl:not(.active){background:#211915}
 .pl:not(.active) .av,
 .pl:not(.active) .cap{filter:saturate(.32) brightness(.97)}
 .pl.active .av,

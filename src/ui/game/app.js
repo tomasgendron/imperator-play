@@ -12,6 +12,7 @@ import { GuestClient, HOST_AWAY_MS, JOIN_END_TEXT, whyText } from '../../net/gue
 import { rememberSeat, forgetSeat, seatFor, tokensFor, parseJoin } from '../../net/seats.js';
 import { createPeerTransport, createBroadcastTransport, loadIceServers } from '../../net/transport.js';
 import { roomCode, normCode } from '../../net/protocol.js';
+import * as Chat from '../../net/chat.js';   // v31.27 (Update 2): the in-game player chat (replaces the Which Die? panel)
 import { createController } from '../core/controller.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -379,7 +380,7 @@ function enterGame() {
   $('#toast').classList.remove('on');
   document.body.className = 'screen-game'; document.body.dataset.screen = 'game'; applyTabsHidden();
   closeBattlePop(); closeModal();
-  C.viewer = null; for (const k of Object.keys(news)) delete news[k]; ab = null; bv = null; lastRoll = {}; overShown = false; C.aiPaused = false; selected = null; C.busy = false;
+  C.viewer = null; for (const k of Object.keys(news)) delete news[k]; ab = null; bv = null; lastRoll = {}; overShown = false; C.aiPaused = false; selected = null; C.busy = false; chatLog.clear(); chatRendered = -1;   // v31.27: a new game starts with an empty chat (ephemeral, never saved)
   $('#ovOver').classList.remove('on'); clearBattle(); setTab('table');
   document.body.dataset.online = C.NET ? C.NET.role : '';
   if (C.NET?.role === 'host') netPush();
@@ -474,6 +475,8 @@ function hostNet(t, code, salt) {
     onJoinRequest: (room, req) => queueMicrotask(() => { if (C.NET?.room !== room) return; toast(`${req.name} is trying to join`); showJoinAsk(room, req); }),
     onJoinGone: (room, peer) => { if (C.NET?.room === room) hideJoinAsk(peer); },
     onLeft: (room, i, name) => { if (C.NET?.room === room) toast(`${name} disconnected`); },
+    // v31.27 (Update 2): a guest's chat line arrived: show it here, then relay it to every guest (including its sender).
+    onChat: (room, m) => { if (C.NET?.room !== room) return; addChat(m); room.broadcastChat(m); },
   } });
   C.NET.ping = setInterval(() => { if (!C.NET?.quiet) C.NET?.room?.tick(); }, PING_MS);   // quiet: tests only (a host that stops answering)
   return C.NET;
@@ -590,6 +593,7 @@ async function joinGame() {
   const inGame = () => C.S && document.body.dataset.screen === 'game';
   n.client = new GuestClient({ transport: t, makeTransport, build: C.uiLabel, name, token, tokens, claim, data, hooks: {
     onHold: () => { if (C.NET === n) say('Waiting for the host to give you a seat…'); },
+    onChat: (c, m) => { if (C.NET === n) addChat(m); },   // v31.27 (Update 2): a chat line relayed by the host (including our own)
     onWelcome: (c, m) => { n.code = c.code; if (C.NET === n) { pendDone(); joinPickClear(); } else n.pending = false; rememberSeat(store, c.code, { token: m.token, seat: m.seat, name: m.name, was: was || null }); if (claim) joinClaim = null;
       if (!inGame()) say(`Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}, ${SEAT_COLOR_NAMES[m.seat]}). ${m.started ? 'Loading the game in progress…' : 'Waiting for the host to start…'}`); },
     // v30.5.1: welcomed into a game in progress but no game state came: never sit silently (the client keeps asking too)
@@ -1160,7 +1164,7 @@ function render() {
   document.body.dataset.viewer = C.viewer ?? '';
   const legal = mineNow();
   document.body.dataset.humanTurn = legal.length ? '1' : '';
-  renderTop(); renderPhase(legal); renderPlayers(); renderMap(legal); renderTable(); renderDecks(legal); renderHand(legal); renderLog(); renderBuilder(legal); renderBattleCtl(legal); renderAsk(legal); renderDrawCall(legal);
+  renderTop(); renderPhase(legal); renderPlayers(); renderMap(legal); renderTable(); renderDecks(legal); renderHand(legal); renderLog(); renderBuilder(legal); renderBattleCtl(legal); renderAsk(legal); renderDrawCall(legal); renderChat();
   document.body.classList.toggle('p3mode', s.players.length >= 3);
   if (!C.busy && !bpDone && !s.battle && $('#ovBattle').classList.contains('on')) closeBattlePop();
   if (C.viewer && news[C.viewer]?.length && !C.busy) setTimeout(showNews, 0);
@@ -1199,6 +1203,53 @@ function renderDrawCall(legal) {
   el.classList.add('on'); document.body.dataset.drawCall = f.player;
   $('#dcHide').onclick = () => { drawCallHidden = f.id; renderDrawCall(mineNow()); };
   const b = $('#dcDraw'); if (b) b.onclick = () => { const d = mineNow().find(x => x.type === 'DRAW_CARD'); if (d) { el.classList.remove('on'); human(d); } };
+}
+/** v31.27 (Update 2): the player chat that replaced the Which Die? panel. In-game only and ephemeral: the list is
+ *  never written to the game log or a save, and a new game (or a reload) starts empty. Transport: online, the host
+ *  relays every line to every screen (host.js broadcastChat), so each screen sees each line once, in the same order;
+ *  a guest renders its own line when the host broadcasts it back, never on send. Hot-seat: the shared screen, and the
+ *  sender is the player whose turn/view it is (C.viewer). Solo vs AI: there is no other human to message, so the box
+ *  stays visible but disabled, with a note saying so. Emoji taps send at once; an emoji-only line renders big. */
+let chatLog = Chat.createChatLog();
+let chatRendered = -1, chatSoloShown = null;
+const chatSolo = () => !C.S || G.humans(st()).length < 2;
+function addChat(m) { if (chatLog.add(m)) renderChat(); }
+function chatSender() { const s = st(); const me = C.NET?.me ?? C.viewer; return { from: me ?? null, name: G.nameOf(s, me) }; }
+function sendChat(text) {
+  const clean = Chat.cleanChatText(text);
+  if (!clean || !C.S || chatSolo()) return false;
+  const m = Chat.makeChatMessage({ ...chatSender(), text: clean });
+  if (C.NET?.role === 'host') { addChat(m); C.NET.room.broadcastChat(m); return true; }   // the host shows its own line at once
+  if (C.NET?.role === 'guest') {
+    if (!C.NET.client.chat(clean)) { toast('Reconnecting to the host: wait a moment'); return false; }
+    return true;   // the line renders when the host broadcasts it back
+  }
+  addChat(m); return true;   // hot-seat: the shared screen
+}
+function renderChat() {
+  const list = $('#chatList'); if (!list) return;
+  const solo = chatSolo();
+  if (chatRendered === chatLog.version && chatSoloShown === solo) return;
+  chatRendered = chatLog.version; chatSoloShown = solo;
+  const s = C.S ? st() : null;
+  list.innerHTML = chatLog.list.length ? chatLog.list.map(m => m.emoji
+    ? `<div style="line-height:1.4"><b style="color:var(--${s ? col(m.from) : 'p1'})">${esc(m.name)}</b> <span style="font-size:1.7em;line-height:1">${esc(m.text)}</span></div>`
+    : `<div style="line-height:1.35"><b style="color:var(--${s ? col(m.from) : 'p1'})">${esc(m.name)}</b> <span>${esc(m.text)}</span></div>`).join('')
+    : '<div class="small" style="color:#8a7a55">No messages yet — say hello, or tap an emoji below.</div>';
+  list.scrollTop = list.scrollHeight;
+  const inp = $('#chatInput'), btn = $('#chatSend'), em = $('#chatEmojis'), note = $('#chatNote');
+  if (inp) inp.disabled = solo;
+  if (btn) btn.disabled = solo;
+  if (em) em.style.opacity = solo ? '0.4' : '';
+  if (note) { note.hidden = !solo; if (solo) note.textContent = 'Only you in this game — chat needs another human player (online or pass-and-play).'; }
+}
+function wireChat() {
+  const em = $('#chatEmojis'); if (!em) return;
+  em.innerHTML = Chat.CHAT_EMOJIS.map(e => `<button type="button" data-emoji="${e}" aria-label="Send ${e}" style="font-size:1.35em;line-height:1;padding:3px 6px;border:1px solid var(--line,#c9b98a);border-radius:6px;background:#fffdf6;cursor:pointer">${e}</button>`).join('');
+  $$('#chatEmojis [data-emoji]').forEach(b => b.onclick = () => { if (sendChat(b.dataset.emoji)) SND.play('button_click'); });
+  const go = () => { const inp = $('#chatInput'); if (inp && sendChat(inp.value)) { inp.value = ''; SND.play('button_click'); } };
+  $('#chatSend').onclick = go;
+  $('#chatInput').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
 }
 /** v26.1: a prompt nobody can answer is never a silent dead end: the host (or the local page) says so at once and offers the save
  *  file to send (the engine's own fuzz tests find none; this is the safety net). */
@@ -1411,7 +1462,7 @@ function openCardTargets(uid) {
   if (def === 'assassin' && list.some(d => d.action.kills)) { openAssassinFlow(uid, list); return; }
   if (def === 'sneak_attack_sea') { openSneakFlow(uid, list); return; }
   const intro = def === 'revolt' ? 'Choose the enemy province to inspire a revolt in. Valid targets: a rival\'s conquered province with fewer than 10 troops; never a starting province, an allied province or Roma, never a province where its owner\'s general is stationed, and never a province of a player with 2 or fewer provinces (17.c, 17.r, 18.m).'
-    : def === 'bribe_the_ally' ? 'Bribe a province allied to a rival (pay its native count in Gold; it becomes your ally) — never one whose owner has 2 or fewer provinces — or pay 1 Gold to turn one of YOUR OWN allied provinces into a conquered province (it keeps its troops, +1 Prestige) (18.v, 19.r).' : 'Choose the target.';
+    : def === 'bribe_the_ally' ? 'Bribe a province allied to a rival (pay its native count in Gold; it becomes your ally) — never one whose owner has 2 or fewer provinces — or pay 1 Gold to turn one of YOUR OWN allied provinces into a conquered province (it keeps its troops, +1 Prestige) (18.v, 19.r). After a rival bribe you may move troops in from any one of your provinces (18.v).' : 'Choose the target.';
   openModal(`<div class="ask menu" id="cardTargets" style="display:flex;flex-direction:column;gap:8px;min-width:420px"><h2>${esc(data.cardDefsById[def]?.name ?? def)}</h2><p class="small">${esc(intro)}</p><div class="opts bs-list">${list.map(d => { const r = targetRow(d); return `<button class="btn tgt" data-pick="${attr(G.descKey(d))}" data-prov="${attr(r.id ?? '')}">${r.html}</button>`; }).join('')}</div><div class="foot"><button class="btn" data-close>Cancel</button><span class="spacer"></span><button class="btn gold" id="cardGo" disabled>Choose a target first</button></div></div>`);
   $$('#modalBox [data-pick]').forEach(b => b.onclick = () => {
     cardPick = b.dataset.pick; SND.play('province_select');
@@ -2173,7 +2224,9 @@ function renderAsk(legal) {
     const threat = (f.player && st().battle?.def?.player === f.player) || (f.kind === 'chooseBattleCards' && f.role === 'defender') ? incomingHtml(f.player) : '';
     const threatBox = threat ? `<div class="incoming" id="incomingAsk">${threat}</div>` : '';
     const backNote = f.kind === 'returnReinforcements' || f.kind === 'placeSurvivors' ? `<p class="small garrison-note" id="garStay">${f.kind === 'returnReinforcements' ? 'Sending them home is optional: 0 leaves every survivor in the defended province (18.y). ' : ''}${esc([f.target, f.origin, f.from].filter(Boolean).map(id => G.garrisonStayText(s, data, id)).filter(Boolean).join(' '))}</p>` : '';
-    body = shown + threatBox + horn + backNote + `<div class="opts">${optionsHtml(legal)}</div>`;
+    // v31.27 (18.v): the bribe leaves just 1 troop in the new ally — this prompt moves more in, from any one province.
+    const bribeNote = f.kind === 'chooseProvince' && f.purpose === 'bribeReinforce' ? `<p class="small">The bribe leaves just 1 troop in ${esc(prov(f.target))} — move more in now from any ONE of your provinces, however far away (no route needed). Slide to 0 to move none. This is part of the bribe, not a second action (18.v).</p>` : '';
+    body = shown + threatBox + horn + backNote + bribeNote + `<div class="opts">${optionsHtml(legal)}</div>`;
   }
   box.innerHTML = `<h2>${esc(G.frameTitle(s, data))}</h2><div><b style="color:var(--${col(w)})">${esc(pn(w))}</b>: ${esc(G.describePrompt(s, data).replace(/^.*?: /, ''))}</div>${body}<div class="foot"><button class="btn sm" id="askPeek">${askPeek ? 'Back to the choice' : 'Look at the map'}</button><span class="small">${pickTargets(legal).size ? 'You can also click a glowing province on the map.' : ''}</span></div>`;
   ov.classList.add('on'); ov.classList.toggle('peek', askPeek);
@@ -2266,6 +2319,7 @@ function toSetup() { unguard(); if (C.NET) { netLeave(); playWhere = 'local'; } 
 // ------------------------------------------------------------------ static wiring
 function wireStatic() {
   $('#bSound').onclick = () => SND.toggle();
+  wireChat();   // v31.27 (Update 2): the chat panel (replaces Which Die?) — input, Send, tap-to-send emojis
   $('#speed').onchange = e => { C.speed = Number(e.target.value) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } };
   applyHideAiBattles();
   const ab = $('#bAiBattles'); if (ab) ab.onclick = () => { SND.play('button_click'); setHideAiBattles(!G.hideAiBattlesOn()); };

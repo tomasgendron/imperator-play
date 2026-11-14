@@ -47,6 +47,8 @@ export function createHost(page) {
       onJoinRequest: (room, req) => queueMicrotask(() => { if (C.NET?.role !== 'host' || C.NET.room !== room) return; page.toast?.(`${req.name} is trying to join`); page.joinAsk?.(room, req); }),
       onJoinGone: (room, peer) => { if (C.NET?.role === 'host' && C.NET.room === room) page.joinGone?.(peer); },
       onLeft: (room, i, name) => { if (C.NET?.role === 'host' && C.NET.room === room) page.toast?.(`${name} disconnected`); },
+      // v31.27 (Update 2): a guest's chat line arrived: show it here, then relay it to every guest (including its sender).
+      onChat: (room, m) => { if (C.NET?.role === 'host' && C.NET.room === room) { page.onChat?.(m); room.broadcastChat(m); } },
       onAct: (i, action, reply, fresh) => { C.NET.inbox.push({ i, action, reply, fresh }); if (!C.busy) drain(); else nudge(i); },
     } });
     C.NET.ping = setInterval(() => { if (!C.NET?.quiet) C.NET?.room?.tick(); }, PING_MS);   // quiet: tests only

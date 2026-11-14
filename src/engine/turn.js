@@ -68,6 +68,10 @@ function beginResources(ctx) {
     emit(ctx, 'bonusTroopsGranted', { actor: pid, rule: state.provinces[id].status === 'allied' ? '19.r' : '20.b', pub: { player: pid, province: id, n: 1, ...(state.provinces[id].status === 'allied' ? { allied: true } : {}) } });
   }
   const pl = mustPlayer(state, pid);
+  // v31.24 (18.r, 18.x): a Bee-redirected steal waiting for this player fires now — their bonus troops were just
+  // granted above, so they all go to Roma. Resource Card troops placed later this turn are not taken: the penalty
+  // lands at the beginning of the turn, as Tomas specified.
+  turnHooks.pendingStealToRoma?.(ctx, pid);
   if (pl.startIncome && pl.startProvince && state.provinces[pl.startProvince].status === 'starting' && state.provinces[pl.startProvince].owner === pid) {
     pl.gold += data.rules.startProvinceGold;                           // +1 Gold while the start province is held and never defeated (17.d, 20.k)
     emit(ctx, 'startProvinceGold', { actor: pid, rule: '20.k', pub: { player: pid, province: pl.startProvince, gold: data.rules.startProvinceGold } });
@@ -721,6 +725,7 @@ define('BUY_CATAPULT', {
 export function eliminate(ctx, pid) {
   const { state } = ctx; const pl = mustPlayer(state, pid);
   pl.out = true;
+  pl.pendingStealToRoma = null;   // v31.24 (18.r, 18.x): a deferred steal dies with its victim — no next turn to fire on
   for (const c of [...pl.hand, ...pl.inPlay, ...pl.savedResources]) toDiscard(state, c.uid);
   pl.hand = []; pl.inPlay = []; pl.savedResources = [];
   if (pl.general) pl.general.at = null;

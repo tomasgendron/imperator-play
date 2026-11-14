@@ -39,7 +39,7 @@ function roundTable(nA, nD, net) {
 /**
  * Exact odds of a battle fought to the end. p: {a, d, round (next round to roll, 1 = first), maxA (attacker dice before the force
  * limit), defDice, wall, ignore (rolls 1..ignore have the Wall cancelled), defWallDice, attBonus/defBonus (Elephants, all rounds),
- * attMoralUntil/defMoralUntil (+1 in rounds <= this), germAtt/germDef (Fight to the Death: +1 to the highest die at 2 troops, +2 at 1).
+ * attMoralUntil/defMoralUntil (+1 in rounds <= this), germAtt/germDef (Fight to the Death: +1 to each die at 2 troops, +2 at 1).
  * An attacker qualifies only after starting at 3 or more (attStart, default the troop count these odds begin with) and then falling to 2 or 1.
  * A defender qualifies at 2 or 1 even if the battle started there. delta is unused; the +1/+2 are fixed.
  * Returns {p: P(conquest), surv: E[attacker survivors on a conquest] (not conditional), lose: 1 - p}.

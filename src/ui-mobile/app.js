@@ -218,9 +218,9 @@ function renderStart() {
   const gen = x => (x.general === 'random' ? null : data.generalsById[x.general]);
   const seatRow = (x, i) => { const g = gen(x);
     return `<div class="seat" data-seat="${i}" style="--c:var(--p${i + 1})"><button class="gc${g ? '' : ' rnd'}" data-gen="${i}" ${g ? `style="background-image:url('${attr(img('general.' + g.id))}')"` : ''} aria-label="Choose seat ${i + 1}'s general">${g ? '' : '?'}</button>
-      <div class="t">${x.controller === 'remote' ? `<span class="rname" data-rname="${i}">${remoteLabel(i)}</span>` : `<input name="name${i}" value="${attr(x.name)}" aria-label="Seat ${i + 1} name" autocomplete="off">`}<span class="gpick" data-gen="${i}">${g ? `${esc(g.name)} · ${esc(G.generalCaption(data, g.id))}` : 'Random free general'} ▾</span></div>
+      <div class="t">${x.controller === 'remote' ? `<span class="rname" data-rname="${i}">${remoteLabel(i)}</span>` : `<input name="name${i}" value="${attr(x.name)}" aria-label="Seat ${i + 1} name" autocomplete="off">`}<button type="button" class="gpick" data-gen="${i}">${g ? `${esc(g.name)} · ${esc(G.generalCaption(data, g.id))}` : 'Random free general'} ▾</button></div>
       ${playWhere === 'host' && i === 0 ? '<span class="ctl you" data-ctl-you="0">📱 You (host)</span>' : `<button class="ctl" data-ctl="${i}" aria-label="Seat ${i + 1}: played by">${x.controller === 'ai' ? '🤖 AI' : x.controller === 'remote' ? '🌐 Online' : '👤 Human'} ▾</button>`}
-      ${x.controller === 'ai' ? `<select class="dif" data-dif="${i}" aria-label="Seat ${i + 1} AI difficulty" title="Easy holds Revolt! and Assassin! back against humans, and attacks a human at most once per turn"><option value="normal" ${x.difficulty !== 'easy' ? 'selected' : ''}>Normal</option><option value="easy" ${x.difficulty === 'easy' ? 'selected' : ''}>Easy</option></select>` : ''}</div>`; };
+      ${x.controller === 'ai' ? `<button type="button" class="difbtn" data-difbtn="${i}" aria-label="Seat ${i + 1} AI difficulty" title="Easy holds Revolt! and Assassin! back against humans, and attacks a human at most once per turn">${x.difficulty === 'easy' ? 'Easy' : 'Normal'} ▾</button>` : ''}</div>`; };
   const online = playWhere === 'join';   // v30.4: the Host tab has the seats and the starts (the host chooses them)
   const r = checkSetup(data, engineSeats(), startMode); const errs = r.ok ? '' : r.errors.map(e => (e.seat !== null ? `Seat ${e.seat + 1}: ` : '') + e.message).join('\n');
   const auto = autosaveText(); let autoInfo = '';
@@ -243,7 +243,7 @@ function renderStart() {
     <div class="serr" id="mErr">${esc(errs)}</div>
     ${viewLinks()}
   </div>
-  <div class="sfoot">${playWhere === 'join' ? `<button class="btn gold big${joinBusy ? ' busy' : ''}" id="mJoinGo">Join ▶</button>` : `<button class="btn gold big" id="mStart" ${r.ok && !online && (playWhere !== 'host' || NETH.readiness(seats).ok) ? '' : 'disabled'}>Start game ▶</button>`}<div class="row"><button class="btn wide" id="mHow">How to Win</button><button class="btn wide" id="mResume" ${auto ? '' : 'disabled'}>${onlineSave(auto) ? '🌐 Resume online' : '↺ Resume'}${esc(autoInfo)}</button><button class="btn wide" id="mLoad">📂 Load…</button></div></div>`;
+  <div class="sfoot">${playWhere === 'join' ? `<button class="btn gold big${joinBusy ? ' busy' : ''}" id="mJoinGo">Join ▶</button>` : `<button class="btn gold big" id="mStart" ${r.ok && !online && (playWhere !== 'host' || NETH.readiness(seats).ok) ? '' : 'disabled'}>Start game ▶</button>`}<div class="row"><button class="btn wide" id="mHow">How to Win</button><button class="btn wide" id="mWhatsNew">What's New</button><button class="btn wide" id="mResume" ${auto ? '' : 'disabled'}>${onlineSave(auto) ? '🌐 Resume online' : '↺ Resume'}${esc(autoInfo)}</button><button class="btn wide" id="mLoad">📂 Load…</button></div></div>`;
   $$('[data-where]', el).forEach(b => b.onclick = () => { if (b.dataset.where === playWhere) return; if (playWhere === 'join') { NETG.leave(); joinBusy = false; joinLobby = null; joinMsg = null; }
     if (playWhere === 'host') { NETH.leave(); hostErr = null; hostSeats(false); }
     playWhere = b.dataset.where; if (playWhere === 'host') { hostSeats(true); hostOpen(); } SND.play('button_click'); renderStart(); });
@@ -252,7 +252,7 @@ function renderStart() {
     if (playWhere === 'host') { const next = x.controller === 'remote' ? 'ai' : 'remote'; if (next === 'ai' && seats.filter(y => y.controller === 'remote').length < 2) { SND.play('error_denied'); toast('An online game needs at least one Online seat.'); return; } x.controller = next; if (next === 'ai' && !x.difficulty) x.difficulty = 'normal'; syncRoom(); }
     else { x.controller = x.controller === 'ai' ? 'human' : 'ai'; if (x.controller === 'ai' && !x.difficulty) x.difficulty = 'normal'; }   // v31.12: a seat turned AI gets a difficulty
     SND.play('button_click'); renderStart(); });
-  $$('[data-dif]', el).forEach(sel => sel.onchange = () => { seats[+sel.dataset.dif].difficulty = sel.value; });   // v31.12: per-seat AI difficulty, no re-render needed
+  $$('[data-difbtn]', el).forEach(b => b.onclick = () => openDifficultyPick(+b.dataset.difbtn));   // v31.24: the skill choice is a button that pops up the choices (the inline dropdown clipped on phones)
   $$('input[name^=name]', el).forEach(inp => inp.oninput = () => { seats[+inp.name.slice(4)].name = inp.value; const rr = checkSetup(data, engineSeats(), startMode); $('#mErr').textContent = rr.ok ? '' : rr.errors.map(e => (e.seat !== null ? `Seat ${e.seat + 1}: ` : '') + e.message).join('\n'); if ($('#mStart')) $('#mStart').disabled = !rr.ok || playWhere === 'join' || (playWhere === 'host' && !NETH.readiness(seats).ok); if (playWhere === 'host') syncRoom(); });
   $$('[data-gen]', el).forEach(b => b.onclick = () => openGeneralPick(+b.dataset.gen));
   $$('[data-mode]', el).forEach(b => b.onclick = () => { startMode = b.dataset.mode; renderStart(); });
@@ -265,6 +265,7 @@ function renderStart() {
   const so = $('#mSound'); if (so) so.onclick = () => { SND.toggle(); renderStart(); };
   if ($('#mStart')) $('#mStart').onclick = startGame;
   if ($('#mHow')) $('#mHow').onclick = () => showHowToWin();
+  if ($('#mWhatsNew')) $('#mWhatsNew').onclick = () => showChangelog();   // v31.24 (Update 1): player-facing changelog
   if (playWhere === 'join') wireJoin(el);
   if (playWhere === 'host') wireHostBox(el);
   $('#mResume').onclick = () => { const t = autosaveText(); if (t) loadFrom(t); };
@@ -354,6 +355,16 @@ function openGeneralPick(i) {
     ${data.generals.map(g => { const by = takenBy(g.id); return `<button class="genopt${seats[i].general === g.id ? ' on' : ''}" data-g="${g.id}" ${by >= 0 ? 'disabled' : ''}><img src="${attr(img('general.' + g.id))}" alt=""><b>${esc(g.name)}</b><small>${by >= 0 ? `taken by ${esc(seats[by].name)}` : esc(G.generalCaption(data, g.id))}</small></button>`; }).join('')}</div>
     <p class="note">Every perk in detail: tap a player's card during the game.</p></div>`);
   $$('#sheet [data-g]').forEach(b => b.onclick = () => { seats[i].general = b.dataset.g; SND.play('card_flip'); closeSheet(true); renderStart(); });
+}
+/** v31.24 (Update 2): the AI skill choice is a button that pops up the choices — the inline dropdown clipped to "No mal" on phones. */
+function openDifficultyPick(i) {
+  const cur = seats[i].difficulty ?? 'normal';
+  openSheet('difficulty', `<div class="sh-head"><h2>${esc(seats[i].name || 'Seat ' + (i + 1))}'s AI skill<small>How this AI plays against you</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body"><div class="alist">
+      <button class="arow" data-dif="normal"><span class="ic">🤖</span><span class="t"><b>Normal${cur === 'normal' ? ' ✓' : ''}</b><small>The usual AI.</small></span><span class="go">›</span></button>
+      <button class="arow" data-dif="easy"><span class="ic">🌱</span><span class="t"><b>Easy${cur === 'easy' ? ' ✓' : ''}</b><small>Holds Revolt! and Assassin! back against humans in the first 10 rounds, then half as often; attacks your provinces at most once per turn.</small></span><span class="go">›</span></button>
+    </div></div>`);
+  $$('#sheet [data-dif]').forEach(b => b.onclick = () => { seats[i].difficulty = b.dataset.dif; SND.play('button_click'); closeSheet(true); renderStart(); });
 }
 /** A deck's cards (art, name, copies, text): from the card data only, never the order of a deck or anyone's hand. v30.3: also in the game
  *  (Menu → The decks), with a Back to the deck list, a Battle Cards filter and a tap on a card to see it big. */
@@ -974,10 +985,30 @@ function openCards() {
   $$('#sheet [data-play]').forEach(b => b.onclick = () => { const uid = b.dataset.play; const ds = mineNow().filter(d => (d.type === 'PLAY_CARD' || d.type === 'USE_SAVED_RESOURCE') && d.action.cardUid === uid); if (ds.length === 1) { closeSheet(true); act(ds[0]); } else openCardTargets(uid, ds); });
   $$('#sheet [data-sell]').forEach(b => b.onclick = () => { const d = mineNow().find(x => x.type === 'SELL_CARD' && x.action.cardUid === b.dataset.sell); if (d) { closeSheet(true); SND.play('gold_gain'); act(d); } });
 }
+/** v31.24 (Update 4): pick which of your provinces attacks the target — then the normal troops step takes over. */
+function openAttackOrigins(target, origins) {
+  const s = st(); const me = whoActs(s);
+  const tree = G.builderTree(mineNow(), 'ATTACK');
+  openSheet('attackfrom', `<div class="sh-head"><h2>Attack ${esc(prov(target))} from…<small>Pick one of your provinces that can attack it</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body"><div class="alist">${origins.map(o => {
+      const p = s.provinces[o]; const sea = data.provincesById[o].sea.includes(target);
+      const g = G.playerById(s, me)?.general?.at === o;
+      return `<button class="arow" data-origin="${attr(o)}"><span class="ic">⚔</span><span class="t"><b>${esc(prov(o))}</b><small>${p.troops} troops${sea ? ' · by sea' : ''}${g ? ` · ${esc(data.generalsById[G.playerById(s, me).general.id]?.name ?? 'general')} here` : ''}</small></span><span class="go">›</span></button>`;
+    }).join('')}</div></div>`, { half: true });
+  $$('#sheet [data-origin]').forEach(b => b.onclick = () => {
+    const from = b.dataset.origin;
+    const list = (tree[from]?.[target] ?? []);
+    openSheet('attacktroops', `<div class="sh-head"><h2>Attack ${esc(prov(target))} from ${esc(prov(from))}<small>How many troops, and with the general?</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+      <div class="sh-body">${rowsHtml(list)}</div>`, { half: true });
+    wireRows($('#sheet'), list);
+  });
+}
 function openProvince(id, refresh = false) {
   const s = st(); const p = s.provinces[id]; const def = data.provincesById[id]; const legal = mineNow();
   const m = G.shownMin(s, data, id); const under = p.status === 'allied' ? p.troops < (m?.min ?? 1) : (p.owner ? isUnderGarrisoned(s, data, id) : false);
   const here = G.forProvince(legal, id).filter(d => d.type !== 'END_TURN');
+  // v31.24 (Update 4): target-first attack — "Attack here from ..." when at least one of your provinces can attack this one.
+  const atkOrigins = G.attackOriginsForTarget(legal, id);
   const owner = p.owner ? pn(p.owner) : null;
   const nb = [...def.land.map(x => [x, 'land']), ...def.sea.map(x => [x, 'sea'])];
   const gens = s.players.filter(pl => pl.general?.at === id).map(pl => data.generalsById[pl.general.id].name); const reach = reachFrom(id, legal);
@@ -990,10 +1021,12 @@ function openProvince(id, refresh = false) {
       ${reach.size ? `<p class="note" style="margin:6px 2px 0">Gold ring = you can attack, ally with or move there from ${esc(def.name)} now (it glows on the map).</p>` : ''}
       <div class="sec">${here.length ? `What you can do here (${here.length})` : 'Nothing to do here right now'}</div>
       ${here.length ? rowsHtml(here) : `<p class="note">${legal.length ? 'Your possible moves are on the action bar.' : C.busy ? 'Wait a moment…' : 'It is not your move.'}</p>`}
+      ${atkOrigins.length ? `<div class="sec">Attack here</div><button class="arow" id="atkHere" style="width:100%"><span class="ic">⚔</span><span class="t"><b>Attack here from …</b><small>${atkOrigins.length} of your provinces can attack ${esc(def.name)}</small></span><span class="go">›</span></button>` : ''}
     </div>`;
   if (refresh && sheetKind === 'province') { $('#sheet').innerHTML = '<div class="handle"><i></i></div>' + html; $$('#sheet [data-close]').forEach(b => b.onclick = () => closeSheet()); }
   else openSheet('province', html, { half: true });
   wireRows($('#sheet'), here);
+  { const ah = $('#atkHere'); if (ah) ah.onclick = () => openAttackOrigins(id, atkOrigins); }
   $$('#provBorders [data-goprov]').forEach(b => b.onclick = () => tokenTap(b.dataset.goprov));
   const [fx, fy] = [def.token.x / data.map.map.tokenSpace.w, def.token.y / data.map.map.tokenSpace.h];
   if (!refresh) requestAnimationFrame(() => MV.reveal(fx, fy, matchMedia('(orientation: portrait)').matches ? $('#sheet').offsetHeight - $('#acts').offsetHeight - 50 : 0));
@@ -1048,6 +1081,23 @@ function openLog(refresh = false) {
 function showHowToWin() {
   const w = G.HOW_TO_WIN;
   openSheet('how', `<div class="sh-head"><h2>${esc(w.title)}</h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div><div class="sh-body">${w.paragraphs.map(p => `<p>${esc(p)}</p>`).join('')}<p><b>${esc(w.prestige)}</b></p></div><div class="sh-foot"><button class="btn gold wide" data-close>Close</button></div>`);
+}
+/** v31.24 (Update 1): the player-facing changelog — plain-language version history, newest first, same data file as the desktop. */
+let changelogCache = null;
+async function showChangelog() {
+  let entries = changelogCache;
+  if (!entries) {
+    try {
+      const r = await fetch('data/changelog.json', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      entries = await r.json(); changelogCache = entries;
+    } catch (e) {
+      openSheet('changelog', `<div class="sh-head"><h2>What's New</h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div><div class="sh-body"><p>Could not load the changelog (${esc(e.message)}).</p></div>`);
+      return;
+    }
+  }
+  const body = entries.map(en => `<h3 style="margin:12px 0 2px">v${esc(en.version)} · ${esc(en.title)}</h3><p class="small" style="margin:0 0 4px;color:var(--ink2)">${esc(en.date ?? '')}</p><ul class="rolllines">${en.bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>${en.note ? `<p class="small" style="color:var(--ink2)">${esc(en.note)}</p>` : ''}`).join('');
+  openSheet('changelog', `<div class="sh-head"><h2>What's New<small>What changed in each version, in plain language</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div><div class="sh-body"><p class="small">The record starts at v31.9.</p>${body}</div><div class="sh-foot"><button class="btn gold wide" data-close>Close</button></div>`);
 }
 function exportFullLog() {
   if (!C.S) { toast('No game to export yet'); return; }
@@ -1421,8 +1471,14 @@ const sideCol = cls => (cls === 'nat' ? 'var(--native)' : `var(--${cls})`);
 function incomingHtml(viewer) {
   const info = G.incomingAttack(st(), data, viewer ?? C.viewer);
   if (!info) return '';
+  // v31.24 (Update 7): the full brief — who attacks, what is attacked, what you hold there, where your general is.
   const who = info.you ? 'you' : pn(info.defender);
-  return `<b class="n" id="attTroops">${esc(info.troopText)}</b> attacking ${esc(who)} from ${esc(prov(info.from))}. <span class="cards" id="attCards">Cards against ${esc(who)}: ${esc(info.cardText)}.</span>`;
+  const gen = info.defenderGeneral
+    ? (info.defenderGeneral.here ? `${info.you ? 'Your' : 'Their'} general ${esc(info.defenderGeneral.name)} is here.` : `${info.you ? 'Your' : 'Their'} general ${esc(info.defenderGeneral.name)} is in ${esc(prov(info.defenderGeneral.at))}.`)
+    : 'No general.';
+  const wall = info.wall ? `Wall facing ${esc(prov(info.wallSide))} — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.` : `No Wall — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.`;
+  const min = info.minGarrison != null ? ` (min ${info.minGarrison})` : '';
+  return `<b>${esc(info.attackerName)}</b> attacks <b>${esc(info.targetName)}</b> from ${esc(prov(info.from))} with <b class="n" id="attTroops">${esc(info.troopText)}</b>. <span class="cards" id="attCards">Cards against ${esc(who)}: ${esc(info.cardText)}.</span><br>${who === 'you' ? 'You hold' : `${esc(pn(info.defender))} holds`} <b>${esc(info.targetName)}</b> with <b>${info.defenderTroops} troop${info.defenderTroops === 1 ? '' : 's'}</b>${min}. ${wall} ${gen}`;
 }
 function battleHtml() {
   const side = (k, name, cls, count, gen) => `<div class="bside ${k}" style="--c:${sideCol(cls)}"><b class="bname" id="${k}Name">${esc(name)}</b><small>${k === 'a' ? 'attacker' : 'defender'}</small>

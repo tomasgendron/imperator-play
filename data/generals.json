@@ -295,7 +295,7 @@
     "card": "generals/germanicus.png",
     "token": "tokens/general_germanicus.png"
    },
-   "text": "Fight to the Death: +1 to the highest die at 2 troops remaining and +2 at 1 (no cap). Defending qualifies even if the battle starts at 1 or 2. Attacking must start with at least 3 troops and be reduced to 2 or 1. Disciplined Advance (attacking only): the defender's Wall bonus is ignored for the whole battle.",
+   "text": "Fight to the Death: +1 to each die at 2 troops remaining and +2 at 1 (no cap). Defending qualifies even if the battle starts at 1 or 2. Attacking must start with at least 3 troops and be reduced to 2 or 1. Disciplined Advance (attacking only): the defender's Wall bonus is ignored for the whole battle.",
    "perks": [
     {
      "id": "fight_to_the_death",
@@ -317,7 +317,7 @@
      "when": "Any battle, attacking or defending, with the army",
      "detail": [
       {
-       "text": "At 2 troops remaining, +1 to the highest die. At 1 troop remaining, +2 to the highest die. There is no die cap.",
+       "text": "At 2 troops remaining, +1 to each die. At 1 troop remaining, +2 to the die. There is no die cap.",
        "rule": [
         "15.h"
        ]

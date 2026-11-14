@@ -129,21 +129,57 @@ function removeProvince(ctx, pid, id) {
   pushFrame(ctx, { kind: 'chooseProvince', purpose: 'removedTroops', player: pid, options: dest, from: id, survivors: troops, general });
 }
 // 18.r Emperor steals your troops! (Q41)
-EFFECTS.steals_troops = (ctx, pid) => {
+// "This turn's bonus troops" are the ones in state.turn.bonusTroopsGained: the +1 per qualifying province granted at the
+// Resources step (17.d, 20.b) plus Resource Card troops placed this turn. That list belongs to the ACTIVE player, so a
+// steal aimed at anyone else cannot land now — it would read the wrong player's list and take nothing (the bug Tomas
+// reported, 2026-11-13). A Bee-redirected steal (18.x) is therefore DEFERRED: the target keeps a pending penalty
+// (pendingStealToRoma on the player, which survives saves as part of the state snapshot) and loses ALL their bonus
+// troops to Roma at the start of their NEXT turn, once beginResources has granted that turn's bonus troops
+// (turnHooks.pendingStealToRoma, fired from turn.js). The holder exemption below (18.r: "if the player who drew this
+// card holds Roma, nothing happens") applies only to the immediate steal — a redirected victim did not draw the card,
+// and the task for this fix says a target who holds Roma still sends their other provinces' bonus troops to Roma.
+EFFECTS.steals_troops = (ctx, pid, extra = {}) => {
+  const { state } = ctx;
+  if (state.turn.activePlayerId !== pid) {
+    const pl = mustPlayer(state, pid);
+    if (!pl.pendingStealToRoma) pl.pendingStealToRoma = { def: 'steals_troops', redirectedBy: extra.redirectedBy ?? null };
+    emit(ctx, 'displeasedDeferred', { actor: pid, rule: '18.r', pub: { player: pid, def: 'steals_troops', redirectedBy: extra.redirectedBy ?? null } });
+    return;
+  }
+  stealBonusTroops(ctx, pid, false);
+};
+/** Take this turn's bonus troops (state.turn.bonusTroopsGained) from `pid`'s provinces to Roma, each province keeping 1.
+ * `deferred` = the Bee-redirected steal firing at the start of the victim's next turn: the Roma-holder exemption does
+ * not apply, and Roma itself is skipped — its own bonus troop is already in Roma, so taking it would count a troop
+ * that never moves. Roma's cap of 20 still applies through changeTroops (12.k). */
+function stealBonusTroops(ctx, pid, deferred) {
   const { state, data } = ctx;
-  if (S.romaHolder(state) === pid) return none(ctx, pid, 'steals_troops', 'you hold Roma: the troops would go to your own Roma', '18.r');
+  if (!deferred && S.romaHolder(state) === pid) return none(ctx, pid, 'steals_troops', 'you hold Roma: the troops would go to your own Roma', '18.r');
   const gains = state.turn.activePlayerId === pid ? state.turn.bonusTroopsGained : [];
   let total = 0; const taken = [];
   for (const g of gains) {
+    if (g.province === 'roma') continue;   // already in Roma (deferred case, target holds it); an immediate steal never lists it
     const p = state.provinces[g.province];
-    if (p.owner !== pid) continue;
+    if (!p || p.owner !== pid) continue;
     const n = Math.min(g.n, Math.max(0, p.troops - data.rules.provinceFloor));
     if (!n) continue;
     changeTroops(ctx, g.province, -n); total += n; taken.push({ province: g.province, n });
   }
   if (!total) return none(ctx, pid, 'steals_troops', 'no bonus troops this turn that can be taken', '18.r');
   const added = changeTroops(ctx, 'roma', total, 'stolen');
-  emit(ctx, 'troopsStolen', { actor: pid, rule: '18.r', pub: { player: pid, taken, total, toRoma: added } });
+  emit(ctx, 'troopsStolen', { actor: pid, rule: '18.r', pub: { player: pid, taken, total, toRoma: added, ...(deferred ? { deferred: true } : {}) } });
+}
+/** Fires a deferred steal at the start of the victim's next turn (called from beginResources in turn.js, after that
+ * turn's bonus troops are granted). The pending penalty is consumed whatever the outcome, so it fires exactly once;
+ * an eliminated victim never reaches a next turn, and eliminate() clears it too, so it dies with them. */
+turnHooks.pendingStealToRoma = (ctx, pid) => {
+  const { state } = ctx;
+  const pl = playerOf(state, pid);
+  if (!pl?.pendingStealToRoma) return;
+  const pending = pl.pendingStealToRoma;
+  pl.pendingStealToRoma = null;
+  if (pl.out || state.phase !== 'turn') return;
+  if (pending.def === 'steals_troops') stealBonusTroops(ctx, pid, true);
 };
 // 18.u Emperor taxes you! (Q44: the victim chooses)
 EFFECTS.taxes_you = (ctx, pid) => {

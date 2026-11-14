@@ -267,9 +267,13 @@ html,body{height:100dvh}
 input,select,textarea{font-size:16px}   /* iOS Safari zooms into smaller inputs */
 .st input[type=text],.st select{min-height:var(--tap);width:100%;border-radius:10px;border:1px solid var(--line2);background:#00000040;color:var(--ink);padding:0 10px}
 .st label.fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink2);margin-top:6px}
-.seat .t input{min-height:var(--tap);width:100%;font-size:16px;font-weight:700;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--ink);padding:0 4px}
+.seat .t input{min-height:var(--tap);width:100%;min-width:0;font-size:16px;font-weight:700;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--ink);padding:0 4px}
 .seat .t input:focus{border-color:var(--line2);background:#00000040;outline:0}
-.seat .t .gpick{display:block;min-height:28px;text-align:left;color:var(--ink2);font-size:12px}
+/* v31.24 (Update 2): the General choice is a real button now (it already popped up the choices); the name input's min-width:0 is
+ * the actual layout fix — an input's intrinsic width forced the row wider than the screen, which cut the General text off
+ * behind the AI button and clipped the difficulty dropdown. The General button truncates with an ellipsis instead. */
+.seat .t .gpick{display:block;min-height:28px;max-width:100%;text-align:left;color:var(--ink2);font-size:12px;background:none;border:0;padding:0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seat .difbtn{flex:none;min-height:var(--tap);min-width:64px;border-radius:12px;border:1px solid var(--line2);background:var(--panel2);font-weight:700;font-size:13px;padding:0 8px;color:var(--ink)}
 .serr{color:#f0a35e;font-size:12.5px;white-space:pre-line;min-height:0}
 .seg button:disabled{opacity:.45}
 .pl.thinking .tag.ai{animation:blink 1s infinite}

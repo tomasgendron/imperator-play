@@ -282,6 +282,7 @@ export function readSave(input, data) {
   if (!Array.isArray(state.ships)) state.ships = [];   // v31.5: saves from before Merchant ships
   if (!state.throwaway) state.throwaway = { game: [], resource: [], displeased: [] };   // v31.11: saves from before the throwaway pile
   for (const p of state.players) if (!['normal', 'easy'].includes(p.difficulty)) p.difficulty = 'normal';   // v31.12: saves from before AI difficulty
+  for (const p of state.players) if (p.pendingStealToRoma === undefined) p.pendingStealToRoma = null;   // v31.24 (18.r, 18.x): saves from before the deferred steal
   if (!state.turn.aiHumanAttacks) state.turn.aiHumanAttacks = {};   // v31.12: saves from before the Easy attack budget
   backfillNewCards(state, data);   // v31.9 (18.z): saves from before a card was added to a deck gain the new cards, shuffled into that deck (v31.11)
   let errs;
@@ -494,12 +495,33 @@ export function incomingAttack(state, data, viewerId = null) {
   const who = you ? 'you' : nameOf(state, b.def.player);
   const troopText = borrowed ? `${troops} troops (${own} own + ${borrowed} borrowed)` : `${troops} troop${troops === 1 ? '' : 's'}`;
   const cardText = pending ? 'not chosen yet' : cards.length ? cards.map(c => c.n > 1 ? `${c.name} ×${c.n}` : c.name).join(', ') : 'no battle cards';
+  // v31.24 (Update 7): the full brief for the defender — the "You are attacked!" screen used to name the origin and the
+  // troops but never the province under attack, the troops on it, or where the general is. All of it comes from the battle.
+  const tp = state.provinces[b.target];
+  const defenderTroops = b.def.player ? tp.troops : b.target === 'roma' ? tp.troops : (tp.native.present ?? 0);
+  const dg = b.def.player ? playerById(state, b.def.player)?.general : null;
+  const defenderGeneral = dg ? { name: data.generalsById[dg.id]?.name ?? dg.id, at: dg.at ?? null, here: dg.at === b.target } : null;
+  // Wall facing the attack's origin — the same rule as the engine's wallsActive (battle.js): Roma and neutral Carthage have
+  // walls on all sides; otherwise the target's walls must face the origin (or the entry side through neutral Carthage).
+  const side = data.rules.attackThroughNeutralWalls === 'entrySide' && b.via ? b.via : b.att.from;
+  const wall = b.target === 'roma' || (b.target === 'carthage' && !tp.owner) || (tp.walls ?? []).includes(side);
+  const minGarrison = shownMin(state, data, b.target)?.min ?? null;
+  const R = data.rules.battle ?? {};
+  const defenderDice = wall ? (R.defenderDiceWithWall ?? 3) : (R.defenderDice ?? 2);
   return {
     defender: b.def.player, attacker: b.att.player, from: b.att.from, target: b.target,
     troops, own, borrowed, cards, pending, you,
     troopText, cardText,
     line: `${troopText} attacking ${who}. Cards against ${who}: ${cardText}.`,
+    targetName: provName(data, b.target), attackerName: nameOf(state, b.att.player), fromName: provName(data, b.att.from),
+    defenderTroops, defenderGeneral, wall, wallSide: side, minGarrison, defenderDice,
   };
+}
+/** v31.24 (Update 4): the provinces that can legally attack `target` right now — the target-first "Attack here from ..."
+ *  picker. Built from the ATTACK builder tree, so every engine legality rule (Road, troops, Roma, Carthage, links) applies. */
+export function attackOriginsForTarget(legal, target) {
+  const tree = builderTree(legal, 'ATTACK');
+  return Object.keys(tree).filter(from => (tree[from][target] ?? []).length > 0);
 }
 /** Batch 6: the rule hint under the battle-card checklist for the defender (from the ruleset, so it follows the flags). */
 export function battleCardsHint(data, role) {
@@ -533,7 +555,7 @@ export function battleSummary(events, i, state, data) {
   return { title, lines };
 }
 
-const DISPLEASED_RESULT = { generalRecalled: 'recalled_to_rome', goldConfiscated: 'confiscates_gold', provinceRemoved: 'removed_from_province', troopsStolen: 'steals_troops', cardsTaxed: 'taxes_you' };
+const DISPLEASED_RESULT = { generalRecalled: 'recalled_to_rome', goldConfiscated: 'confiscates_gold', provinceRemoved: 'removed_from_province', troopsStolen: 'steals_troops', cardsTaxed: 'taxes_you', displeasedDeferred: 'steals_troops' };
 export const isDispleasedResult = e => e.type === 'displeasedNoEffect' || !!DISPLEASED_RESULT[e.type];
 /**
  * Q100 (Vidi 2026-10-22): a Rome Is Displeased card that hits a human waits for OK. `events[i]` is the effect's result event
@@ -552,7 +574,7 @@ export function adjustmentLabel(x, data) {
  * defender qualifies even starting at 1 or 2) so the panel can list it from the start of the battle, with its live state.
  * Returns null when it cannot fire on `side` ('a' attacker, 'd' defender): no Germanicus general with the army and perks on, or
  * (attacker) the battle started with fewer than 3 troops. Otherwise { troops, delta }: delta 0 = not yet (3+ troops),
- * 1 = live at 2 troops (+1 to the highest die), 2 = live at 1 troop (+2).
+ * 1 = live at 2 troops (+1 to each die), 2 = live at 1 troop (+2).
  */
 export function fightToDeath(state, data, side) {
   const b = state.battle; if (!b || b.mode !== 'attack') return null;
@@ -574,9 +596,9 @@ export function fightToDeath(state, data, side) {
 /** v31.13: the Fight to the Death line for the battle panel, from fightToDeath(). */
 export function fightToDeathLine(f) {
   if (!f) return null;
-  if (f.delta === 1) return 'Germanicus, Fight to the Death: +1 to your highest die at 2 troops — live now: +1 (15.h)';
-  if (f.delta === 2) return 'Germanicus, Fight to the Death: +2 to your highest die at 1 troop — live now: +2 (15.h)';
-  return `Germanicus, Fight to the Death: +1 to your highest die at 2 troops, +2 at 1 troop — not yet (${f.troops} troops) (15.h)`;
+  if (f.delta === 1) return 'Germanicus, Fight to the Death: +1 to each die at 2 troops — live now: +1 (15.h)';
+  if (f.delta === 2) return 'Germanicus, Fight to the Death: +2 to the die at 1 troop — live now: +2 (15.h)';
+  return `Germanicus, Fight to the Death: +1 to each die at 2 troops, +2 at 1 troop — not yet (${f.troops} troops) (15.h)`;
 }
 
 /**
@@ -643,6 +665,7 @@ export function displeasedPopup(events, i, state, data) {
     else if (p.troops) lines.push(`Choose where your ${p.troops} troop(s) go.`);
   }
   if (e.type === 'troopsStolen') lines.push(`${nm(pid)}, the Emperor takes ${p.total} bonus troop(s) to Roma: ${p.taken.map(x => `${x.n} from ${provName(data, x.province)}`).join(', ')} (18.r).`);
+  if (e.type === 'displeasedDeferred') lines.push(`${nm(pid)}, the Emperor will take ALL your bonus troops to Roma at the start of your next turn (18.r).`);
   if (e.type === 'cardsTaxed') lines.push(`${nm(pid)}, you lose ${p.n} saved card(s): ${p.defs.map(d => data.cardDefsById[d]?.name ?? d).join(', ')} (18.u).`);
   if (e.type === 'displeasedNoEffect') lines.push(`No effect for ${nm(pid)}: ${p.reason}.`);
   return { kind: 'displeased', player: pid, title: `Rome Is Displeased: ${card?.name ?? def}`, lines, art: 'card.' + def, sticky: true, players: [pid] };
@@ -1086,12 +1109,27 @@ const PLAY_QUIET = new Set(['actionSpent', 'garrisonStatusChanged', 'stepChanged
 /** True for an event that shows the card-played popup: any game card played (hand, auto-play, battle, Horn, Roma, Busy Bee) or a Resource card used. */
 export const isCardPlay = e => e?.type === 'cardPlayed' || e?.type === 'resourceApplied' || e?.type === 'resourceCardUsed';
 /**
+ * v31.24 (Update 5): a Resource card's application right after its draw is the SAME reveal twice. The engine emits
+ * cardDrawn and then, immediately, resourceApplied for a gainResources card (turn.js drawCard); the page shows the draw
+ * as a central flip and the application as a second popup on the right. One reveal per draw: the application popup is
+ * skipped when it is the very next event after that card's draw (same player, same card). A Resource card used later
+ * from the hand (resourceCardUsed, 20.f) is never adjacent to its draw, so it still shows.
+ */
+export function isRepeatCardReveal(events, i) {
+  const e = events[i];
+  if (!e || e.type !== 'resourceApplied') return false;
+  const prev = events[i - 1];
+  return !!prev && prev.type === 'cardDrawn' && prev.pub?.deck === 'resource'
+    && prev.pub?.def === e.pub?.def && prev.pub?.player === e.pub?.player;
+}
+/**
  * The card-played popup for events[i] (v27): which card, WHO played it, and its public outcome — the lines that the
  * following events report until the next card, step or battle. Only public fields are read, so the redacted event list
  * a guest gets yields the same popup (a played card is public, 18.h). Null when events[i] is not a card play.
  */
 export function cardPlayPopup(events, i, state, data) {
   const e = events[i]; if (!isCardPlay(e)) return null;
+  if (isRepeatCardReveal(events, i)) return null;   // v31.24 (Update 5): the central flip already showed this draw
   const p = e.pub; const defId = p.def; const def = data.cardDefsById[defId] ?? null;
   const nm = id => nameOf(state, id); const who = p.player;
   const outcome = [];

@@ -988,7 +988,14 @@ function clearBattle() { bv = null; $('#bTitle').textContent = 'No battle yet'; 
 function incomingHtml(viewer) {
   const info = G.incomingAttack(st(), data, viewer ?? C.viewer);
   if (!info) return '';
-  return `<b class="n" id="attTroops">${esc(info.troopText)}</b> attacking ${info.you ? 'you' : esc(G.nameOf(st(), info.defender))} from ${esc(prov(info.from))}. <span class="cards" id="attCards">Cards against ${info.you ? 'you' : esc(G.nameOf(st(), info.defender))}: ${esc(info.cardText)}.</span>`;
+  // v31.24 (Update 7): the full brief — who attacks, what is attacked, what you hold there, where your general is.
+  const who = info.you ? 'you' : esc(G.nameOf(st(), info.defender));
+  const gen = info.defenderGeneral
+    ? (info.defenderGeneral.here ? `${info.you ? 'Your' : 'Their'} general ${esc(info.defenderGeneral.name)} is here.` : `${info.you ? 'Your' : 'Their'} general ${esc(info.defenderGeneral.name)} is in ${esc(prov(info.defenderGeneral.at))}.`)
+    : 'No general.';
+  const wall = info.wall ? `Wall facing ${esc(prov(info.wallSide))} — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.` : `No Wall — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.`;
+  const min = info.minGarrison != null ? ` (min ${info.minGarrison})` : '';
+  return `<b>${esc(info.attackerName)}</b> attacks <b>${esc(info.targetName)}</b> from ${esc(prov(info.from))} with <b class="n" id="attTroops">${esc(info.troopText)}</b>. <span class="cards" id="attCards">Cards against ${who}: ${esc(info.cardText)}.</span><br>${who === 'you' ? 'You hold' : `${who} holds`} <b>${esc(info.targetName)}</b> with <b>${info.defenderTroops} troop${info.defenderTroops === 1 ? '' : 's'}</b>${min}. ${wall} ${gen}`;
 }
 function startBattleView(e, s, before = null) {
   clearBattle();
@@ -1625,7 +1632,7 @@ function renderPlayers() {
           <div class="sv"><div class="small">Saved resources · in play · items</div><div class="tagrow">${tags || '<span class="small">none</span>'}</div></div>
           <div class="trayhost">${p.id === trayPid ? trayHtml(p.id) : ''}</div>
           ${turnActsHtml(p.id)}
-          <div class="small perk" data-caption="${gen?.id ?? ''}" title="${attr(gen ? G.generalView(data, gen.id).perks.map(x => x.name).join(' · ') : '')}">${esc(gen ? G.generalCaption(data, gen.id) : '')}${p.out ? ' · OUT of the game' : ''}</div>
+          <div class="small perk" data-caption="${gen?.id ?? ''}" title="${attr(gen ? G.generalView(data, gen.id).perks.map(x => x.name).join(' · ') : '')}">${esc(gen ? G.generalCaption(data, gen.id) : '')}${p.out ? ' · OUT of the game' : ''}${p.pendingStealToRoma ? ' · Emperor steals your bonus troops at the start of your next turn (18.r)' : ''}</div>
         </div>
       </div></div>`;
   }).join('');
@@ -1839,17 +1846,37 @@ function showInfo(id, pin) {
     ['Builds', [p.road ? 'Road' : '', p.walls?.length ? 'Wall facing ' + p.walls.map(prov).join(', ') : ''].filter(Boolean).join('; ') || 'none'],
   ];
   const acts = pin && !ab ? G.forProvince(mineNow(), id).filter(d => !['ATTACK', 'ALLY', 'MOVE', 'END_TURN'].includes(d.type)).slice(0, 8) : [];
+  // v31.24 (Update 4): target-first attack — "Attack here from ..." when at least one of your provinces can attack this one.
+  const atkOrigins = pin && !ab ? G.attackOriginsForTarget(mineNow(), id) : [];
   const info = $('#info');
-  info.innerHTML = `<h4><span>${esc(def.name)}</span><button class="x" id="infoX">×</button></h4><table>${rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>${acts.length ? `<div class="opts" style="display:flex;flex-direction:column;gap:3px;margin-top:4px">${optionsHtml(acts)}</div>` : ''}`;
+  info.innerHTML = `<h4><span>${esc(def.name)}</span><button class="x" id="infoX">×</button></h4><table>${rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>${acts.length ? `<div class="opts" style="display:flex;flex-direction:column;gap:3px;margin-top:4px">${optionsHtml(acts)}</div>` : ''}${atkOrigins.length ? `<div class="opts" style="display:flex;flex-direction:column;gap:3px;margin-top:4px"><button class="btn sm gold" id="atkHere">⚔ Attack here from …</button></div>` : ''}`;
   info.style.setProperty('--ic', p.owner ? `var(--${col(p.owner)})` : id === 'roma' ? 'var(--roma)' : 'var(--native)');
   info.style.display = 'block'; info.classList.toggle('pin', !!pin);
   const mw = $('#mapwrap'), w = mw.clientWidth, hh = mw.clientHeight, iw = info.offsetWidth, ih = info.offsetHeight;
   let px = x / 100 * w + 24, py = y / 100 * hh - ih / 2; if (px + iw > w - 4) px = x / 100 * w - iw - 24; py = Math.max(4, Math.min(hh - ih - 4, py));
   info.style.left = px + 'px'; info.style.top = py + 'px';
   if (acts.length) wireOptions(info, acts, () => { selected = null; hideInfo(); });
+  const ah = $('#atkHere'); if (ah) ah.onclick = () => openAttackOrigins(id, atkOrigins);
   const xb = $('#infoX'); if (xb) xb.onclick = e => { e.stopPropagation(); selected = null; hideInfo(); renderMap(mineNow()); };
 }
 function hideInfo() { $('#info').style.display = 'none'; $('#info').classList.remove('pin'); }
+/** v31.24 (Update 4): pick which of your provinces attacks the target — then the normal builder takes over (troops, borrow, cards). */
+function openAttackOrigins(target, origins) {
+  const s = st(); const me = whoActs(s);
+  const genAt = id => G.playerById(s, me)?.general?.at === id;
+  const rows = origins.map(o => {
+    const p = s.provinces[o];
+    const sea = data.provincesById[o].sea.includes(target);
+    const g = genAt(o) ? ` · ${esc(data.generalsById[G.playerById(s, me).general.id]?.name ?? 'general')} here` : '';
+    return `<button class="btn" data-origin="${attr(o)}" style="text-align:left">⚔ ${esc(prov(o))} — ${p.troops} troops${sea ? ' · by sea' : ''}${g}</button>`;
+  }).join('');
+  openModal(`<div class="ask" style="display:flex;flex-direction:column;gap:8px;min-width:380px"><h2>Attack ${esc(prov(target))} from…</h2><p class="small">Pick one of your provinces that can attack it — the battle then starts exactly as from the Attack button.</p>${rows}<button class="btn" data-close>Cancel</button></div>`);
+  $$('#ovModal [data-origin]').forEach(b => b.onclick = () => {
+    SND.play('button_click');
+    ab = { type: 'ATTACK', from: b.dataset.origin, to: target, n: null, key: null };
+    selected = null; hideInfo(); closeModal(); setTab('build'); render();
+  });
+}
 
 // ------------------------------------------------------------------ province table
 function renderTable() {
@@ -1949,6 +1976,24 @@ function renderLog() {
 function showHowToWin() {
   const w = G.HOW_TO_WIN;
   openModal(`<div class="ask" id="howWin" style="max-width:640px;display:flex;flex-direction:column;gap:10px"><h2>${esc(w.title)}</h2>${w.paragraphs.map(p => `<p>${esc(p)}</p>`).join('')}<p><b>${esc(w.prestige)}</b></p><div class="foot"><span class="spacer"></span><button class="btn gold" data-close>Close</button></div></div>`, { cls: 'howwin' });
+}
+/** v31.24 (Update 1): the player-facing changelog — plain-language version history, newest first. The data lives in
+ *  data/changelog.json so it ships with the game and the publish; the technical record stays in MUSE_CHANGES.md. */
+let changelogCache = null;
+async function showChangelog() {
+  let entries = changelogCache;
+  if (!entries) {
+    try {
+      const r = await fetch('data/changelog.json', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      entries = await r.json(); changelogCache = entries;
+    } catch (e) {
+      openModal(`<div class="ask"><h2>What's New</h2><p>Could not load the changelog (${esc(e.message)}).</p><div class="foot"><span class="spacer"></span><button class="btn gold" data-close>Close</button></div></div>`);
+      return;
+    }
+  }
+  const body = entries.map(en => `<h3 style="margin:12px 0 2px">v${esc(en.version)} · ${esc(en.title)}</h3><p class="small" style="margin:0 0 4px;color:var(--ink2)">${esc(en.date ?? '')}</p><ul class="rolllines">${en.bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>${en.note ? `<p class="small" style="color:var(--ink2)">${esc(en.note)}</p>` : ''}`).join('');
+  openModal(`<div class="ask" id="changelog" style="max-width:640px;display:flex;flex-direction:column;gap:6px"><h2>What's New</h2><p class="small">What changed in each version, in plain language. The record starts at v31.9.</p><div style="max-height:60vh;overflow:auto">${body}</div><div class="foot"><span class="spacer"></span><button class="btn gold" data-close>Close</button></div></div>`, { cls: 'changelog' });
 }
 function exportFullLog() {
   if (!C.S) { toast('No game to export yet'); return; }
@@ -2238,6 +2283,7 @@ function wireStatic() {
   $('#seedDice').addEventListener('click', () => { SND.play('button_click'); $('#seed').value = freshSeed(); if (rollOff) resetRollOff(); renderSetup(); });   // v31.11: roll a fresh seed on demand   // Q110: a new seed means a new roll-off
   $('#startGame').onclick = startGame;
   const hw = $('#howToWin'); if (hw) hw.onclick = () => showHowToWin();
+  const wn = $('#whatsNew'); if (wn) wn.onclick = () => showChangelog();
   const ex = $('#bExportLog'); if (ex) ex.onclick = () => exportFullLog();
   $('#resumeOnline').onclick = () => { const o = onlineSave(localStorage.getItem('imperator.autosave')); if (o) resumeOnline(o); };
   $('#resumeAuto').onclick = () => { try { loadFrom(JSON.parse(localStorage.getItem('imperator.autosave'))); } catch (e) { $('#setupErrors').textContent = 'The autosave could not be read: ' + e.message; } };

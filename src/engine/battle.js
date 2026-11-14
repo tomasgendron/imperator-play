@@ -535,21 +535,24 @@ defineRoll('battleRound', (ctx, f) => {
     if (b.moral[side]) adj.push({ side: who, source: 'moral_boost', delta: b.moral[side], appliesTo: 'all', why: 'Moral boost! this roll (18.c)' });
   }
   if (b.mode === 'attack') {
-    // 15.h (v31.8): +1 to the highest die at 2 troops, +2 at 1, no cap. A defender qualifies even if the battle
-    // started at 1 or 2. An attacker must have started with at least 3 and been reduced to 2 or 1.
-    const bump = (dice, delta) => { if (!delta || !dice.length) return; let i = 0; for (let k = 1; k < dice.length; k++) if (dice[k] > dice[i]) i = k; dice[i] += delta; };
+    // 15.h (v31.24, Tomas 2026-11-13): +1 to EACH die at 2 troops, +2 at 1, no cap. A defender qualifies even if the battle
+    // started at 1 or 2. An attacker must have started with at least 3 and been reduced to 2 or 1. Dice are capped by
+    // troops (diceCounts), so a 2-troop side rolls exactly 2 dice and both get the +1; a 1-troop side rolls 1 die.
+    const bump = (dice, delta) => { if (!delta || !dice.length) return; for (let k = 0; k < dice.length; k++) dice[k] += delta; };
     const fight = (now, started, attacking) => {
       if (now !== 1 && now !== 2) return 0;
       if (attacking && !(started >= 3 && now < started)) return 0;
       return now === 1 ? 2 : 1;
     };
     if (b.att.general && perksOn(state, b.att.player, 'germanicus')) {
-      const delta = fight(attForce(b), b.att.started ?? attForce(b), true);
-      if (delta) { bump(fin.att, delta); adj.push({ side: 'attacker', source: 'germanicus', delta, why: `Fight to the Death +${delta} (15.h)` }); }
+      const now = attForce(b);
+      const delta = fight(now, b.att.started ?? now, true);
+      if (delta) { bump(fin.att, delta); adj.push({ side: 'attacker', source: 'germanicus', delta, ...(now === 2 ? { appliesTo: 'all' } : {}), why: `Fight to the Death +${delta} (15.h)` }); }
     }
     if (b.def.general && b.def.player && perksOn(state, b.def.player, 'germanicus')) {
-      const delta = fight(defForce(state, b), b.def.started ?? defForce(state, b), false);
-      if (delta) { bump(fin.def, delta); adj.push({ side: 'defender', source: 'germanicus', delta, why: `Fight to the Death +${delta} (15.h)` }); }
+      const now = defForce(state, b);
+      const delta = fight(now, b.def.started ?? now, false);
+      if (delta) { bump(fin.def, delta); adj.push({ side: 'defender', source: 'germanicus', delta, ...(now === 2 ? { appliesTo: 'all' } : {}), why: `Fight to the Death +${delta} (15.h)` }); }
     }
   }
   if (adj.length) emit(ctx, 'battleDiceAdjusted', { rule: '15.g, 18.b, 18.c', pub: { battleId: b.id, round: b.round, adjustments: adj, attackerFinal: [...fin.att], defenderFinal: [...fin.def] } });
@@ -816,7 +819,7 @@ export function attackPreview(state, data, a) {
       if (route.sea) perks.push({ side: 'attacker', general: 'pompey', applies: true, text: 'Pompey, Master of the Sea: 3 dice v 2 by sea, and no Road needed for a sea attack (15.d).', rule: '15.d' });
       else perks.push({ side: 'attacker', general: 'pompey', applies: false, text: 'Pompey: his sea perk only works at sea; this is a land attack (15.d). (His garrison -1 always applies.)', rule: '15.d' });
     } else if (myGen === 'germanicus') {
-      perks.push({ side: 'attacker', general: 'germanicus', applies: true, text: 'Germanicus, Fight to the Death: +1 to the highest die at 2 troops and +2 at 1, if this attack started with at least 3 (15.h).', rule: '15.h' });
+      perks.push({ side: 'attacker', general: 'germanicus', applies: true, text: 'Germanicus, Fight to the Death: +1 to each die at 2 troops and +2 at 1, if this attack started with at least 3 (15.h).', rule: '15.h' });
       perks.push(wall
         ? { side: 'attacker', general: 'germanicus', applies: true, text: "Germanicus, Disciplined Advance: the defender's Wall is ignored for the whole battle (15.h).", rule: '15.h' }
         : { side: 'attacker', general: 'germanicus', applies: false, text: 'Germanicus, Disciplined Advance: no Wall to ignore here (15.h).', rule: '15.h' });
@@ -829,7 +832,7 @@ export function attackPreview(state, data, a) {
       if (dg.id === 'caesar' && !(withGeneral && myGen === 'caesar')) perks.push(attForceNow >= minFlee
         ? { side: 'defender', general: 'caesar', applies: true, text: 'Defending Caesar: 1 of your troops flees at the start (a borrowed one first); it returns if Caesar loses (15.b).', rule: '15.b' }
         : { side: 'defender', general: 'caesar', applies: false, text: 'Defending Caesar: you attack with a lone troop, so no one flees (15.b).', rule: '15.b' });
-      else if (dg.id === 'germanicus') perks.push({ side: 'defender', general: 'germanicus', applies: true, text: 'Defending Germanicus, Fight to the Death: +1 at 2 troops and +2 at 1, even if the battle started that small (15.h).', rule: '15.h' });
+      else if (dg.id === 'germanicus') perks.push({ side: 'defender', general: 'germanicus', applies: true, text: 'Defending Germanicus, Fight to the Death: +1 to each die at 2 troops and +2 at 1, even if the battle started that small (15.h).', rule: '15.h' });
       else if (dg.id === 'scipio' || dg.id === 'pompey') perks.push({ side: 'defender', general: dg.id, applies: false, text: `Defending ${gName(dg.id)}: no perks when defending (${dg.id === 'scipio' ? '15.c' : '15.d'}).`, rule: dg.id === 'scipio' ? '15.c' : '15.d' });
     }
   }

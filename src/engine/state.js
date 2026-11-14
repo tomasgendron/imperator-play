@@ -80,6 +80,7 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
     rng, phase: 'setup',
     players: players.map(p => ({ id: p.id, name: p.name, color: p.color ?? null, controller: p.controller ?? 'human', difficulty: p.difficulty ?? 'normal', general: p.general ? { id: p.general, at: null } : null, startProvince: null,
       gold: data.rules.startingGold, prestige: 0, hand: [], inPlay: [], savedResources: [], generalRecalledThroughTurn: null,
+      pendingStealToRoma: null,   // v31.24 (18.r, 18.x): a Bee-redirected steal waiting for this player's next turn: { def: 'steals_troops', redirectedBy } or null
       items: { catapult: 0 }, out: false, gameRollsTaken: 0, startIncome: true })),
     turnOrder: [],
     turn: { number: 0, round: 0, activePlayerId: null, step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} },
@@ -159,6 +160,7 @@ export function validateState(state, data, opts = {}) {
     if (!isNat(pl.prestige)) err(`${pl.id}: prestige ${pl.prestige}`);
     if (pl.general && pl.general.at !== null && !data.provincesById[pl.general.at]) err(`${pl.id}: general at unknown ${pl.general.at}`);
     if (pl.general && !data.generalsById[pl.general.id]) err(`${pl.id}: unknown general ${pl.general.id}`);
+    if (pl.pendingStealToRoma !== undefined && pl.pendingStealToRoma !== null && (pl.pendingStealToRoma.def !== 'steals_troops' || (pl.pendingStealToRoma.redirectedBy !== null && !playerById[pl.pendingStealToRoma.redirectedBy]))) err(`${pl.id}: bad pendingStealToRoma (18.r, 18.x)`);
     if (!pl.items || !isNat(pl.items.catapult)) err(`${pl.id}: items.catapult must be a whole number (19.u)`);
     if (pl.out && Object.values(state.provinces).some(p => p.owner === pl.id)) err(`${pl.id}: eliminated but still owns a province (12.m)`);
     if (pl.out && (pl.hand.length || pl.inPlay.length || pl.savedResources.length)) err(`${pl.id}: eliminated but still holds cards`);

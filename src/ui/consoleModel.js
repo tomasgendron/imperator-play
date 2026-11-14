@@ -199,6 +199,7 @@ const T = {
   allyMadeConquered: (e, st, d) => `${pn(st, e.pub.player)} pays ${G(e.pub.gold)} to the bank: allied ${prov(d, e.pub.province)} becomes a conquered province (keeps its ${e.pub.troops} troops, +${e.pub.prestige ?? 1} Prestige, 18.v).`,
   allyBribed: (e, st, d) => `${pn(st, e.pub.player)} bribes ${prov(d, e.pub.province)} away from ${pn(st, e.pub.from)} for ${G(e.pub.gold)}: ${e.pub.switched} troop switches sides, ${e.pub.lost} lost, ${e.pub.fled} flee.`,
   displeasedRedirected: (e, st) => `${pn(st, e.pub.player)} plays Busy Little Bee! (${G(e.pub.gold)} to ${e.pub.goldTo === 'roma' ? 'Roma' : pn(st, e.pub.goldTo)}): ${pn(st, e.pub.to)} suffers ${e.pub.def} instead.`,
+  displeasedDeferred: (e, st, d) => `${pn(st, e.pub.player)} loses all their bonus troops to Roma at the start of their next turn (${d?.cardDefsById?.[e.pub.def]?.name ?? e.pub.def}${e.pub.redirectedBy ? `, sent by ${pn(st, e.pub.redirectedBy)}'s Busy Little Bee!` : ''}, 18.r).`,
   displeasedNoEffect: (e, st) => `${e.pub.def}: no effect on ${pn(st, e.pub.player)} (${e.pub.reason}).`,
   generalRecalled: (e, st, d) => `${pn(st, e.pub.player)}'s general is recalled to Rome${e.pub.from ? ` from ${prov(d, e.pub.from)}` : ''}: no general perks through turn ${e.pub.throughTurn}.`,
   goldConfiscated: (e, st) => `The Emperor confiscates ${G(e.pub.lost)} from ${pn(st, e.pub.player)} (${e.pub.left} left)${e.pub.poverty ? '; poverty costs 1 Prestige' : ''}.`,

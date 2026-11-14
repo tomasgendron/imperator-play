@@ -392,8 +392,8 @@
    "rule": "16.n, 12.f, 17.y (Vidi 2026-10-21; battle logic is M2)"
   },
   "carthageBackTroops": {
-   "value": 5,
-   "rule": "16.n, 12.g (Carthage comes back with 5 when Roma falls and the game goes on)"
+   "value": 10,
+   "rule": "16.n, 12.g (Carthage comes back with 10 when Roma falls and the game goes on; v31.28, Tomas 2026-11-14)"
   },
   "neutralCarthagePassable": {
    "value": {

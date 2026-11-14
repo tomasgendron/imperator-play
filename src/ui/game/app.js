@@ -909,16 +909,24 @@ async function playEvents(events, before = null) {
   }
   await maybeAiTurnSummary(events);
 }
-/** v31.7: after an AI turn, a short summary the human dismisses with OK or a click outside. Offline only: an online host must not
- *  wait here (guests would stall), and a guest must not pause on a stream of updates. Node tests never call this. */
+/** v31.7: after an AI turn, a short summary the human dismisses with OK or a click outside. Offline only, so an online host must not
+ *  wait here (guests would stall), and a guest must not pause on a stream of updates. Node tests never call this.
+ *  v31.28: online too, but never blocking. The same content, on both the host's and the guests' screens (only AI turns are
+ *  summarised, never another human's — humans narrate their own turns), shown with autoMs spd(9000) like a non-sticky roll
+ *  popup and NOT awaited: playEvents returns at once, so the host's apply loop (controller.js: apply awaits playEvents)
+ *  and a guest's drain run on while the popup is up, and a later popup may replace it. OK / click outside still dismisses it early. */
 async function maybeAiTurnSummary(events) {
-  if (C.NET || !events?.some(e => e.type === 'turnEnded')) return;
+  if (!events?.some(e => e.type === 'turnEnded')) return;
   const ended = [...events].reverse().find(e => e.type === 'turnEnded');
   const pid = ended?.pub?.player; const s = st(); const pl = s?.players?.find(p => p.id === pid);
   if (!pl || pl.controller !== 'ai') return;
   const sum = G.aiTurnSummary(G.eventsOfTurn(s.log, pid), s, data, pid);
   if (sum.skip || !$('#ovModal')) return;
   const body = sum.sections.map(sec => `<div class="sec">${esc(sec.title)}</div><ul class="rolllines">${sec.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>`).join('');
+  if (C.NET) {   // v31.28: online, the popup must never wait for an OK tap (v31.7's reason still holds) — show it and let it close itself
+    openModal(`<div class="ask aiturn" id="aiSum"><h2>${esc(sum.name)} · turn ${sum.turn ?? ''}</h2><p class="small">What the AI did this turn. It closes on its own — OK, or click outside, to dismiss it now.</p>${body}<div class="foot"><span class="spacer"></span><button class="btn gold" data-close id="aiSumOk">OK</button></div></div>`, { cls: 'aiturn', autoMs: spd(9000) });
+    return;
+  }
   await openModal(`<div class="ask aiturn" id="aiSum"><h2>${esc(sum.name)} · turn ${sum.turn ?? ''}</h2><p class="small">What the AI did this turn. OK, or click outside, to go on.</p>${body}<div class="foot"><span class="spacer"></span><button class="btn gold" data-close id="aiSumOk">OK</button></div></div>`, { cls: 'aiturn' });
 }
 async function eventModal(artId, title, body) {
@@ -1823,7 +1831,7 @@ function renderMap(legal) {
     else { cls += col(p.owner) + (p.status === 'allied' ? ' allied' : ''); txt = p.troops; if (isUnderGarrisoned(s, data, id)) cls += ' low'; }
     // v27 (Vidi 9:12 PM): a held province shows troops/natives, the natives lighter ("5/3"); no natives (0 or not known): troops only
     const nat = p.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
-    const tip = `${def.name}: ${!p.owner && id !== 'roma' ? `${p.native.present ?? '?'} natives` : `${p.troops} troop${p.troops === 1 ? '' : 's'}${nat ? `, ${nat} native${nat === 1 ? '' : 's'}` : ''}`}`;
+    const tip = `${def.name}: ${!p.owner && id !== 'roma' ? `${p.native.present ?? '?'} natives` : `${p.troops} troop${p.troops === 1 ? '' : 's'}${nat ? `, ${nat} native${nat === 1 ? '' : 's'}` : ''}`}${id === 'carthage' && s.carthage?.neutral ? " — Under Roma's control" : ''}`;
     if (nat) { cls += ' wn'; txt = `${p.troops}<span class="nat">/${nat}</span>`; }
     if (selected === id) cls += ' sel';
     if (builder) cls += ab.from === id ? ' ab-origin' : ab.to === id ? ' ab-tgt' : picks.has(id) ? ' ab-ok' : ' ab-dim';
@@ -1896,7 +1904,8 @@ function showInfo(id, pin) {
   const s = st(); const p = s.provinces[id]; const def = data.provincesById[id]; const [x, y] = tokenFor(id);
   const m = G.shownMin(s, data, id);
   const rows = [
-    ['Status', id === 'roma' && !p.owner ? 'Roma (no holder)' : { native: 'Native (unowned)', conquered: 'Conquered', starting: 'Starting province', allied: 'Allied', held: 'Roma (held)' }[p.status] ?? p.status],
+    // v31.28: a neutral Carthage (after a Senate Decree) is labelled "Under Roma's control" (16.n) — never when player-held.
+    ['Status', id === 'carthage' && s.carthage?.neutral ? "Under Roma's control" : id === 'roma' && !p.owner ? 'Roma (no holder)' : { native: 'Native (unowned)', conquered: 'Conquered', starting: 'Starting province', allied: 'Allied', held: 'Roma (held)' }[p.status] ?? p.status],
     ['Owner', p.owner ? `<b style="color:var(--${col(p.owner)})">${esc(pn(p.owner))}</b>` : '-'],
     ['Number / reward', p.number ? `${p.number} / ${p.reward}` : 'none'],
     ['Troops', p.owner || id === 'roma' ? p.troops : '-'],
@@ -1947,7 +1956,7 @@ function renderTable() {
     if (p.status === 'starting') notes.push('Start province: minimum 1, always loyal.');
     if (p.status === 'allied') notes.push('Allied: Min garrison is natives + 1 for the reward and the bonus troop (19.r). No revolt. Moving troops out still keeps the global floor of 1.');
     if (under) notes.push('UNDER-GARRISONED: no bonus troop, no reward.');
-    if (id === 'carthage') notes.push(s.carthage?.defeated ? 'Carthage defeated: Decree numbers count as Rome Rolls.' : 'Walls all sides; the Senate Decree target.');
+    if (id === 'carthage') notes.push(s.carthage?.neutral ? "Under Roma's control (16.n)." : s.carthage?.defeated ? 'Carthage defeated: Decree numbers count as Rome Rolls.' : 'Walls all sides; the Senate Decree target.');
     if (id === 'roma') notes.push('Walls all sides, Ingrained Loyalty; attack needs Battlefield Imperator.');
     return `<tr class="${p.owner ? col(p.owner) : 'none'}${selected === id ? ' sel' : ''}" data-id="${id}"><td>${esc(def.name)}</td><td>${p.number ?? '-'}</td><td>${p.reward ?? '-'}</td><td>${p.owner ? esc(pn(p.owner)) : '-'}</td><td>${p.status}</td>
       <td class="${p.owner ? '' : 'nat-cell'}">${p.native.count === null ? (id === 'roma' ? '-' : '?') : `${p.native.count} / ${p.native.present}`}</td><td>${p.owner || id === 'roma' ? p.troops : '-'}</td>

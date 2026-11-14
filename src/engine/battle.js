@@ -722,7 +722,7 @@ function conquer(ctx, b, after) {
     if (back) changeTroops(ctx, b.att.from, back, 'romaFull');
     emit(ctx, 'romaHeld', { actor: A, rule: '12.l', pub: { player: A, previous: prev, troops: p.troops, survivorsInRoma: stay, sentBack: back } });
   } else {
-    if (t === 'carthage' && prev === null) {                       // 16.n: +2, salt the earth
+    if (t === 'carthage') {                                        // 16.n, 12.f (v31.28, Tomas 2026-11-14): +2 whether neutral or player-held; salt the earth
       gain = data.rules.prestige.carthage; state.carthage.defeated = true;
       const n = data.rules.carthageNative[1]; p.native = { rolled: n, count: n, present: n };
       emit(ctx, 'carthageDefeated', { actor: A, rule: '16.n', pub: { player: A } });
@@ -736,9 +736,10 @@ function conquer(ctx, b, after) {
   awardPrestige(ctx, A, gain, t === 'roma' ? 'roma' : t === 'carthage' && gain === data.rules.prestige.carthage ? 'carthage' : 'conquest', t === 'roma' ? '12.g' : '12.f');
   if (state.phase !== 'turn') return;
   // v31.22: losing an ALLIED province in battle costs the owner NO prestige (Tomas's ruling, 2026-11-11). The attacker still gains
-  // the +1 conquest prestige above; a conquered / starting / held province still loses 1. wasAlly is captured before the status
-  // overwrite above (the province is 'conquered' by the time this runs). The provinceLost event still fires either way.
-  if (prev) { emit(ctx, 'provinceLost', { actor: prev, rule: '12.f', pub: { player: prev, province: t, to: A, allied: wasAlly } }); if (!wasAlly) awardPrestige(ctx, prev, -data.rules.prestige.loss, 'provinceLost', '12.f'); if (state.phase !== 'turn') return; }
+  // the +1 conquest prestige above; a conquered / starting / held province still loses 1 — 2 for Carthage (12.f, v31.28, Tomas 2026-11-14).
+  // wasAlly is captured before the status overwrite above (the province is 'conquered' by the time this runs). The provinceLost event still fires either way.
+  // v31.28: losing Carthage in battle costs its owner 2 Prestige (12.f) — the loss mirrors the +2 conquest gain.
+  if (prev) { emit(ctx, 'provinceLost', { actor: prev, rule: '12.f', pub: { player: prev, province: t, to: A, allied: wasAlly } }); const loss = t === 'carthage' ? data.rules.prestige.carthage : data.rules.prestige.loss; if (!wasAlly) awardPrestige(ctx, prev, -loss, 'provinceLost', '12.f'); if (state.phase !== 'turn') return; }
   if (t === 'roma' && state.carthage.neutral) {                   // Carthage is back (12.g, 16.n)
     const n = data.rules.carthageBackTroops; Object.assign(state.carthage, { neutral: false, defeated: false, decreeLegionsLost: 0 });
     state.provinces.carthage.native = { rolled: n, count: n, present: n }; state.provinces.carthage.healAtTurn = null;

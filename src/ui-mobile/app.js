@@ -693,7 +693,7 @@ function renderTokens(s, legal) {
     const nd = nudge[id];
     const nat = p.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
     const g = gensAt[id];
-    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${p.number ? `<span class="nn">${p.number}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${g ? `<span class="gen" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%"></span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}</span></button>`;
+    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${p.number ? `<span class="nn">${p.number}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${g ? `<span class="gen" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%"></span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}${id === 'carthage' && s.carthage?.neutral ? ' · Under Roma\'s control' : ''}</span></button>`;
   }).join(''));
 }
 function tokenTap(id) {
@@ -1017,10 +1017,10 @@ function openProvince(id, refresh = false) {
   const owner = p.owner ? pn(p.owner) : null;
   const nb = [...def.land.map(x => [x, 'land']), ...def.sea.map(x => [x, 'sea'])];
   const gens = s.players.filter(pl => pl.general?.at === id).map(pl => data.generalsById[pl.general.id].name); const reach = reachFrom(id, legal);
-  const html = `<div class="sh-head"><span class="sw" style="--c:${p.owner ? cvar(p.owner) : id === 'roma' ? 'var(--roma)' : 'var(--native)'};width:16px;height:16px"></span><h2>${esc(def.name)}<small>${owner ? `${esc(owner)}'s province` : id === 'roma' ? 'Roma · no holder' : 'Unowned · natives'} · number ${p.number ?? '–'} · reward ${esc(p.reward ?? '–')}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+  const html = `<div class="sh-head"><span class="sw" style="--c:${p.owner ? cvar(p.owner) : id === 'roma' ? 'var(--roma)' : 'var(--native)'};width:16px;height:16px"></span><h2>${esc(def.name)}<small>${id === 'carthage' && s.carthage?.neutral ? "Under Roma's control" : owner ? `${esc(owner)}'s province` : id === 'roma' ? 'Roma · no holder' : 'Unowned · natives'} · number ${p.number ?? '–'} · reward ${esc(p.reward ?? '–')}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body" id="provBody" data-id="${id}">
       <div class="stats"><div class="stat"><small>Troops</small><b>${p.owner || id === 'roma' ? p.troops : '–'}</b></div><div class="stat"><small>Natives</small><b>${p.native.count === null ? (id === 'roma' ? '–' : '?') : `${p.native.present}/${p.native.count}`}</b></div><div class="stat"><small>Min garrison</small><b class="${under ? 'warn' : 'ok'}">${m ? m.min : '–'}${p.owner ? (under ? ' ✗' : ' ✓') : ''}</b></div></div>
-      <div class="chips" style="margin-bottom:4px"><span class="pchip">🧱 ${p.walls?.length ? 'Wall facing ' + p.walls.map(prov).map(esc).join(', ') : 'No wall'}</span><span class="pchip">🛣 ${p.road ? 'Road' : 'No road'}</span><span class="pchip">⚑ ${gens.length ? esc(gens.join(', ')) + ' here' : 'No general'}</span><span class="pchip">${esc(p.status)}</span></div>
+      <div class="chips" style="margin-bottom:4px"><span class="pchip">🧱 ${p.walls?.length ? 'Wall facing ' + p.walls.map(prov).map(esc).join(', ') : 'No wall'}</span><span class="pchip">🛣 ${p.road ? 'Road' : 'No road'}</span><span class="pchip">⚑ ${gens.length ? esc(gens.join(', ')) + ' here' : 'No general'}</span><span class="pchip">${esc(p.status)}</span>${id === 'carthage' && s.carthage?.neutral ? '<span class="pchip">🏛 Under Roma\'s control (16.n)</span>' : ''}</div>
       <div class="sec">Borders (⚓ by sea)</div>
       <div class="chips" id="provBorders">${nb.map(([x, k]) => { const o = s.provinces[x].owner; const t = reach.has(x); return `<button class="pchip${t ? ' tg' : ''}" data-goprov="${attr(x)}" aria-label="Open ${attr(prov(x))}"><span class="sw" style="--c:${o ? cvar(o) : x === 'roma' ? 'var(--roma)' : 'var(--native)'}"></span>${esc(prov(x))}${k === 'sea' ? ' ⚓' : ''}<small>${o || x === 'roma' ? s.provinces[x].troops : s.provinces[x].native.present ?? '?'}</small></button>`; }).join('')}</div>
       ${reach.size ? `<p class="note" style="margin:6px 2px 0">Gold ring = you can attack, ally with or move there from ${esc(def.name)} now (it glows on the map).</p>` : ''}
@@ -1776,15 +1776,23 @@ async function playEvents(events, before = null) {
   }
   await maybeAiTurnSummary(events);
 }
-/** v31.7: the desktop's AI turn summary. Offline only, so an online guest is not held up and the host does not stall the room. */
+/** v31.7: the desktop's AI turn summary. Offline only, so an online guest is not held up and the host does not stall the room.
+ *  v31.28: online too, but never blocking: the same sheet, non-sticky, so it closes itself after spd(9000) (openPop's
+ *  non-sticky default is spd(5200); a summary has more to read than a roll popup, so it gets the desktop's 9 s) and
+ *  playEvents never awaits it, so the host's apply loop and a guest's drain run on while the sheet is up. Both screens
+ *  see it (host and guest); only AI turns are summarised, never another human's. */
 async function maybeAiTurnSummary(events) {
-  if (C.NET || !events?.some(e => e.type === 'turnEnded')) return;
+  if (!events?.some(e => e.type === 'turnEnded')) return;
   const ended = [...events].reverse().find(e => e.type === 'turnEnded');
   const pid = ended?.pub?.player; const s = st(); const pl = s?.players?.find(p => p.id === pid);
   if (!pl || pl.controller !== 'ai') return;
   const sum = G.aiTurnSummary(G.eventsOfTurn(s.log, pid), s, data, pid);
   if (sum.skip) return;
   const body = sum.sections.map(sec => `<div class="sec">${esc(sec.title)}</div><ul class="poplines">${sec.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>`).join('');
+  if (C.NET) {   // v31.28: online, never wait for OK — the sheet closes itself; playEvents does not await it
+    openPop('aiTurn', `<div class="sh-head"><h2>${esc(sum.name)}<small>Turn ${sum.turn ?? ''} · what the AI did</small></h2></div><div class="sh-body">${body}<p class="note">Closes on its own — tap OK, or outside, to dismiss it now.</p></div><div class="sh-foot"><button class="btn gold wide" data-popok id="aiSumOk">OK</button></div>`, { sticky: false, autoMs: spd(9000) });
+    return;
+  }
   await openPop('aiTurn', `<div class="sh-head"><h2>${esc(sum.name)}<small>Turn ${sum.turn ?? ''} · what the AI did</small></h2></div><div class="sh-body">${body}<p class="note">OK, or tap outside, to go on.</p></div><div class="sh-foot"><button class="btn gold wide" data-popok id="aiSumOk">OK</button></div>`, { sticky: true });
 }
 

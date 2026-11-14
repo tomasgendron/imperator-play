@@ -363,7 +363,8 @@ export function resolveRevolt(ctx, pid, id, rest, source = 'revoltRoll', by = nu
   }
   emit(ctx, 'provinceRevolted', { actor: pid, rule: '17.c', pub: { player: pid, province: id, minimum: min, killed, survivors, carthageRegainedSpirit: regained, source, by, general: generalHere } });
   if (regained) emit(ctx, 'carthageRegainedSpirit', { rule: '16.n', pub: {} });
-  awardPrestige(ctx, pid, -data.rules.prestige.loss, 'revolt', '12.f');
+  // v31.28 (Tomas 2026-11-14, 12.f): losing Carthage to a revolt costs 2 Prestige, not 1.
+  awardPrestige(ctx, pid, -(id === 'carthage' ? data.rules.prestige.carthage : data.rules.prestige.loss), 'revolt', '12.f');
   if (survivors > 0 || generalHere) {
     const cand = S.nearestOwned(state, data, pid, id);
     if (!cand.length) {

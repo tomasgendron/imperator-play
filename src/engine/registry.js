@@ -8,7 +8,7 @@ export const DECLARED = Object.freeze({
     'gainResources', 'freeBuild', 'recallGeneral', 'confiscateGold', 'removeFromProvince', 'stealTroopsToRoma', 'taxSavedCards',
     'redirectDispleased', 'callReinforcements', 'sneakAttack',
   ]),
-  perk: Object.freeze(['caesarFlee', 'scipioExtraDie', 'seaMaster', 'fightToTheDeath', 'disciplinedAdvance']),
+  perk: Object.freeze(['caesarFlee', 'scipioExtraDie', 'seaMaster', 'fightToTheDeath', 'dieFloor', 'disciplinedAdvance']),
   decree: Object.freeze(['carthageDecree']),
 });
 

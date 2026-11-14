@@ -863,6 +863,7 @@ async function playEvents(events, before = null) {
         renderBattleHead(true); openBattlePop(); await sleep(spd(500)); break;
       case 'enemyFled': if (bv) addPerk(e.pub.side === 'defender' ? 'a' : 'd', `Caesar: one enemy troop flees before the battle (15.b)`); break;
       case 'generalPerkTriggered': if (bv) addPerk(e.actor === bv.defId && bv.defId ? 'd' : 'a', `${data.generalsById[e.pub.general]?.name ?? e.pub.general}: ${e.pub.reason ?? e.pub.effect} (${e.rule})`); break;
+      case 'lossCapped': if (bv) addPerk(e.pub.side === 'defender' ? 'd' : 'a', `Germanicus, Fight to the Death: last stand — at 2 troops, at most 1 troop lost this round (${e.pub.saved} saved) (15.h)`); break;
       case 'cardPlayed': if (bv && data.cardDefsById[e.pub.def]?.type === 'battle') addBattleCard(e); showCardPlay(G.cardPlayPopup(events, i, s, data)); break;
       case 'resourceApplied': case 'resourceCardUsed': showCardPlay(G.cardPlayPopup(events, i, s, data)); break;
       case 'battleRoundRolled': await animRoundRolled(e); break;
@@ -1028,10 +1029,17 @@ function refreshFightToDeath() {
   if (!bv || !st().battle) return;
   for (const side of ['a', 'd']) {
     const f = G.fightToDeath(st(), data, side);
-    if (!f) continue;
-    const cur = bv.perks?.[side]?.get('germanicus');
-    if (cur && /\(15\.h\): \+\d$/.test(cur)) continue;   // a dice adjustment already fired: keep its label
-    addPerk(side, G.fightToDeathLine(f), 'germanicus', true);
+    if (f) {
+      const cur = bv.perks?.[side]?.get('germanicus');
+      if (!(cur && /\(15\.h\): \+\d$/.test(cur))) addPerk(side, G.fightToDeathLine(f), 'germanicus', true);   // a dice adjustment already fired: keep its label
+    }
+    // v31.25: the die floor (15.h) is a standing perk — list it whenever Germanicus is with the army, at any troop count.
+    // A fired floor label ("... (15.h): +1") is the record of that round's die and is never overwritten by the generic line.
+    const fl = G.germanicusFloor(st(), data, side);
+    if (fl) {
+      const curFl = bv.perks?.[side]?.get('germanicusFloor');
+      if (!(curFl && /\(15\.h\): \+\d$/.test(curFl))) addPerk(side, G.germanicusFloorLine(fl), 'germanicusFloor', true);
+    }
   }
 }
 // ------------------------------------------------------------------ M7 item 1: the battle popup, front and centre (the Battle tab keeps the record)

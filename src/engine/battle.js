@@ -161,6 +161,7 @@ const perkFns = {
   caesarFlee: { minEnemy: (data) => data.generalsById.caesar.perks[0].params.minEnemyTroops ?? data.rules.caesarFleeMinEnemy },
   scipioExtraDie: {}, seaMaster: {},
   fightToTheDeath: { delta: data => data.generalsById.germanicus.perks.find(p => p.handler === 'fightToTheDeath').params.delta },
+  dieFloor: { min: data => data.generalsById.germanicus.perks.find(p => p.handler === 'dieFloor')?.params?.min ?? 2 },
   disciplinedAdvance: { rolls: () => 1000 },
 };
 for (const [k, v] of Object.entries(perkFns)) registerPerk(k, v);
@@ -526,6 +527,16 @@ defineRoll('battleRound', (ctx, f) => {
   popFrame(ctx);
   emit(ctx, 'battleRoundRolled', { actor: b.att.player, rule: '17.e', pub: { battleId: b.id, round: b.round, target: b.target, attPlayer: b.att.player, defPlayer: b.def.player ?? null, attacker: { player: b.att.player, dice: [...raw.att], reasons: dc.attackerReasons }, defender: { player: b.def.player, dice: [...raw.def], reasons: dc.defenderReasons } } });
   const adj = []; const fin = { att: [...raw.att], def: [...raw.def] };
+  if (b.mode === 'attack') {
+    // 15.h (v31.25, Tomas 2026-11-13): Germanicus's dice can never roll below 2 — any die showing 1 counts as 2.
+    // A standing perk, NOT tied to being reduced: any troop count, attack and defence, whenever Germanicus is with the
+    // army (15.f); off while recalled (perksOn); no perks in a Senate Decree battle (mode !== 'attack'). The floor is
+    // on the die as rolled, BEFORE the bonuses below, so they stack on top of it: at 2 troops a 1 becomes 2 then +1
+    // (3); at 1 troop 1 -> 2 -> +2 (4). A floored die shows 2 with a +1 badge (dieBadges, v31.13) and the panel line below.
+    const floorDice = dice => { let n = 0; for (let k = 0; k < dice.length; k++) if (dice[k] < 2) { dice[k] = 2; n++; } return n; };
+    if (b.att.general && perksOn(state, b.att.player, 'germanicus') && floorDice(fin.att)) adj.push({ side: 'attacker', source: 'germanicusFloor', delta: 1, why: 'Germanicus die floor: 1s count as 2 (15.h)' });
+    if (b.def.general && b.def.player && perksOn(state, b.def.player, 'germanicus') && floorDice(fin.def)) adj.push({ side: 'defender', source: 'germanicusFloor', delta: 1, why: 'Germanicus die floor: 1s count as 2 (15.h)' });
+  }
   for (const side of ['att', 'def']) {
     const bonus = b[side].elephants + b.moral[side];
     if (bonus) fin[side] = fin[side].map(v => v + bonus);
@@ -562,6 +573,16 @@ defineRoll('battleRound', (ctx, f) => {
     const w = A[k] > D[k] ? 'attacker' : 'defender';                                   // ties go to the defender (Q16)
     pairs.push({ a: A[k], d: D[k], winner: w }); if (w === 'attacker') dLoss++; else aLoss++;
   }
+  // 15.h (v31.25, Tomas 2026-11-13): last-stand loss cap — when a Germanicus force is at 2 troops at the start of a
+  // battle round, it loses at most 1 troop that round, however many dice comparisons it loses. Same gates as Fight to
+  // the Death itself: both attack and defence; attacker only when he started the battle with 3+ troops and was reduced;
+  // defender qualifies from 1-2; off while recalled (perksOn). Counted on the force's TOTAL losses for the round,
+  // borrowed natives included (they still die first, 19.d). The surviving 1 troop then fights at +2 next round.
+  const capped = [];
+  if (b.mode === 'attack' && aLoss > 1 && b.att.general && perksOn(state, b.att.player, 'germanicus')
+    && attForce(b) === 2 && (b.att.started ?? 2) >= 3) { capped.push({ side: 'attacker', player: b.att.player, saved: aLoss - 1 }); aLoss = 1; }
+  if (b.mode === 'attack' && dLoss > 1 && b.def.general && b.def.player && perksOn(state, b.def.player, 'germanicus')
+    && defForce(state, b) === 2) { capped.push({ side: 'defender', player: b.def.player, saved: dLoss - 1 }); dLoss = 1; }
   const bl = Math.min(aLoss, b.att.borrowed); b.att.borrowed -= bl; b.att.own -= aLoss - bl;   // borrowed troops die first (19.d)
   if (aLoss) emit(ctx, 'casualtiesApplied', { rule: '19.d', pub: { battleId: b.id, round: b.round, borrowed: bl, own: aLoss - bl } });
   if (bl) loseBorrowed(ctx, b, bl, 'battle');
@@ -569,6 +590,7 @@ defineRoll('battleRound', (ctx, f) => {
   b.moral = { att: 0, def: 0 };
   let af = attForce(b), df = defForce(state, b);
   b.rounds.push({ round: b.round, attackerDice: raw.att, defenderDice: raw.def, attackerFinal: fin.att, defenderFinal: fin.def, attackerLoss: aLoss, defenderLoss: dLoss });
+  for (const c of capped) emit(ctx, 'lossCapped', { actor: c.player, rule: '15.h', pub: { battleId: b.id, round: b.round, side: c.side, player: c.player, saved: c.saved, troopsAfter: c.side === 'attacker' ? af : df } });
   emit(ctx, 'battleRoundResolved', { rule: '17.e', pub: { battleId: b.id, round: b.round, target: b.target, attPlayer: b.att.player, defPlayer: b.def.player ?? null, attackerFinal: A, defenderFinal: D, pairs, attackerLoss: aLoss, defenderLoss: dLoss, attackerTroopsAfter: af, defenderTroopsAfter: df } });
   if (af === 0 && df === 0) {                                                          // Q20: the defender's last troop survives
     setDefForce(state, b, 1); df = 1;
@@ -819,7 +841,8 @@ export function attackPreview(state, data, a) {
       if (route.sea) perks.push({ side: 'attacker', general: 'pompey', applies: true, text: 'Pompey, Master of the Sea: 3 dice v 2 by sea, and no Road needed for a sea attack (15.d).', rule: '15.d' });
       else perks.push({ side: 'attacker', general: 'pompey', applies: false, text: 'Pompey: his sea perk only works at sea; this is a land attack (15.d). (His garrison -1 always applies.)', rule: '15.d' });
     } else if (myGen === 'germanicus') {
-      perks.push({ side: 'attacker', general: 'germanicus', applies: true, text: 'Germanicus, Fight to the Death: +1 to each die at 2 troops and +2 at 1, if this attack started with at least 3 (15.h).', rule: '15.h' });
+      perks.push({ side: 'attacker', general: 'germanicus', applies: true, text: 'Germanicus, Fight to the Death: +1 to each die at 2 troops and +2 at 1, if this attack started with at least 3; at 2 troops the force loses at most 1 troop per round (15.h).', rule: '15.h' });
+      perks.push({ side: 'attacker', general: 'germanicus', applies: true, text: 'Germanicus: every die counts at least 2 — a 1 counts as 2 (15.h).', rule: '15.h' });
       perks.push(wall
         ? { side: 'attacker', general: 'germanicus', applies: true, text: "Germanicus, Disciplined Advance: the defender's Wall is ignored for the whole battle (15.h).", rule: '15.h' }
         : { side: 'attacker', general: 'germanicus', applies: false, text: 'Germanicus, Disciplined Advance: no Wall to ignore here (15.h).', rule: '15.h' });
@@ -832,7 +855,10 @@ export function attackPreview(state, data, a) {
       if (dg.id === 'caesar' && !(withGeneral && myGen === 'caesar')) perks.push(attForceNow >= minFlee
         ? { side: 'defender', general: 'caesar', applies: true, text: 'Defending Caesar: 1 of your troops flees at the start (a borrowed one first); it returns if Caesar loses (15.b).', rule: '15.b' }
         : { side: 'defender', general: 'caesar', applies: false, text: 'Defending Caesar: you attack with a lone troop, so no one flees (15.b).', rule: '15.b' });
-      else if (dg.id === 'germanicus') perks.push({ side: 'defender', general: 'germanicus', applies: true, text: 'Defending Germanicus, Fight to the Death: +1 to each die at 2 troops and +2 at 1, even if the battle started that small (15.h).', rule: '15.h' });
+      else if (dg.id === 'germanicus') {
+        perks.push({ side: 'defender', general: 'germanicus', applies: true, text: 'Defending Germanicus, Fight to the Death: +1 to each die at 2 troops and +2 at 1, even if the battle started that small; at 2 troops the force loses at most 1 troop per round (15.h).', rule: '15.h' });
+        perks.push({ side: 'defender', general: 'germanicus', applies: true, text: 'Defending Germanicus: every die counts at least 2 — a 1 counts as 2 (15.h).', rule: '15.h' });
+      }
       else if (dg.id === 'scipio' || dg.id === 'pompey') perks.push({ side: 'defender', general: dg.id, applies: false, text: `Defending ${gName(dg.id)}: no perks when defending (${dg.id === 'scipio' ? '15.c' : '15.d'}).`, rule: dg.id === 'scipio' ? '15.c' : '15.d' });
     }
   }

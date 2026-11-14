@@ -295,7 +295,7 @@
     "card": "generals/germanicus.png",
     "token": "tokens/general_germanicus.png"
    },
-   "text": "Fight to the Death: +1 to each die at 2 troops remaining and +2 at 1 (no cap). Defending qualifies even if the battle starts at 1 or 2. Attacking must start with at least 3 troops and be reduced to 2 or 1. Disciplined Advance (attacking only): the defender's Wall bonus is ignored for the whole battle.",
+   "text": "Fight to the Death: +1 to each die at 2 troops remaining and +2 at 1 (no cap); at 2 troops the force loses at most 1 troop per battle round. Defending qualifies even if the battle starts at 1 or 2. Attacking must start with at least 3 troops and be reduced to 2 or 1. Germanicus's dice can never roll below 2: any die showing 1 counts as 2. Disciplined Advance (attacking only): the defender's Wall bonus is ignored for the whole battle.",
    "perks": [
     {
      "id": "fight_to_the_death",
@@ -329,7 +329,7 @@
        ]
       },
       {
-       "text": "If his last 2 troops are both killed in the same roll, the perk never fires.",
+       "text": "At 2 troops, the force can lose at most 1 troop per battle round — the last man always survives to fight at +2.",
        "rule": [
         "15.h"
        ]
@@ -367,6 +367,37 @@
        ]
       }
      ]
+    },
+    {
+     "id": "die_floor",
+     "handler": "dieFloor",
+     "needsWithArmy": true,
+     "hooks": [
+      "dieAdjust"
+     ],
+     "params": {
+      "min": 2,
+      "applies": [
+       "attack",
+       "defence"
+      ]
+     },
+     "name": "Perk 3: Dice Floor",
+     "when": "Any battle, attacking or defending, with the army",
+     "detail": [
+      {
+       "text": "Germanicus's dice can never roll below 2: any die showing 1 counts as 2.",
+       "rule": [
+        "15.h"
+       ]
+      },
+      {
+       "text": "A standing perk, not tied to being reduced: it applies at any troop count. It stacks with Fight to the Death — at 2 troops a 1 becomes 2, then +1 (3); at 1 troop a 1 becomes 2, then +2 (4).",
+       "rule": [
+        "15.h"
+       ]
+      }
+     ]
     }
    ],
    "quote": "Fight to the Death and Disciplined Advance.",
@@ -384,7 +415,9 @@
    "id": "augustus",
    "name": "Augustus",
    "title": "The builder and master of the Treasury",
-   "rule": ["15.i"],
+   "rule": [
+    "15.i"
+   ],
    "art": {
     "card": "generals/augustus.png",
     "token": "tokens/general_augustus.png"
@@ -397,7 +430,14 @@
      "modifiers": [],
      "name": "Perk 1: Master of the Treasury",
      "when": "At the Resources step, when a Merchant Bonus is earned",
-     "detail": [{ "text": "+1 Gold is added to an earned Merchant Bonus. It is never granted without a qualifying Road network.", "rule": ["22.b"] }]
+     "detail": [
+      {
+       "text": "+1 Gold is added to an earned Merchant Bonus. It is never granted without a qualifying Road network.",
+       "rule": [
+        "22.b"
+       ]
+      }
+     ]
     },
     {
      "id": "builder",
@@ -405,7 +445,14 @@
      "modifiers": [],
      "name": "Perk 2: The Builder",
      "when": "Buying a Road",
-     "detail": [{ "text": "Roads cost 1 Gold instead of 2.", "rule": ["19.j"] }]
+     "detail": [
+      {
+       "text": "Roads cost 1 Gold instead of 2.",
+       "rule": [
+        "19.j"
+       ]
+      }
+     ]
     }
    ],
    "quote": "The builder and master of the Treasury",

@@ -1,7 +1,8 @@
 // M8 (playtest batch 3, item 1): exact win odds of a battle for the AI, with everything the real battle code applies (battle.js):
 // troops (and borrowed natives, 19.c), dice per side (land 3 / sea 2, 17.e, 17.n; defender 2, or 3 behind a Wall, 19.k, 12.i, 16.n),
 // rolls with the Wall cancelled by Catapults and Germanicus (19.u, 15.h), Scipio (+1 on a tied pairing or an extra die, 15.c, 15.g),
-// Pompey at sea (15.d), Germanicus' Fight to the Death (15.h, both sides), Caesar's fleeing troop (15.b, both sides), Roma's Ingrained
+// Pompey at sea (15.d), Germanicus' Fight to the Death (15.h, both sides), his die floor (15.h, v31.25: every die counts at
+// least 2) and his last-stand loss cap (15.h, v31.25: at most 1 troop lost in a round at 2 troops), Caesar's fleeing troop (15.b, both sides), Roma's Ingrained
 // Loyalty roll (12.j, cap 20, 12.k), Elephants (+1 every round, 18.b) and Moral Boost (+1 for one round each, 18.c, queued one per round),
 // ties to the defender (Q16) and "both sides at 0: the defender keeps 1" (Q20).
 // It is a dynamic program over (attackers, defenders, round) with exact per-round loss tables (sorted-dice multisets), so a call costs
@@ -23,14 +24,17 @@ function multisets(n) {
 }
 // ---- one round: distribution of (attacker losses, defender losses)
 const tables = new Map();
-function roundTable(nA, nD, net) {
-  const key = `${nA},${nD},${net}`;
+function roundTable(nA, nD, net, attFloor = false, defFloor = false) {
+  const key = `${nA},${nD},${net},${attFloor ? 1 : 0},${defFloor ? 1 : 0}`;
   if (tables.has(key)) return tables.get(key);
   const acc = new Map();
-  for (const A0 of multisets(nA)) for (const D of multisets(nD)) {
-    const A = A0.dice.map(v => v + net);            // net = attacker bonus - defender bonus (both apply to every die of a side)
-    let aL = 0, dL = 0; for (let k = 0; k < Math.min(nA, nD); k++) { if (A[k] > D.dice[k]) dL++; else aL++; }
-    const kk = aL * 10 + dL; acc.set(kk, (acc.get(kk) ?? 0) + A0.p * D.p);
+  for (const A0 of multisets(nA)) for (const D0 of multisets(nD)) {
+    // 15.h (v31.25): a Germanicus side's dice are floored at 2 before any bonus — a 1 counts as 2. The net shift stays
+    // on the attacker only (only relative differences decide a pairing), so a floored defender die is max(v, 2) unshifted.
+    const A = A0.dice.map(v => (attFloor ? Math.max(v, 2) : v) + net);            // net = attacker bonus - defender bonus (both apply to every die of a side)
+    const D = D0.dice.map(v => (defFloor ? Math.max(v, 2) : v));
+    let aL = 0, dL = 0; for (let k = 0; k < Math.min(nA, nD); k++) { if (A[k] > D[k]) dL++; else aL++; }
+    const kk = aL * 10 + dL; acc.set(kk, (acc.get(kk) ?? 0) + A0.p * D0.p);
   }
   const t = [...acc].map(([kk, p]) => ({ aL: Math.floor(kk / 10), dL: kk % 10, p }));
   tables.set(key, t); return t;
@@ -39,7 +43,9 @@ function roundTable(nA, nD, net) {
 /**
  * Exact odds of a battle fought to the end. p: {a, d, round (next round to roll, 1 = first), maxA (attacker dice before the force
  * limit), defDice, wall, ignore (rolls 1..ignore have the Wall cancelled), defWallDice, attBonus/defBonus (Elephants, all rounds),
- * attMoralUntil/defMoralUntil (+1 in rounds <= this), germAtt/germDef (Fight to the Death: +1 to each die at 2 troops, +2 at 1).
+ * attMoralUntil/defMoralUntil (+1 in rounds <= this), germAtt/germDef (Fight to the Death: +1 to each die at 2 troops, +2 at 1;
+ * v31.25: the same flags also carry the die floor — every die of a Germanicus side counts at least 2 — and the last-stand
+ * loss cap, at most 1 troop lost in a round by a Germanicus force at 2 troops).
  * An attacker qualifies only after starting at 3 or more (attStart, default the troop count these odds begin with) and then falling to 2 or 1.
  * A defender qualifies at 2 or 1 even if the battle started there. delta is unused; the +1/+2 are fixed.
  * Returns {p: P(conquest), surv: E[attacker survivors on a conquest] (not conditional), lose: 1 - p}.
@@ -62,8 +68,12 @@ export function fightOdds(q) {
     if (P.germDef) { if (d === 2) net -= 1; else if (d === 1) net -= 2; }
     net = Math.max(-7, Math.min(7, net));
     let pw = 0, sv = 0;
-    for (const o of roundTable(nA, nD, net)) {
-      const a2 = a - o.aL, d2 = d - o.dL;
+    for (const o of roundTable(nA, nD, net, !!P.germAtt, !!P.germDef)) {
+      // 15.h (v31.25): last-stand loss cap — a Germanicus force at 2 troops at the start of the round loses at most 1
+      // troop that round. Attacker: only after starting at 3+ and being reduced; defender: at 2, however it started.
+      const aL = P.germAtt && attStart >= 3 && a === 2 ? Math.min(o.aL, 1) : o.aL;
+      const dL = P.germDef && d === 2 ? Math.min(o.dL, 1) : o.dL;
+      const a2 = a - aL, d2 = d - dL;
       const [w, s] = a2 <= 0 ? [0, 0] : f(a2, d2, rc + 1);   // a2 = 0 and d2 = 0: the defender keeps 1 (Q20)
       pw += o.p * w; sv += o.p * s;
     }

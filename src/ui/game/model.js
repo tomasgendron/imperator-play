@@ -600,6 +600,27 @@ export function fightToDeathLine(f) {
   if (f.delta === 2) return 'Germanicus, Fight to the Death: +2 to the die at 1 troop — live now: +2 (15.h)';
   return `Germanicus, Fight to the Death: +1 to each die at 2 troops, +2 at 1 troop — not yet (${f.troops} troops) (15.h)`;
 }
+/**
+ * v31.25: Germanicus's die floor (15.h), as the battle screen lists it up front — a standing perk, live whenever
+ * Germanicus is with the army and his perks are on (any troop count, attack or defence, never in a Senate Decree
+ * battle). Returns { troops } or null when it cannot apply on `side` ('a' attacker, 'd' defender).
+ */
+export function germanicusFloor(state, data, side) {
+  const b = state.battle; if (!b || b.mode !== 'attack') return null;
+  const isAtt = side === 'a';
+  const pid = isAtt ? b.att.player : b.def.player;
+  if (!pid) return null;
+  const pl = state.players.find(p => p.id === pid);
+  if (!pl?.general || pl.general.id !== 'germanicus') return null;
+  if (isAtt ? !b.att.general : !b.def.general) return null;
+  if (!generalPerksActive(state, pid)) return null;
+  return { troops: isAtt ? attForce(b) : defForce(state, b) };
+}
+/** v31.25: the die-floor line for the battle panel, from germanicusFloor(). */
+export function germanicusFloorLine(f) {
+  if (!f) return null;
+  return 'Germanicus: every die counts at least 2 — a 1 counts as 2 (15.h)';
+}
 
 /**
  * v31.13: per-die adjustment badges for the battle table. `raw` = the dice as rolled, `final` = the final dice, sorted
@@ -930,7 +951,7 @@ export function skipBattleUi(state, attacker, defender, on = hideAiBattlesOn()) 
   };
   return !human(attacker) && !human(defender);
 }
-const BATTLE_FACE = new Set(['attackDeclared', 'battleStarted', 'battleRoundRolled', 'battleRoundResolved', 'battleDiceAdjusted', 'battleEnded', 'enemyFled', 'generalSummoned', 'generalPerkTriggered', 'casualtiesApplied', 'decreeBattle', 'decreeResolved']);
+const BATTLE_FACE = new Set(['attackDeclared', 'battleStarted', 'battleRoundRolled', 'battleRoundResolved', 'battleDiceAdjusted', 'battleEnded', 'enemyFled', 'generalSummoned', 'generalPerkTriggered', 'casualtiesApplied', 'lossCapped', 'decreeBattle', 'decreeResolved']);
 /** Who is in this battle event, even after the action has cleared state.battle. */
 export function battleParticipants(state, event) {
   const p = event?.pub ?? {};

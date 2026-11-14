@@ -167,6 +167,7 @@ const T = {
   battleDiceAdjusted: (e) => `Dice modified (${e.pub.adjustments.map(a => `${a.why ?? a.source ?? a.reason ?? JSON.stringify(a)} ${a.delta > 0 ? '+' : ''}${a.delta}`).join(', ')}): attacker ${e.pub.attackerFinal.join(',')}, defender ${e.pub.defenderFinal.join(',')}.`,
   casualtiesApplied: (e) => `Attacker losses: ${e.pub.borrowed} borrowed, ${e.pub.own} own.`,
   battleRoundResolved: (e) => `Round ${e.pub.round}: attacker loses ${e.pub.attackerLoss}, defender loses ${e.pub.defenderLoss} (now ${e.pub.attackerTroopsAfter} vs ${e.pub.defenderTroopsAfter}).`,
+  lossCapped: (e, st) => `Germanicus's last stand (15.h): the ${e.pub.side} was down to 2 troops and loses only 1 this round (${e.pub.saved} saved, ${e.pub.troopsAfter} left).`,
   bothSidesZero: () => 'Both sides are wiped out: the defender keeps 1 troop (Q20).',
   nativesReduced: (e, st, d) => `${prov(d, e.pub.province)} natives ${e.pub.from} → ${e.pub.to} (${e.pub.reason}).`,
   fledTroopJoined: (e, st) => `The fled troop joins ${pn(st, e.pub.to)}.`,

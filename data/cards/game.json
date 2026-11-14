@@ -128,7 +128,7 @@
     "delayTurns": 1,
     "usesTurnCardSlot": true
    },
-   "text": "Kill up to 2 troops in enemy provinces (a held Roma too), on one province or split over two. A target needs 2+ troops and never drops below 1; each province only once per occupation. Unplayable (kept) with no legal target.",
+   "text": "Kill up to 2 troops in enemy provinces (a held Roma too), on one province or split over two. Natives killed stay dead. A target needs 2+ troops and never drops below 1; each province only once per occupation. Unplayable (kept) with no legal target.",
    "art": {
     "front": "cards/game/assassin.png"
    },

@@ -251,9 +251,21 @@ TURN_PLAYS.assassin = {
     for (const k of plan.kills) {
       const p = state.provinces[k.province]; const owner = p.owner;
       if (owner) changeTroops(ctx, k.province, -k.n);
-      else {   // neutral natives (Vidi 2026-10-22): they stay depleted and heal after a full round, as after an attack (17.v, Q102 default)
-        p.native.present -= k.n;
-        if (ctx.data.rules.assassinTargets?.natives17v !== false && p.native.count !== null && p.native.present < p.native.count) p.healAtTurn = state.turn.number + state.players.filter(x => !x.out).length;
+      else {   // neutral natives (v31.26, Tomas 2026-11-14): Assassin kills are PERMANENT — the native COUNT drops,
+        // so they never heal back (18.e). Mirrors borrowing (17.u, battle.js loseBorrowed): reduce count, clamp
+        // rolled, emit nativesReduced. No healAtTurn is set: the turn.js beginResources heal (17.v) only restores
+        // present to the (reduced) count, and every refill (revolt, ally, conquest, displeased) reads count too,
+        // so nothing can resurrect them. The old Q102 default (heal as in 17.v) is gone; the ruleset
+        // assassinTargets.natives17v flag is now unused and kept only for schema/save compatibility (see ruleset.json).
+        if (p.native.count !== null) {
+          const from = p.native.count;
+          p.native.count = Math.max(0, from - k.n);
+          if (p.native.present !== null) p.native.present = Math.min(p.native.present, p.native.count);
+          if (p.native.rolled !== null) p.native.rolled = Math.min(p.native.rolled, p.native.count);
+          emit(ctx, 'nativesReduced', { rule: '18.e', pub: { province: k.province, from, to: p.native.count, reason: 'assassin' } });
+        } else {
+          p.native.present -= k.n;
+        }
       }
       p.struck = struckMark(p);
       emit(ctx, 'troopsAssassinated', { actor: pid, rule: '18.e', pub: { player: pid, province: k.province, owner, n: k.n, left: strikeTroops(state, k.province) } });

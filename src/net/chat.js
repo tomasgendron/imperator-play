@@ -5,6 +5,10 @@
 export const CHAT_EMOJIS = ['⚔️', '😂', '🎉', '🏛️', '🍇', '👑', '💀'];   // taunts and cheers: attack, laugh, celebrate, Rome, grapes, crown, skull
 export const CHAT_MAX_LEN = 200;   // a chat line is short; longer text is cut, never refused
 export const CHAT_CAP = 50;        // the list keeps the last 50 messages; older ones drop off
+// v31.29: the DISPLAY cap is separate and lives in the pages, not here — the desktop panel shows about the last 4
+// messages (index.html #chatList max-height ~96px, scrollable for older ones) so the input + emoji row stay visible
+// on short viewports; the mobile sheet needs no such cap (its input sits in the fixed .sh-foot, the list already
+// scrolls at 46vh). Nothing here changes: the log still keeps 50.
 
 /** Text as it may be sent: trimmed, control characters stripped, capped at CHAT_MAX_LEN. '' = nothing to send. */
 export function cleanChatText(text) {

@@ -1,6 +1,6 @@
 // M2: battles and the Senate Decree (PLAN 6, 16.4, 16.5; rules 12.g-12.l, 15.b-15.h, 16.n, 17.g-17.y, 18.b, 18.c, 18.i, 18.y, 19.b-19.d, 19.k, 19.u).
 // A battle lives in `state.battle` while it runs; every decision is a pending frame with its `options` listed (AI-ready, M4):
-//   chooseBorrow -> chooseBattleCards (attacker) -> choosePerk (Scipio) -> responseWindow defenceAnnounced (Horn) -> roll loyalty (Roma)
+//   chooseBorrow -> chooseBattleCards (attacker) -> choosePerk (Scipio) -> responseWindow defenceAnnounced (Horn / summon) -> roll loyalty (Roma)
 //   -> start (Caesar's flee) -> per round: cards -> roll battleRound -> battleContinue (continue / retreat) -> end
 //   -> after: placeSurvivors, Game Card draw, extra Revolt Roll (frames pushed so they resolve in that order, Q29).
 // The settle hook below drives the stages; it only acts when no frame is waiting. Turn and decree logic stay in turn.js.
@@ -424,6 +424,10 @@ function advance(ctx) {
       // a defender who holds the Horn but cannot use it is told why in the log (Vidi 2026-10-24)
       if (w?.skip) emit(ctx, 'hornSkipped', { actor: b.def.player, rule: '18.y', pub: { battleId: b.id, player: b.def.player, target: b.target }, priv: { reason: w.skip, card: w.card }, privTo: [b.def.player] });   // private: the hand is hidden (Q95)
       else if (w) pushFrame(ctx, { kind: 'responseWindow', window: 'defenceAnnounced', player: b.def.player, battleId: b.id, target: b.target, card: w.card, sources: w.sources, options: ['CALL_REINFORCEMENTS', 'PASS'] });
+      // v31.29 (Update 3): the defender is announced even without a Horn. The frame is the defender's summon window (15.k):
+      // the generic branches already render SUMMON_GENERAL from the legal list, so a general who can reach the battle is
+      // offered here. No Horn: card null, sources empty, only Pass besides the summon. Natives have no defender to announce to.
+      else if (b.def.player) pushFrame(ctx, { kind: 'responseWindow', window: 'defenceAnnounced', player: b.def.player, battleId: b.id, target: b.target, card: null, sources: [], options: ['PASS'] });
       b.stage = 'loyalty'; return;
     }
     case 'loyalty':

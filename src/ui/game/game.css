@@ -111,7 +111,9 @@ h1,h2,h3,h4{margin:0}
 .pip.win::after{content:"\2605";position:absolute;inset:0;font-size:.7em;line-height:1.3em;text-align:center;color:var(--gold2)}
 .res{display:grid;grid-template-columns:1fr 1fr;gap:3px}
 .res div{background:var(--parch);border:1px solid var(--line);border-radius:5px;padding:1px 4px;font-size:.86em;gap:2px;display:flex;justify-content:space-between;gap:4px}
-.res div span:first-child{color:var(--muted)}
+.res div>*{min-width:0}   /* v31.29: a cell's label/number may shrink inside its cell, never push out of it */
+.res div span:first-child{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.res div b{flex:none}
 .tagrow{display:flex;flex-wrap:wrap;gap:3px}
 .tag{border:1px solid var(--line);background:#fff;border-radius:4px;padding:0 5px;font-size:.84em}
 .tag.gold{background:#fbf2cf;border-color:#e0c36a}
@@ -247,9 +249,16 @@ table.rt td small{display:block;font-size:.72em;color:var(--muted);font-weight:4
 .tray.off .tl{color:var(--muted)}
 .tray.off .tout{color:var(--muted);font-weight:400}
 .tray.combat{border-color:#c0392b}
-.p3mode .player .pstats{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-auto-rows:min-content;column-gap:8px;align-content:start}
+/* v31.29: the two p3mode columns are NOT equal — the left one carries Prestige/Gold/Troops/Provinces/Cards/Roads plus the
+   saved-resources line, whose longest label ("Provinces") needs the room, while the right one (die tray + action buttons)
+   already ellipsises. Every grid child gets min-width:0, so a narrow column clips inside its own cell instead of painting
+   over the other column (the "Provinces 2 / Roads 2" numbers used to slide under the Move/Build… buttons). The tray sits
+   in row 1 only: it used to span rows 1–4 while the action buttons started at row 2, so the two overlapped in column 2
+   whenever a roll/draw was due and the tray was full-size. */
+.p3mode .player .pstats{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);grid-auto-rows:min-content;column-gap:8px;align-content:start}
+.p3mode .player .pstats>*{min-width:0}
 .p3mode .player .pstats>.prest,.p3mode .player .pstats>.res,.p3mode .player .pstats>.sv{grid-column:1}
-.p3mode .player .pstats>.trayhost{grid-column:2;grid-row:1/span 3}
+.p3mode .player .pstats>.trayhost{grid-column:2;grid-row:1}
 .p3mode .player .pstats>.perk{display:none}
 .p3mode .main{grid-template-columns:clamp(380px,29vw,470px) minmax(0,1fr) clamp(280px,21vw,380px)}
 .diceref .pbody{padding:4px 8px;display:flex;flex-direction:column;gap:3px;font-size:.88em;line-height:1.25}
@@ -569,7 +578,7 @@ table.seats .pickbtn.on{outline:2px solid var(--gold);background:#fff4cf}
 .pgold .coin{width:14px;height:14px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff2a8,#d4a017 60%,#8a6500);box-shadow:0 0 0 1px #8a6500;flex:none}
 .pgold b{margin-left:auto;font-size:1.25em;line-height:1.1}
 .p3mode .player .pstats>.pgold{grid-column:1}
-.p3mode .player .pstats>.trayhost{grid-row:1/span 4}
+.p3mode .player .pstats>.trayhost{grid-row:1}
 /* item 10: roll, draw, move general and sell sit in the active player's panel next to the die */
 .tray .pacts{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px}
 .tray .pacts .btn{font-size:.72em;padding:2px 6px;line-height:1.2}
@@ -653,7 +662,6 @@ table.seats .pickbtn.on{outline:2px solid var(--gold);background:#fff4cf}
 .pacts.turn .wide{grid-column:1/-1}
 .pacts.turn .pnote{font-size:.66em;line-height:1.1;color:var(--muted);align-self:center}
 .pstats>.perk{flex:none;line-height:1.15}
-.p3mode .player .pstats>.trayhost:has(.tray.mini){grid-row:1}
 .p3mode .player .pstats>.pacts.turn{grid-column:2;grid-row:2/span 4;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;margin-top:3px}
 /* item 3: the Provinces / Battle section can fold away; the map takes the room (remembered in localStorage) */
 .tabtoggle{margin:0 0 3px 6px}

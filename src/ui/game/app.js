@@ -2209,7 +2209,7 @@ function renderAsk(legal) {
   const w = whoActs(s);
   let body;
   if (f.kind === 'setupGeneral') body = `<div class="cards">${legal.map(d => { const g = data.generalsById[d.action.general]; return `<button class="pickcard" data-key="${attr(G.descKey(d))}"><img src="${img(g ? 'general.' + g.id : 'back.blank')}" alt=""><b>${esc(g?.name ?? 'Random')}</b><span class="small">${esc(g ? G.generalCaption(data, g.id) : 'a random free general')}</span></button>`; }).join('')}</div>`;
-  else if (f.kind === 'chooseBattleCards') body = `${f.role === 'defender' ? `<div class="incoming" id="incomingAsk">${incomingHtml(f.player)}</div>` : ''}<div class="opts">${cardChoiceHtml(legal, f)}</div>`;
+  else if (f.kind === 'chooseBattleCards') body = `${f.role === 'defender' ? `<div class="incoming" id="incomingAsk">${incomingHtml(f.player)}</div>` : ''}<div class="opts">${cardChoiceHtml(legal, f)}${G.summonButtonHtml(legal)}</div>`;
   else if (f.kind === 'resourceBuild') {          // item 9: the same step-by-step screen for a Bonus Road / Wall card just drawn
     if (!bs || bs.frame !== f.id) bs = { frame: f.id, piece: f.piece, province: null, facing: null };
     box.innerHTML = buildHtml(G.buildSteps(s, data, legal), true) + `<div class="foot"><button class="btn sm" id="askPeek">${askPeek ? 'Back to the choice' : 'Look at the map'}</button></div>`;
@@ -2229,7 +2229,8 @@ function renderAsk(legal) {
   else {
     const shown = f.kind === 'responseWindow' && f.window === 'displeasedResponse' ? `<div class="cards"><div class="pickcard"><img src="${img('card.' + f.def)}" alt=""><span class="small">${esc(data.cardDefsById[f.def]?.name)}</span></div></div>` : '';
     // batch 5 item 5: the Horn has no troop cap; the slider already stops at what may leave (1 stays, a held Roma keeps 10, Roma holds 20 at most)
-    const horn = f.kind === 'responseWindow' && f.window === 'defenceAnnounced' ? `<p class="small" id="hornNote">Horn of Titus Pullus: bring <b>any number</b> of troops from ONE bordering province of yours, allied ones included (no cap); at least 1 stays there${f.sources?.some(x => x.province === 'roma') ? ', and a held Roma keeps its 10' : ''}${f.target === 'roma' ? '; Roma holds 20 troops at most' : ''}. Only one Horn per battle (18.y). If the defence holds, sending the survivors home is optional.</p>` : '';
+    // v31.29 (Update 3): the note only exists when a Horn is actually held — the announcement frame now also appears without one.
+    const horn = f.kind === 'responseWindow' && f.window === 'defenceAnnounced' && f.card ? `<p class="small" id="hornNote">Horn of Titus Pullus: bring <b>any number</b> of troops from ONE bordering province of yours, allied ones included (no cap); at least 1 stays there${f.sources?.some(x => x.province === 'roma') ? ', and a held Roma keeps its 10' : ''}${f.target === 'roma' ? '; Roma holds 20 troops at most' : ''}. Only one Horn per battle (18.y). If the defence holds, sending the survivors home is optional.</p>` : '';
     const threat = (f.player && st().battle?.def?.player === f.player) || (f.kind === 'chooseBattleCards' && f.role === 'defender') ? incomingHtml(f.player) : '';
     const threatBox = threat ? `<div class="incoming" id="incomingAsk">${threat}</div>` : '';
     const backNote = f.kind === 'returnReinforcements' || f.kind === 'placeSurvivors' ? `<p class="small garrison-note" id="garStay">${f.kind === 'returnReinforcements' ? 'Sending them home is optional: 0 leaves every survivor in the defended province (18.y). ' : ''}${esc([f.target, f.origin, f.from].filter(Boolean).map(id => G.garrisonStayText(s, data, id)).filter(Boolean).join(' '))}</p>` : '';

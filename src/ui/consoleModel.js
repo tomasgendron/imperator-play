@@ -1,6 +1,6 @@
 // Pure model of the throwaway engine console (M1.4): a session is an immutable history of states; nothing here touches the DOM,
 // so the Node tests drive exactly what the page drives. Dev tool only: it shows private events too (hot-seat debugging), unlike viewFor.
-import { createGame, applyAction, legalActions, whoActs, minGarrison, isUnderGarrisoned, topFrame, chooseAction, validateSetup } from '../engine/index.js';
+import { createGame, applyAction, legalActions, whoActs, minGarrison, isUnderGarrisoned, topFrame, chooseAction, validateSetup, summonGeneralTarget } from '../engine/index.js';
 
 const pn = (state, id) => state.players.find(p => p.id === id)?.name ?? id ?? 'nobody';
 const prov = (data, id) => data.provincesById[id]?.name ?? id;
@@ -77,7 +77,7 @@ export function describePrompt(state, data) {
     roll: `rolls the ${f.die} (${f.purpose})`, draw: `draws a ${f.deck} card (${f.reason})`, placeTroops: `places ${f.count} troop(s)`,
     resourceBuild: `builds the ${f.piece} or saves the card`, chooseProvince: { taxTroop: 'chooses the province that pays the tax troop', decreeLegion: 'chooses the province that sends the Decree legion', removedProvince: 'chooses the province the Emperor restores (18.q)', removedTroops: 'chooses where the removed troops go', bribeReinforce: 'moves troops into the newly-bribed ally from one of their own provinces (0 = move none, up to the move limit, no route needed — 18.v)' }[f.purpose] ?? 'chooses where the survivors go',
     chooseBorrow: `chooses how many natives to borrow (0-${f.max})`, chooseBattleCards: 'chooses battle cards', choosePerk: 'chooses a general perk',
-    responseWindow: { revoltResponse: `may play Kill Revolt leader! to stop the revolt in ${f.province}`, displeasedResponse: `may play Busy Little Bee! to redirect ${f.def}` }[f.window] ?? 'may sound the Horn of Titus Pullus or pass',
+    responseWindow: { revoltResponse: `may play Kill Revolt leader! to stop the revolt in ${f.province}`, displeasedResponse: `may play Busy Little Bee! to redirect ${f.def}`, defenceAnnounced: f.card ? 'may sound the Horn of Titus Pullus or pass' : (summonGeneralTarget(state, data, f.player) ? 'may summon the general to the battle, or pass' : 'is attacked, and can only pass') }[f.window] ?? 'answers the response window',
     discardCards: `loses ${f.count} saved card(s) to the Emperor's tax`, battleContinue: 'continues the battle or retreats', placeSurvivors: `places the survivors (up to ${f.maxBack} back)`,
     returnReinforcements: `chooses whether the Horn troops go back to ${prov(data, f.from)} (0-${f.max}, optional)`,
   }[f.kind] ?? f.kind;

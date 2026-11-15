@@ -1667,15 +1667,20 @@ function renderBattleCtl() {
   }
   if (f.kind === 'chooseBattleCards') {
     const items = G.battleCardChecklist(data, f.held);
+    const summon = legal.find(d => d.type === 'SUMMON_GENERAL');
     ask.innerHTML = title + gateNote(g) + `<div class="bcchecks" id="bcChecks">${items.map(c => `<button class="bccheck" data-bc="${attr(c.def)}" aria-pressed="false"${dis}><img src="${attr(img(c.art))}" alt=""><span><b>${esc(c.name)}</b><small>${esc(c.text)}</small></span><i class="tick">✓</i></button>`).join('')}</div>
       <p class="note" id="bcSum"></p>${G.battleCardsHint(data, f.role) ? `<p class="note" id="bcHint">${esc(G.battleCardsHint(data, f.role))}</p>` : ''}`;
-    ctl.innerHTML = `<button class="btn gold wide" id="bcConfirm"${dis}>Fight without battle cards ▶</button>`;
+    // v31.29 (Update 3): the summon is its own row above the commit button — it sends SUMMON_GENERAL and leaves the frame
+    // (and the checklist) in place, so the defender can still commit cards afterwards.
+    ctl.innerHTML = `${summon ? G.summonButtonHtml(legal, { cls: 'btn wide', id: 'bcSummon', disabled: !g.live }) : ''}<button class="btn gold wide" id="bcConfirm"${dis}>Fight without battle cards ▶</button>`;
     const sync = () => { const t = $$('.bccheck.on', ask).map(b => b.dataset.bc); $('#bcSum').textContent = t.length ? `${t.length} card(s) ticked: ${t.map(d => data.cardDefsById[d]?.name ?? d).join(', ')}.` : 'No card ticked: you fight without battle cards.'; $('#bcConfirm').textContent = t.length ? `Use ${t.length} card(s) ▶` : 'Fight without battle cards ▶'; };
     $$('.bccheck', ask).forEach(b => b.onclick = () => { b.classList.toggle('on'); b.setAttribute('aria-pressed', b.classList.contains('on')); SND.play('button_click'); sync(); });
+    const sb = $('#bcSummon'); if (sb) sb.onclick = () => act(summon);
     $('#bcConfirm').onclick = () => { const d = G.battleCardsChoice(legal, $$('.bccheck.on', ask).map(b => b.dataset.bc)); if (!d) { SND.play('error_denied'); toast('That combination cannot be played'); return; } act(d); };
     sync(); return;
   }
-  const horn = f.kind === 'responseWindow' && f.window === 'defenceAnnounced' ? `<p class="note" id="hornNote">Horn of Titus Pullus: bring any number of troops from ONE bordering province of yours (allied ones too); at least 1 stays there. One Horn per battle (18.y).</p>` : '';
+  // v31.29 (Update 3): the note only exists when a Horn is actually held — the announcement frame now also appears without one.
+  const horn = f.kind === 'responseWindow' && f.window === 'defenceAnnounced' && f.card ? `<p class="note" id="hornNote">Horn of Titus Pullus: bring any number of troops from ONE bordering province of yours (allied ones too); at least 1 stays there. One Horn per battle (18.y).</p>` : '';
   ask.innerHTML = title + gateNote(g) + horn + rowsHtml(legal, !g.live);
   wireRows(ask, legal);
   ctl.innerHTML = `<span class="waitnote">Choose above · ▾ to look at the map</span>`;

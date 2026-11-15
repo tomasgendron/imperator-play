@@ -192,6 +192,18 @@ export function battleCardsChoice(legal, ticked) {
   return legal.find(d => d.type === 'CHOOSE_BATTLE_CARDS' && same(d.action.cards)) ?? null;
 }
 
+/**
+ * v31.29 (Update 3): the summon row on the defender's battle-cards screen. The checklist commit and the summon are separate
+ * moves, so the summon is its own button, built from the SUMMON_GENERAL descriptor in the legal list (its data-key is what
+ * the desktop's wireOptions matches, and the mobile sheet wires it by id). '' when no summon is offered, so the checklist
+ * renders exactly as before. Both UIs use this one helper, so the button cannot drift between them.
+ */
+export function summonButtonHtml(legal, { cls = 'btn gold', id = '', disabled = false } = {}) {
+  const d = legal.find(x => x.type === 'SUMMON_GENERAL');
+  if (!d) return '';
+  return `<button class="${escHtml(cls)}"${id ? ` id="${escHtml(id)}"` : ''}${disabled ? ' disabled' : ''} data-key="${escHtml(descKey(d))}">${escHtml(d.label)}</button>`;
+}
+
 /** M12: a hand as an array (a viewFor view gives another player's hand as {hidden, count}: no cards), its size, a deck's size. */
 export const handCards = p => (Array.isArray(p?.hand) ? p.hand : []);
 export const handCount = p => (Array.isArray(p?.hand) ? p.hand.length : (p?.hand?.count ?? 0));
@@ -825,13 +837,31 @@ export function actionsUsedLabel(state, data) {
   return `${state.turn.actionsUsed}/${data.rules.actionsPerTurn}`;
 }
 /**
+ * The minimum the MAP shows for `id` (shownMin), falling back to the engine minGarrison when the map shows none
+ * (a held Roma: shownMin is null, the engine floor of 1 still applies; unowned: 0). This is the single source of
+ * truth for any displayed minimum: the popup must never show a different number from the map label for the same
+ * province in the same state.
+ * v31.29: minGarrison alone is NOT that number for an ALLIED province — it short-circuits allied to the global
+ * floor of 1, while shownMin uses the allied reward threshold (natives + 1, 19.r/19.g, with Pompey / Garrison
+ * Requirement applied). An allied origin with 5 natives and the Garrison card showed "min 5" on the map and
+ * "min 1" in the survivors popup (image-25, v31.28); the popup's 1 was the leave-1-troop floor, not a garrison
+ * minimum, and must never be displayed as one on this screen. The engine "at least 1 stays" rule (maxBack,
+ * 17.y) is untouched — it limits the slider, it is not a minimum.
+ */
+export function displayMin(state, data, id) {
+  return shownMin(state, data, id)?.min ?? minGarrison(state, data, id).min;
+}
+
+/**
  * How many troops must stay so `id` remains at its minimum garrison (and the global floor).
  * `mayLeave` is how many can go and still leave that minimum. Empty string when the province has no owner.
+ * The minimum is displayMin (v31.29) — the same number the map shows — so this text agrees with the map label
+ * wherever it appears, including the note under the survivors popup.
  */
 export function garrisonStayText(state, data, id) {
   const p = state.provinces[id];
   if (!p?.owner) return '';
-  const min = minGarrison(state, data, id).min;
+  const min = displayMin(state, data, id);
   const floor = p.status === 'held' ? data.rules.romaFloorOnHold : data.rules.provinceFloor;
   const must = Math.max(min, floor);
   const may = Math.max(0, p.troops - must);
@@ -847,15 +877,17 @@ const clamp01 = v => Math.max(0, Math.min(1, v));
  * the origin province is ALWAYS on the left, the conquered (target) province ALWAYS on the right — cards, slider ends, threshold
  * marks, min strip and confirm text. The slider value is `stay` (troops staying in the target, stayMin..own); back = own - stay.
  * stayMin is own - maxBack: at least 1 survivor stays, except Roma where all may return (17.y, engine rule — the frame's maxBack).
- * Minimums come from minGarrison, as the task specifies: the target is safe while stay >= minTarget, the origin while
+ * Minimums come from displayMin (v31.29) — the same number the map shows (shownMin) — NOT from minGarrison directly:
+ * for an allied origin minGarrison returns the floor of 1 while the map shows the allied threshold (natives + 1),
+ * and the popup showed that 1 as the origin's minimum (image-25). The target is safe while stay >= minTarget, the origin while
  * originTroops + back >= minOrigin. Default split sends back only what the origin needs to reach its minimum (and no more than
  * leaves the target at its minimum) — the conservative default, not the mockup's 9/9 example split.
  */
 export function survivorsSplit(state, data, f) {
   const origin = f.origin, target = f.target, own = f.own, maxBack = f.maxBack;
   const originTroops = state.provinces[origin]?.troops ?? 0;
-  const minTarget = minGarrison(state, data, target).min;
-  const minOrigin = minGarrison(state, data, origin).min;
+  const minTarget = displayMin(state, data, target);
+  const minOrigin = displayMin(state, data, origin);
   const stayMin = Math.max(0, own - maxBack);
   const stayMax = own;
   const span = Math.max(1, stayMax - stayMin);

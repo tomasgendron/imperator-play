@@ -12,6 +12,7 @@ export const AI_CONFIG = Object.freeze({
     maxBar: 0.92,           // the bar never goes above this
     burnBar: 0.1,           // v31.14: keep fighting (instead of retreating) while the defender has Elephants/Moral boosts an early retreat would refund (17.k) — v31.15: only when the AI's reserves cover the expected bleed, see ai.js battleContinue
     burnLossPerRound: 2,    // v31.15: expected attacker losses per round while fighting on to round 4 to burn the defender's cards — Tomas's own number: 8 troops over 4 rounds
+    fleeBar: 0.15,          // v31.30 (17.aa): the AI defender flees when its chance of HOLDING the province falls below this — stricter than the attacker's 0.30 continue bar, because fleeing concedes the province and the Prestige outright and only saves half the force plus the general
   }),
   // v31.4: a rival this close to the win (public Prestige only) is a threat. Large Map 1 wins at 11, so ≥8; Small Map 1 wins at 8, so ≥5.
   threat: Object.freeze({

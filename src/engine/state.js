@@ -58,6 +58,15 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
     }
   }
   for (const deck of Object.keys(decks)) decks[deck] = shuffle(rng, decks[deck]);
+  // v31.30 (18.a): 3 Elephants! and both Sneak Attack from the Sea! cards are withheld until the Game deck has gone through
+  // once — cycle 1 starts with 28 cards (2 Elephants, no Sneak Attack). They sit aside in `withheld.game`, not drawable,
+  // and join the draw pile at the first reshuffle (core.js drawTop). Taken out AFTER the shuffle, so the remaining 28 keep
+  // their shuffled order and no extra RNG is drawn: nothing else about setup changes.
+  const withheld = { game: [] };
+  for (const def of ['elephants', 'elephants', 'elephants', 'sneak_attack_sea', 'sneak_attack_sea']) {
+    const i = decks.game.findIndex(uid => cards[uid].def === def);
+    if (i >= 0) withheld.game.push(decks.game.splice(i, 1)[0]);
+  }
   const pn = data.rules.provinceNumbers;
   const numbers = shuffle(rng, pn.values.flatMap(v => Array(pn.timesEach).fill(v)));
   const provinces = {};
@@ -85,7 +94,7 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
     turnOrder: [],
     turn: { number: 0, round: 0, activePlayerId: null, step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} },
     provinces, roma: { goldPile: 0, holder: null, heldSinceTurn: null }, carthage: { defeated: false, neutral: false, decreeLegionsLost: 0 },
-    cards, decks, discards: { game: [], resource: [], displeased: [] }, throwaway: { game: [], resource: [], displeased: [] }, ships: [], pending: [], winner: null, eventSeq: 0, frameSeq: 0, setup: null, log: [],
+    cards, decks, discards: { game: [], resource: [], displeased: [] }, throwaway: { game: [], resource: [], displeased: [] }, withheld, ships: [], pending: [], winner: null, eventSeq: 0, frameSeq: 0, setup: null, log: [],
   };
 }
 
@@ -192,6 +201,13 @@ export function validateState(state, data, opts = {}) {
   for (const [deck, list] of Object.entries(state.throwaway ?? { game: [], resource: [], displeased: [] })) for (const uid of list) {
     see(uid, 'throwaway:' + deck);
     if (state.cards[uid] && state.cards[uid].deck !== deck) err(`card ${uid} sits in throwaway ${deck} but belongs to ${state.cards[uid].deck}`);
+  }
+  // v31.30 (18.a): the withheld pile — 3 Elephants! + 2 Sneak Attack from the Sea! held back until the first Game-deck
+  // reshuffle. Saves from before it have no field at all (readSave fills an empty one, i.e. already released); a state
+  // without it still validates, it just has nothing withheld.
+  for (const [deck, list] of Object.entries(state.withheld ?? { game: [] })) for (const uid of list) {
+    see(uid, 'withheld:' + deck);
+    if (state.cards[uid] && state.cards[uid].deck !== deck) err(`card ${uid} sits in withheld ${deck} but belongs to ${state.cards[uid].deck}`);
   }
   for (const pl of state.players) {
     for (const c of pl.hand) see(c.uid, 'hand:' + pl.id);

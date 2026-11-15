@@ -132,8 +132,7 @@ export const wallsActive = (state, data, b) => {
   const p = state.provinces[b.target];
   if (b.target === 'roma') return true;                                                   // 12.i
   if (b.target === 'carthage' && p.owner === null) return true;                           // 16.n: Walls on all sides while no player holds it
-  const side = data.rules.attackThroughNeutralWalls === 'entrySide' && b.via ? b.via : b.att.from;   // Q80 (Vidi): the real origin's side
-  return p.walls.includes(side);
+  return (p.walls?.length ?? 0) > 0;   // v31.30 (19.k): a built Wall defends from ANY direction — no facing check
 };
 /** Dice for this round, with the reasons (17.n, 17.x, 15.c, 15.d, 19.k, 19.u, 15.h, 12.i, Q16). */
 export function diceCounts(state, data, b) {
@@ -149,7 +148,7 @@ export function diceCounts(state, data, b) {
   let d = R.defenderDice; dr.push('defender: 2 dice');
   if (wallsActive(state, data, b)) {
     if (b.round <= b.wallRollsIgnored) dr.push(b.wallRollsIgnored >= 99 ? `Wall bonus ignored for the whole battle (${b.wallSources.join(', ')})` : `Wall bonus cancelled in rolls 1-${b.wallRollsIgnored} (${b.wallSources.join(', ')})`);
-    else { d = R.defenderDiceWithWall; dr.push(b.target === 'roma' ? 'Roma: Walls on all sides (12.i)' : b.target === 'carthage' && state.provinces.carthage.owner === null ? 'Carthage: Walls on all sides (16.n)' : 'Wall on this border (19.k)'); }
+    else { d = R.defenderDiceWithWall; dr.push(b.target === 'roma' ? 'Roma: Walls on all sides (12.i)' : b.target === 'carthage' && state.provinces.carthage.owner === null ? 'Carthage: Walls on all sides (16.n)' : 'Wall (19.k)'); }
   }
   const df = defForce(state, b); if (d > df) { d = df; dr.push(`only ${df} defender(s) left`); }
   return { attacker: a, defender: d, attackerReasons: ar, defenderReasons: dr };
@@ -286,6 +285,73 @@ define('PASS', {
     responseWindows[f.window]?.pass?.(ctx, f);
   },
 });
+// ------------------------------------------------------------------ fleeing from battle (17.aa, v31.30)
+/**
+ * Where the defender of the battle in progress could flee to: the provinces they own that directly border the attacked
+ * province (land or sea links both count, 17.aa). Null when there is no battle, no player defender, a Senate Decree
+ * battle (no fleeing from a decree, 16.n), or no connecting owned province — then the defender must fight.
+ * The fleeing force is the plain garrison: the defender cannot borrow (19.c is attacker-only), and the Horn is never
+ * played first (it answers the same frame, so the two are mutually exclusive). Losses are floor(troops/2).
+ */
+export function fleeOptions(state, data) {
+  const b = state.battle;
+  if (!b || b.mode !== 'attack' || !b.def.player) return null;
+  const destinations = S.provincesOf(state, b.def.player).filter(id => id !== b.target && S.isNeighbour(data, id, b.target));
+  if (!destinations.length) return null;
+  const troops = state.provinces[b.target].troops;
+  const losses = Math.floor(troops / 2);
+  return { destinations, troops, losses, survivors: troops - losses, general: generalOf(state, b.def.player)?.at === b.target };
+}
+define('FLEE_BATTLE', {
+  frame: ['responseWindow'],
+  run(ctx, a) {
+    const { state, data } = ctx; const b = state.battle; const f = topFrame(state);
+    check(f.window === 'defenceAnnounced', 'WRONG_WINDOW', 'Fleeing answers an announced attack (17.aa).', '17.aa');
+    check(b?.mode === 'attack', 'NO_FLEE', 'There is no fleeing from a Senate Decree battle (16.n).', '16.n');
+    const opts = fleeOptions(state, data);
+    check(opts, 'NO_ROUTE', `No province of yours borders ${nm(data, b.target)} to flee to (17.aa).`, '17.aa');
+    if (opts.destinations.length === 1) { popFrame(ctx); resolveFlee(ctx, b, opts.destinations[0]); return; }
+    // more than one route: the defender picks the retreat province (17.aa). The announcement frame stays underneath
+    // and is popped with the choice, so the flee cannot be taken back by answering it afterwards.
+    pushFrame(ctx, { kind: 'chooseProvince', purpose: 'fleeDestination', player: f.player, battleId: b.id, target: b.target, options: opts.destinations });
+  },
+});
+provinceChoiceHandlers.fleeDestination = (ctx, f, a) => {
+  const { state } = ctx; const b = state.battle;
+  const ann = topFrame(state);
+  check(ann?.kind === 'responseWindow' && ann.window === 'defenceAnnounced' && ann.battleId === b?.id, 'WRONG_FRAME', 'The flee choice is over (17.aa).', '17.aa');
+  popFrame(ctx);
+  resolveFlee(ctx, b, a.province);
+};
+/**
+ * The flee itself (17.aa): the defender loses floor(troops/2) and the survivors — with the general, if he is in the
+ * province — retreat to the chosen owned province; the attacker takes the attacked province with no battle fought.
+ * The survivors and the general move FIRST, so conquer()'s Q86 escape (a captured general goes to the nearest owned
+ * province) does not relocate a general who fled with his troops. Everything else runs through the same conquer()
+ * path a battle loss uses: the attacker's own troops occupy the province (borrowed troops were never removed from the
+ * origin's natives, so surviving ones simply stay there — no borrowed deaths, no extra Revolt Roll, 19.d), the
+ * stay/return survivors frame and the battle-won Game Card (18.j) follow, and Prestige is exactly as in a battle
+ * loss (attacker +1, +2 Carthage, +3 Roma; defender −1, −2 Carthage, 0 for an allied province, 12.f). The attacker's
+ * committed battle cards were never spent — cards leave the hand only at the start of round 1 (18.i), and no round
+ * was ever rolled — so they stay in hand untouched, and settleBattleCards is never called.
+ */
+function resolveFlee(ctx, b, dest) {
+  const { state, data } = ctx;
+  const A = b.att.player; const D = b.def.player; const t = b.target;
+  const troops = state.provinces[t].troops;
+  const losses = Math.floor(troops / 2);
+  const survivors = troops - losses;
+  const generalHere = generalOf(state, D)?.at === t;
+  if (survivors) changeTroops(ctx, dest, survivors, 'flee');
+  if (generalHere) generalOf(state, D).at = dest;
+  emit(ctx, 'battleEnded', { actor: A, rule: '17.e', pub: { battleId: b.id, outcome: 'fled', winner: A, rounds: 0, attackerLeft: b.att.own, borrowedDead: 0, target: t, from: b.att.from, defender: D, sea: !!b.sea, defenderLeft: survivors } });
+  emit(ctx, 'defenderFled', { actor: D, rule: '17.aa', pub: { battleId: b.id, player: D, attacker: A, province: t, to: dest, troops, lost: losses, survivors, general: generalHere, borrowed: b.att.borrowed ?? 0 } });
+  const after = [];
+  conquer(ctx, b, after);
+  if (state.phase !== 'turn') { state.battle = null; return; }
+  state.battle = null;
+  for (const f of after) if (f) pushFrame(ctx, f);
+}
 define('BATTLE_CONTINUE', { frame: [CONT], run(ctx) { popFrame(ctx); const b = ctx.state.battle; b.round += 1; b.stage = 'roundCards'; } });
 define('BATTLE_RETREAT', {
   frame: [CONT, 'roll'],
@@ -423,11 +489,13 @@ function advance(ctx) {
       const w = hornWindow(state, data, b); b.def.hornAsked = true;
       // a defender who holds the Horn but cannot use it is told why in the log (Vidi 2026-10-24)
       if (w?.skip) emit(ctx, 'hornSkipped', { actor: b.def.player, rule: '18.y', pub: { battleId: b.id, player: b.def.player, target: b.target }, priv: { reason: w.skip, card: w.card }, privTo: [b.def.player] });   // private: the hand is hidden (Q95)
-      else if (w) pushFrame(ctx, { kind: 'responseWindow', window: 'defenceAnnounced', player: b.def.player, battleId: b.id, target: b.target, card: w.card, sources: w.sources, options: ['CALL_REINFORCEMENTS', 'PASS'] });
+      if (w && !w.skip) pushFrame(ctx, { kind: 'responseWindow', window: 'defenceAnnounced', player: b.def.player, battleId: b.id, target: b.target, card: w.card, sources: w.sources, options: [...(fleeOptions(state, data) ? ['FLEE_BATTLE'] : []), 'CALL_REINFORCEMENTS', 'PASS'] });
       // v31.29 (Update 3): the defender is announced even without a Horn. The frame is the defender's summon window (15.k):
       // the generic branches already render SUMMON_GENERAL from the legal list, so a general who can reach the battle is
       // offered here. No Horn: card null, sources empty, only Pass besides the summon. Natives have no defender to announce to.
-      else if (b.def.player) pushFrame(ctx, { kind: 'responseWindow', window: 'defenceAnnounced', player: b.def.player, battleId: b.id, target: b.target, card: null, sources: [], options: ['PASS'] });
+      // v31.30 (17.aa): the same frame is the flee window — a defender holding an UNUSABLE Horn still gets it, because
+      // fleeing (or summoning) may still be open to them; the hornSkipped line above still says why the Horn is not.
+      else if (b.def.player) pushFrame(ctx, { kind: 'responseWindow', window: 'defenceAnnounced', player: b.def.player, battleId: b.id, target: b.target, card: null, sources: [], options: [...(fleeOptions(state, data) ? ['FLEE_BATTLE'] : []), 'PASS'] });
       b.stage = 'loyalty'; return;
     }
     case 'loyalty':

@@ -27,7 +27,9 @@ export function changeTroops(ctx, id, delta, reason = null) {
 /** Player-chosen additions to Roma may not overflow its cap (Q77 default: refused, not silently lost). */
 export const checkRomaRoom = (ctx, id, n) => check(id !== 'roma' || n <= S.romaRoom(ctx.state, ctx.data), 'ROMA_CAP', `Roma can hold at most ${ctx.data.rules.romaMaxTroops} troops; it has room for ${S.romaRoom(ctx.state, ctx.data)} more (12.k).`, '12.k');
 
-function buildPiece(ctx, pid, piece, province, facing, { free }) {
+/** v31.30 (19.k): a built Wall defends its province from ALL sides — there is no facing any more. `walls` is filled
+ * with every neighbouring province (sorted), so any non-empty list means "walled" (see S.hasWall); one Wall per province (19.l). */
+function buildPiece(ctx, pid, piece, province, { free }) {
   const { state, data } = ctx;
   check(S.controls(state, pid, province), 'NOT_YOURS', `${nm(data, province)} is not one of your provinces.`, '19.f');
   const p = state.provinces[province];
@@ -36,10 +38,9 @@ function buildPiece(ctx, pid, piece, province, facing, { free }) {
     p.road = true;
     emit(ctx, 'roadBuilt', { actor: pid, rule: '19.f', pub: { player: pid, province, free } });
   } else {
-    check(facing && S.isNeighbour(data, province, facing), 'BAD_FACING', 'A Wall faces an adjacent province (land or sea).', '19.k');
-    check(!p.walls.includes(facing), 'WALL_EXISTS', `${nm(data, province)} already has a Wall facing ${nm(data, facing)} (19.l: one per side).`, '19.l');
-    p.walls.push(facing); p.walls.sort();
-    emit(ctx, 'wallBuilt', { actor: pid, rule: '19.k', pub: { player: pid, province, facing, free } });
+    check(!p.walls.length, 'WALL_EXISTS', `${nm(data, province)} already has a Wall (19.l: one per province).`, '19.l');
+    p.walls = [...S.neighbours(data, province)].sort();
+    emit(ctx, 'wallBuilt', { actor: pid, rule: '19.k', pub: { player: pid, province, free } });
   }
 }
 
@@ -186,7 +187,7 @@ function takeSavedCard(ctx, pid, uid) {
 }
 const pieceOf = (ctx, uid) => ctx.data.cardDefsById[ctx.state.cards[uid].def].effect.params.piece;
 /** v27: a Resource card (Road / Wall) is used to build; the public event the "card played" popup shows (20.f). */
-const usedEvent = (ctx, pid, uid, a) => emit(ctx, 'resourceCardUsed', { actor: pid, rule: '20.f', pub: { player: pid, def: ctx.state.cards[uid].def, uid, piece: pieceOf(ctx, uid), province: a.province, facing: a.facing ?? null } });
+const usedEvent = (ctx, pid, uid, a) => emit(ctx, 'resourceCardUsed', { actor: pid, rule: '20.f', pub: { player: pid, def: ctx.state.cards[uid].def, uid, piece: pieceOf(ctx, uid), province: a.province } });
 
 define('RESOURCE_BUILD', {
   frame: ['resourceBuild'],
@@ -195,7 +196,7 @@ define('RESOURCE_BUILD', {
     check(['build', 'save'].includes(a.mode), 'BAD_MODE', 'mode must be "build" or "save".');
     if (a.mode === 'build') {
       usedEvent(ctx, f.player, f.card, a);
-      buildPiece(ctx, f.player, f.piece, a.province, a.facing, { free: true });
+      buildPiece(ctx, f.player, f.piece, a.province, { free: true });
       takeSavedCard(ctx, f.player, f.card);
     } else emit(ctx, 'resourceSaved', { actor: f.player, rule: '20.f', pub: { player: f.player, piece: f.piece } });
     popFrame(ctx);
@@ -208,7 +209,7 @@ define('USE_SAVED_RESOURCE', {
     const pl = mustPlayer(ctx.state, pid);
     check(pl.savedResources.some(c => c.uid === a.cardUid), 'NO_SUCH_CARD', 'That saved Resource card is not yours.');
     usedEvent(ctx, pid, a.cardUid, a);
-    buildPiece(ctx, pid, pieceOf(ctx, a.cardUid), a.province, a.facing, { free: true });   // free, not an action (20.f, 19.p)
+    buildPiece(ctx, pid, pieceOf(ctx, a.cardUid), a.province, { free: true });   // free, not an action (20.f, 19.p)
     takeSavedCard(ctx, pid, a.cardUid);
   },
 });
@@ -543,7 +544,7 @@ define('BUILD_ROAD', {
     check(!state.provinces[a.province].road, 'ROAD_EXISTS', `${nm(data, a.province)} already has a Road.`, '19.f');
     check(pl.gold >= cost, 'NEED_GOLD', `A Road costs ${cost} Gold; you have ${pl.gold}.`, '19.j');
     spendAction(ctx, 'buildRoad');
-    pl.gold -= cost; buildPiece(ctx, pid, 'road', a.province, null, { free: false });
+    pl.gold -= cost; buildPiece(ctx, pid, 'road', a.province, { free: false });
   },
 });
 define('BUY_MERCHANT_SHIP', {
@@ -589,11 +590,10 @@ define('BUILD_WALL', {
   run(ctx, a) {
     const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid); const cost = data.rules.costs.wall;
     mustControl(ctx, a.province, pid);
-    check(a.facing && S.isNeighbour(data, a.province, a.facing), 'BAD_FACING', 'A Wall faces an adjacent province (land or sea).', '19.k');
-    check(!state.provinces[a.province].walls.includes(a.facing), 'WALL_EXISTS', `${nm(data, a.province)} already has a Wall facing ${nm(data, a.facing)}.`, '19.l');
+    check(!state.provinces[a.province].walls.length, 'WALL_EXISTS', `${nm(data, a.province)} already has a Wall (19.l: one per province).`, '19.l');
     check(pl.gold >= cost, 'NEED_GOLD', `A Wall costs ${cost} Gold; you have ${pl.gold}.`, '19.j');
     spendAction(ctx, 'buildWall');
-    pl.gold -= cost; buildPiece(ctx, pid, 'wall', a.province, a.facing, { free: false });
+    pl.gold -= cost; buildPiece(ctx, pid, 'wall', a.province, { free: false });
   },
 });
 

@@ -4,7 +4,7 @@
 import { loadGameData } from '../loadData.js';
 import { resolveAsset } from '../assets.js';
 import { setupChoices, checkSetup, current } from '../consoleModel.js';
-import { topFrame, whoActs, minGarrison, isUnderGarrisoned, totalTroops, provincesOf as ownedBy, viewFor, eventsFor, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces } from '../../engine/index.js';
+import { topFrame, whoActs, minGarrison, totalTroops, provincesOf as ownedBy, viewFor, eventsFor, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces } from '../../engine/index.js';
 import * as G from './model.js';
 import { createSound } from './sound.js';
 import { HostRoom, PING_MS } from '../../net/host.js';
@@ -908,6 +908,18 @@ async function playEvents(events, before = null) {
     }
   }
   await maybeAiTurnSummary(events);
+  maybeWithheldCardsPopup(events);
+}
+/** v31.30: when the Game deck has gone through once, the withheld cards join the draw pile (core.js drawTop). The popup fires
+ *  on every screen that plays the reshuffle (host and guests alike — the event is in the shared log), exactly once per game
+ *  (the engine event fires only at the first reshuffle), and never blocks: shown with autoMs spd(9000) like the v31.28
+ *  online AI summary and NOT awaited, so the host's apply loop and a guest's drain run on while it is up, and a later
+ *  popup may replace it. OK / click outside still dismisses it early. Node tests never call this. */
+function maybeWithheldCardsPopup(events) {
+  const e = events?.find(x => x.type === 'withheldCardsReleased');
+  if (!e || !$('#ovModal')) return;
+  const parts = Object.entries(e.pub.released ?? {}).map(([def, n]) => `${n} ${data.cardDefsById[def]?.name ?? def}`).join(' and ');
+  openModal(`<div class="ask aiturn" id="withheldCards"><h2>The withheld cards join the deck!</h2><p>The Game deck has gone through once, so the cards held back at the start are shuffled in: <b>${esc(parts)}</b> — from now on the full deck is in play.</p><p class="small">It closes on its own — OK, or click outside, to dismiss it now.</p><div class="foot"><span class="spacer"></span><button class="btn gold" data-close id="withheldOk">OK</button></div></div>`, { cls: 'aiturn', autoMs: spd(9000) });
 }
 /** v31.7: after an AI turn, a short summary the human dismisses with OK or a click outside. Offline only, so an online host must not
  *  wait here (guests would stall), and a guest must not pause on a stream of updates. Node tests never call this.
@@ -1006,7 +1018,7 @@ function incomingHtml(viewer) {
   const gen = info.defenderGeneral
     ? (info.defenderGeneral.here ? `${info.you ? 'Your' : 'Their'} general ${esc(info.defenderGeneral.name)} is here.` : `${info.you ? 'Your' : 'Their'} general ${esc(info.defenderGeneral.name)} is in ${esc(prov(info.defenderGeneral.at))}.`)
     : 'No general.';
-  const wall = info.wall ? `Wall facing ${esc(prov(info.wallSide))} — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.` : `No Wall — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.`;
+  const wall = info.wall ? `Wall — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.` : `No Wall — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.`;
   const min = info.minGarrison != null ? ` (min ${info.minGarrison})` : '';
   return `<b>${esc(info.attackerName)}</b> attacks <b>${esc(info.targetName)}</b> from ${esc(prov(info.from))} with <b class="n" id="attTroops">${esc(info.troopText)}</b>. <span class="cards" id="attCards">Cards against ${who}: ${esc(info.cardText)}.</span><br>${who === 'you' ? 'You hold' : `${who} holds`} <b>${esc(info.targetName)}</b> with <b>${info.defenderTroops} troop${info.defenderTroops === 1 ? '' : 's'}</b>${min}. ${wall} ${gen}`;
 }
@@ -1315,13 +1327,12 @@ function openMenu(k, legal) {
   wireOptions($('#modalBox'), c, () => closeModal());
 }
 // ------------------------------------------------------------------ the step-by-step Build screen (M6 item 9): what -> where (-> border) -> pay or use the saved card
-let bs = null;   // {piece, province, facing}
-function openBuild(piece = null, fromCard = null) { bs = { piece, province: null, facing: null, fromCard }; openModal('<div id="buildBox"></div>', { cls: 'buildmodal' }).then(() => { bs = null; }); renderBuild(); }
+let bs = null;   // {piece, province} — v31.30 (19.k): no facing any more, a Wall defends from all sides
+function openBuild(piece = null, fromCard = null) { bs = { piece, province: null, fromCard }; openModal('<div id="buildBox"></div>', { cls: 'buildmodal' }).then(() => { bs = null; }); renderBuild(); }
 function buildHtml(model, inFrame) {
   const P = model.pieces; const pc = bs.piece ? P.find(x => x.piece === bs.piece) : null;
   const pv = pc && bs.province ? pc.provinces.find(x => x.id === bs.province) : null;
-  const fc = pv && bs.facing ? pv.facings.find(x => x.id === bs.facing) : null;
-  const stepNo = !pc ? 1 : pc.piece === 'catapult' ? 3 : !pv || (pc.piece === 'wall' && !fc) ? 2 : 3;
+  const stepNo = !pc ? 1 : pc.piece === 'catapult' ? 3 : !pv ? 2 : 3;
   const chips = ['What', 'Where', inFrame ? 'Build' : 'Pay or use a card'].map((n, i) => `<span class="bd-step ${i + 1 === stepNo ? 'cur' : i + 1 < stepNo ? 'done' : ''}">${i + 1} ${n}</span>`).join('');
   const back = stepNo > 1 && !(inFrame && stepNo === 2 && !bs.province) ? '<button class="btn sm" id="bsBack">◀ Back</button>' : '';
   let body = '';
@@ -1330,11 +1341,9 @@ function buildHtml(model, inFrame) {
   } else if (pc.piece === 'catapult') {
     body = `<p>A Catapult is permanent: in every attack, each Catapult cancels the defender's Wall bonus for the first 2 rolls (19.u). You own ${pc.owned}.</p><div class="bs-go"><button class="btn gold" data-key="${attr(G.descKey(pc.paid))}">Buy a Catapult for ${pc.cost} Gold (1 action)</button></div>`;
   } else if (!pv) {
-    body = `${bs.fromCard ? `<p id="bsFromCard"><b>Using your saved ${pc.name} card: free, no Gold, no action.</b> Pick the province.</p>` : ''}<p class="small">Which province gets the ${pc.name}?${pc.reason ? ' <i>' + esc(pc.reason) + '</i>' : ''}</p><div class="bs-grid">${pc.provinces.map(x => { const p = st().provinces[x.id]; const n = pc.piece === 'wall' ? x.facings.length : 0; return `<button class="btn" data-prov="${x.id}"><b>${esc(x.name)}</b><span class="small">${p.troops} troops${pc.piece === 'wall' ? ` · ${n} open border${n === 1 ? '' : 's'}${p.walls.length ? ' · Walls: ' + p.walls.map(prov).join(', ') : ''}` : ''}</span></button>`; }).join('')}</div>`;
-  } else if (pc.piece === 'wall' && !fc) {
-    body = `<p class="small">${esc(pv.name)}: which border does the Wall face? It gives a 3rd defence die against attacks from that province (19.k).</p><div class="bs-grid">${pv.facings.map(x => `<button class="btn" data-facing="${x.id}"><b>${esc(x.name)}</b><span class="small">${data.provincesById[pv.id].sea.includes(x.id) ? 'sea' : 'land'}${st().provinces[x.id].owner ? ' · ' + esc(pn(st().provinces[x.id].owner)) : ''}</span></button>`).join('')}</div>`;
+    body = `${bs.fromCard ? `<p id="bsFromCard"><b>Using your saved ${pc.name} card: free, no Gold, no action.</b> Pick the province.</p>` : ''}<p class="small">Which province gets the ${pc.name}?${pc.reason ? ' <i>' + esc(pc.reason) + '</i>' : ''}</p><div class="bs-grid">${pc.provinces.map(x => { const p = st().provinces[x.id]; return `<button class="btn" data-prov="${x.id}"><b>${esc(x.name)}</b><span class="small">${p.troops} troops</span></button>`; }).join('')}</div>`;
   } else {
-    const o = fc ?? pv; const where = `${pc.name} in ${pv.name}${fc ? ' facing ' + fc.name : ''}`;
+    const o = pv; const where = `${pc.name} in ${pv.name}`;
     const btns = [];
     if (o.free) btns.push(`<button class="btn gold" data-key="${attr(G.descKey(o.free))}">${inFrame ? `Build the ${esc(where)} (free)` : `Use your saved ${pc.name} card: free, no action`}</button>`);
     if (o.paid) btns.push(`<button class="btn ${o.free ? '' : 'gold'}" data-key="${attr(G.descKey(o.paid))}">Pay ${pc.cost} Gold (1 action)</button>`);
@@ -1345,10 +1354,9 @@ function buildHtml(model, inFrame) {
   return `<div class="ask build" id="buildScreen" data-step="${stepNo}"><h2>${esc(head)}</h2><div class="bd-steps">${chips}</div><div class="bs-body">${body}</div><div class="foot">${back}<span class="spacer"></span>${foot}</div></div>`;
 }
 function wireBuild(root, legal, rerender, done) {
-  $$('[data-piece]', root).forEach(b => b.onclick = () => { SND.play('button_click'); bs.piece = b.dataset.piece; bs.province = null; bs.facing = null; rerender(); });
-  $$('[data-prov]', root).forEach(b => b.onclick = () => { SND.play('province_select'); bs.province = b.dataset.prov; bs.facing = null; rerender(); });
-  $$('[data-facing]', root).forEach(b => b.onclick = () => { SND.play('province_select'); bs.facing = b.dataset.facing; rerender(); });
-  const bk = $('#bsBack', root); if (bk) bk.onclick = () => { if (bs.facing) bs.facing = null; else if (bs.province) bs.province = null; else bs.piece = null; rerender(); };
+  $$('[data-piece]', root).forEach(b => b.onclick = () => { SND.play('button_click'); bs.piece = b.dataset.piece; bs.province = null; rerender(); });
+  $$('[data-prov]', root).forEach(b => b.onclick = () => { SND.play('province_select'); bs.province = b.dataset.prov; rerender(); });
+  const bk = $('#bsBack', root); if (bk) bk.onclick = () => { if (bs.province) bs.province = null; else bs.piece = null; rerender(); };
   $$('[data-key]', root).forEach(b => b.onclick = () => { const d = legal.find(x => G.descKey(x) === b.dataset.key); if (!d) { SND.play('error_denied'); return; } done(); human(d); });
   $$('[data-close]', root).forEach(b => b.onclick = closeModal);
 }
@@ -1828,7 +1836,7 @@ function renderMap(legal) {
     let cls = 'tok ', txt;
     if (id === 'roma' && !p.owner) { cls += 'roma'; txt = p.troops; }
     else if (!p.owner) { cls += 'native'; txt = p.native.present ?? '?'; }
-    else { cls += col(p.owner) + (p.status === 'allied' ? ' allied' : ''); txt = p.troops; if (isUnderGarrisoned(s, data, id)) cls += ' low'; }
+    else { cls += col(p.owner) + (p.status === 'allied' ? ' allied' : ''); txt = p.troops; if (G.displayUnderGarrisoned(s, data, id)) cls += ' low'; }
     // v27 (Vidi 9:12 PM): a held province shows troops/natives, the natives lighter ("5/3"); no natives (0 or not known): troops only
     const nat = p.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
     const tip = `${def.name}: ${!p.owner && id !== 'roma' ? `${p.native.present ?? '?'} natives` : `${p.troops} troop${p.troops === 1 ? '' : 's'}${nat ? `, ${nat} native${nat === 1 ? '' : 's'}` : ''}`}${id === 'carthage' && s.carthage?.neutral ? " — Under Roma's control" : ''}`;
@@ -1838,7 +1846,8 @@ function renderMap(legal) {
     else if (picks.has(id)) cls += ' pick';
     h += `<div class="${cls}" data-id="${id}" style="left:${x}%;top:${y}%" title="${attr(tip)}" data-troops="${p.owner || id === 'roma' ? p.troops : ''}" data-natives="${nat || ''}">${txt}</div>`;
     if (p.road) mk('road', 'R', x + (LM ? 2.9 : 2.4), y + (LM ? 0 : 3.9), 'Road', LM ? ` data-at="${id}" data-side="r"` : '');
-    for (const w of p.walls ?? []) { const [x2, y2] = tokenFor(w); mk('wall', 'W', x + (x2 - x) * 0.42, y + (y2 - y) * 0.42, 'Wall facing ' + prov(w)); }
+    if (p.walls?.length) mk('wall', 'W', x - (LM ? 2.9 : 2.4), y, 'Wall — defends from all sides (19.k)');   // v31.30: one W badge per walled province, mid-left (gen is above-left, road below-right, "!" top-right, number above-right)
+    { const num = G.provNumberLabel(s, id); if (num) mk('lbl', num, x + (LM ? 2.9 : 2.4), y - 5.7, 'Game Roll number'); }   // v31.30 (Update 5): above-right, clear of the min label below and the general above-left
     if (showMin) { const m = G.shownMin(s, data, id); if (m?.min) mk('lbl', 'min ' + m.min, x, y + 5.7, 'Minimum garrison'); }
     if (!p.owner && id !== 'roma' && p.native.present !== null && p.native.count !== null && p.native.present < p.native.count) mk('lbl', p.native.present + '/' + p.native.count, x, y + 5.7, 'natives present / count (depleted)');
   }
@@ -1911,8 +1920,11 @@ function showInfo(id, pin) {
     ['Troops', p.owner || id === 'roma' ? p.troops : '-'],
     ['Natives count / present', p.native.count === null ? (id === 'roma' ? '-' : 'not rolled yet') : `${p.native.count} / ${p.native.present}`],
     ['Min garrison', m ? `<b>${m.min}</b>` : '-'],
-    ['Builds', [p.road ? 'Road' : '', p.walls?.length ? 'Wall facing ' + p.walls.map(prov).join(', ') : ''].filter(Boolean).join('; ') || 'none'],
+    ['Builds', [p.road ? 'Road' : '', p.walls?.length ? 'Wall' : ''].filter(Boolean).join('; ') || 'none'],
   ];
+  // v31.30 (Update 4): the desktop panel had the same gap as the map tokens — an under-garrisoned ally showed no warning
+  // (the table and the mobile sheet already did). For an ally the warning is the lost reward / bonus troop (19.e), not revolt.
+  if (G.displayUnderGarrisoned(s, data, id)) rows.push(['Garrison', '<b class="pk-bad">UNDER-GARRISONED</b> — no bonus troop, no reward.']);
   const acts = pin && !ab ? G.forProvince(mineNow(), id).filter(d => !['ATTACK', 'ALLY', 'MOVE', 'END_TURN'].includes(d.type)).slice(0, 8) : [];
   // v31.24 (Update 4): target-first attack — "Attack here from ..." when at least one of your provinces can attack this one.
   const atkOrigins = pin && !ab ? G.attackOriginsForTarget(mineNow(), id) : [];
@@ -1950,7 +1962,7 @@ function openAttackOrigins(target, origins) {
 function renderTable() {
   const s = st();
   const rows = data.provinces.map(def => {
-    const id = def.id, p = s.provinces[id]; const m = G.shownMin(s, data, id); const under = p.status === 'allied' ? p.troops < (m?.min ?? 1) : (p.owner ? isUnderGarrisoned(s, data, id) : false);
+    const id = def.id, p = s.provinces[id]; const m = G.shownMin(s, data, id); const under = G.displayUnderGarrisoned(s, data, id);   // v31.30 (Update 4): one helper — allied below its shown minimum counts too
     const gens = s.players.filter(pl => pl.general?.at === id).map(pl => data.generalsById[pl.general.id].name).join(', ');
     const notes = [];
     if (p.status === 'starting') notes.push('Start province: minimum 1, always loyal.');
@@ -2211,7 +2223,7 @@ function renderAsk(legal) {
   if (f.kind === 'setupGeneral') body = `<div class="cards">${legal.map(d => { const g = data.generalsById[d.action.general]; return `<button class="pickcard" data-key="${attr(G.descKey(d))}"><img src="${img(g ? 'general.' + g.id : 'back.blank')}" alt=""><b>${esc(g?.name ?? 'Random')}</b><span class="small">${esc(g ? G.generalCaption(data, g.id) : 'a random free general')}</span></button>`; }).join('')}</div>`;
   else if (f.kind === 'chooseBattleCards') body = `${f.role === 'defender' ? `<div class="incoming" id="incomingAsk">${incomingHtml(f.player)}</div>` : ''}<div class="opts">${cardChoiceHtml(legal, f)}${G.summonButtonHtml(legal)}</div>`;
   else if (f.kind === 'resourceBuild') {          // item 9: the same step-by-step screen for a Bonus Road / Wall card just drawn
-    if (!bs || bs.frame !== f.id) bs = { frame: f.id, piece: f.piece, province: null, facing: null };
+    if (!bs || bs.frame !== f.id) bs = { frame: f.id, piece: f.piece, province: null };
     box.innerHTML = buildHtml(G.buildSteps(s, data, legal), true) + `<div class="foot"><button class="btn sm" id="askPeek">${askPeek ? 'Back to the choice' : 'Look at the map'}</button></div>`;
     ov.classList.add('on'); ov.classList.toggle('peek', askPeek);
     wireBuild(box, legal, () => renderAsk(mineNow()), () => { bs = null; askPeek = false; ov.classList.remove('on'); });
@@ -2236,7 +2248,10 @@ function renderAsk(legal) {
     const backNote = f.kind === 'returnReinforcements' || f.kind === 'placeSurvivors' ? `<p class="small garrison-note" id="garStay">${f.kind === 'returnReinforcements' ? 'Sending them home is optional: 0 leaves every survivor in the defended province (18.y). ' : ''}${esc([f.target, f.origin, f.from].filter(Boolean).map(id => G.garrisonStayText(s, data, id)).filter(Boolean).join(' '))}</p>` : '';
     // v31.27 (18.v): the bribe leaves just 1 troop in the new ally — this prompt moves more in, from any one province.
     const bribeNote = f.kind === 'chooseProvince' && f.purpose === 'bribeReinforce' ? `<p class="small">The bribe leaves just 1 troop in ${esc(prov(f.target))} — move more in now from any ONE of your provinces, however far away (no route needed). Slide to 0 to move none. This is part of the bribe, not a second action (18.v).</p>` : '';
-    body = shown + threatBox + horn + backNote + bribeNote + `<div class="opts">${optionsHtml(legal)}</div>`;
+    // v31.30 (17.aa): the flee cost, up front on the announcement screen, and the destination choice on the picker.
+    const fleeNote = f.kind === 'responseWindow' && f.window === 'defenceAnnounced' && G.fleeBrief(s, data) ? `<p class="small" id="fleeNote">${G.fleeNoteHtml(s, data)}</p>` : '';
+    const fleeDestNote = f.kind === 'chooseProvince' && f.purpose === 'fleeDestination' ? `<p class="small" id="fleeDestNote">${G.fleeDestinationNoteHtml(s, data)}</p>` : '';
+    body = shown + threatBox + horn + backNote + bribeNote + fleeNote + fleeDestNote + `<div class="opts">${optionsHtml(legal)}</div>`;
   }
   box.innerHTML = `<h2>${esc(G.frameTitle(s, data))}</h2><div><b style="color:var(--${col(w)})">${esc(pn(w))}</b>: ${esc(G.describePrompt(s, data).replace(/^.*?: /, ''))}</div>${body}<div class="foot"><button class="btn sm" id="askPeek">${askPeek ? 'Back to the choice' : 'Look at the map'}</button><span class="small">${pickTargets(legal).size ? 'You can also click a glowing province on the map.' : ''}</span></div>`;
   ov.classList.add('on'); ov.classList.toggle('peek', askPeek);
@@ -2367,6 +2382,8 @@ function wireStatic() {
   $$('.deck[data-deck]').forEach(d => d.onclick = () => { const k = d.dataset.key; const x = k && mineNow().find(y => G.descKey(y) === k); if (x) human(x); else { SND.play('error_denied'); toast(notDueText('draw from this deck')); } });
   $('#mapwrap').addEventListener('click', e => { if (!e.target.closest('.info') && !e.target.closest('.tok') && !e.target.closest('.maptools')) { selected = null; hideInfo(); if (C.S) renderMap(mineNow()); } });
   $('#chkLinks').onchange = e => $('#links').classList.toggle('on', e.target.checked);
+  // v31.30 (Update 5): "Show Prov Numbers" — off by default, remembered in this browser (localStorage, like Hide AI battles).
+  const cp = $('#chkProvNumbers'); if (cp) { cp.checked = G.showProvNumbersOn(); cp.onchange = e => { G.setShowProvNumbers(e.target.checked); if (C.S) renderMap(mineNow()); }; }
   $('#chkNames').onchange = () => C.S && renderMap(mineNow());
   document.addEventListener('visibilitychange', () => { if (hostHidden() && C.NET.inbox.length) { if (modalDone) closeModal(); if (bpDone) closeBattlePop(); } });   // v26.1
   document.addEventListener('keydown', e => {

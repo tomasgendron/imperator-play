@@ -1,6 +1,6 @@
 // Pure model of the throwaway engine console (M1.4): a session is an immutable history of states; nothing here touches the DOM,
 // so the Node tests drive exactly what the page drives. Dev tool only: it shows private events too (hot-seat debugging), unlike viewFor.
-import { createGame, applyAction, legalActions, whoActs, minGarrison, isUnderGarrisoned, topFrame, chooseAction, validateSetup, summonGeneralTarget } from '../engine/index.js';
+import { createGame, applyAction, legalActions, whoActs, minGarrison, isUnderGarrisoned, topFrame, chooseAction, validateSetup, summonGeneralTarget, fleeOptions } from '../engine/index.js';
 
 const pn = (state, id) => state.players.find(p => p.id === id)?.name ?? id ?? 'nobody';
 const prov = (data, id) => data.provincesById[id]?.name ?? id;
@@ -75,9 +75,9 @@ export function describePrompt(state, data) {
   if (!f) return `${head}: ${who} chooses an action.`;
   const what = {
     roll: `rolls the ${f.die} (${f.purpose})`, draw: `draws a ${f.deck} card (${f.reason})`, placeTroops: `places ${f.count} troop(s)`,
-    resourceBuild: `builds the ${f.piece} or saves the card`, chooseProvince: { taxTroop: 'chooses the province that pays the tax troop', decreeLegion: 'chooses the province that sends the Decree legion', removedProvince: 'chooses the province the Emperor restores (18.q)', removedTroops: 'chooses where the removed troops go', bribeReinforce: 'moves troops into the newly-bribed ally from one of their own provinces (0 = move none, up to the move limit, no route needed — 18.v)' }[f.purpose] ?? 'chooses where the survivors go',
+    resourceBuild: `builds the ${f.piece} or saves the card`, chooseProvince: { taxTroop: 'chooses the province that pays the tax troop', decreeLegion: 'chooses the province that sends the Decree legion', removedProvince: 'chooses the province the Emperor restores (18.q)', removedTroops: 'chooses where the removed troops go', fleeDestination: 'chooses where the fleeing troops retreat to (17.aa)', bribeReinforce: 'moves troops into the newly-bribed ally from one of their own provinces (0 = move none, up to the move limit, no route needed — 18.v)' }[f.purpose] ?? 'chooses where the survivors go',
     chooseBorrow: `chooses how many natives to borrow (0-${f.max})`, chooseBattleCards: 'chooses battle cards', choosePerk: 'chooses a general perk',
-    responseWindow: { revoltResponse: `may play Kill Revolt leader! to stop the revolt in ${f.province}`, displeasedResponse: `may play Busy Little Bee! to redirect ${f.def}`, defenceAnnounced: f.card ? 'may sound the Horn of Titus Pullus or pass' : (summonGeneralTarget(state, data, f.player) ? 'may summon the general to the battle, or pass' : 'is attacked, and can only pass') }[f.window] ?? 'answers the response window',
+    responseWindow: { revoltResponse: `may play Kill Revolt leader! to stop the revolt in ${f.province}`, displeasedResponse: `may play Busy Little Bee! to redirect ${f.def}`, defenceAnnounced: (() => { const parts = []; const fl = fleeOptions(state, data); if (fl) parts.push(`flee the battle (lose ${fl.losses} of ${fl.troops}, ${fl.survivors} retreat)`); if (f.card) parts.push('sound the Horn of Titus Pullus'); if (summonGeneralTarget(state, data, f.player)) parts.push('summon the general to the battle'); return parts.length ? `may ${parts.join(', ')} or pass` : 'is attacked, and can only pass'; })() }[f.window] ?? 'answers the response window',
     discardCards: `loses ${f.count} saved card(s) to the Emperor's tax`, battleContinue: 'continues the battle or retreats', placeSurvivors: `places the survivors (up to ${f.maxBack} back)`,
     returnReinforcements: `chooses whether the Horn troops go back to ${prov(data, f.from)} (0-${f.max}, optional)`,
   }[f.kind] ?? f.kind;
@@ -119,7 +119,7 @@ const T = {
   troopsPlaced: (e, st, d) => `${pn(st, e.pub.player)} places ${e.pub.n} troop(s) in ${prov(d, e.pub.province)}.`,
   resourceCardUsed: (e, st, d) => `${pn(st, e.pub.player)} uses a Resource card (${e.pub.piece}) in ${prov(d, e.pub.province)}.`,
   roadBuilt: (e, st, d) => `${pn(st, e.pub.player)} builds a Road in ${prov(d, e.pub.province)}${e.pub.free ? ' (free)' : ''}.`,
-  wallBuilt: (e, st, d) => `${pn(st, e.pub.player)} builds a Wall in ${prov(d, e.pub.province)} facing ${prov(d, e.pub.facing)}${e.pub.free ? ' (free)' : ''}.`,
+  wallBuilt: (e, st, d) => `${pn(st, e.pub.player)} builds a Wall in ${prov(d, e.pub.province)} (defends from all sides, 19.k)${e.pub.free ? ' (free)' : ''}.`,
   resourceSaved: (e, st) => `${pn(st, e.pub.player)} saves the ${e.pub.piece} card.`,
   gameRollResolved: (e) => `Game Roll: ${e.pub.value} (${e.pub.kind}).`,
   rewardGranted: (e, st, d) => `${pn(st, e.pub.player)} earns ${e.pub.reward} from ${prov(d, e.pub.province)} (number ${e.pub.number}).`,
@@ -146,6 +146,7 @@ const T = {
   revoltImmune: (e, st, d) => e.pub.general ? `${prov(d, e.pub.province)} is protected by the general and does not revolt.` : `${prov(d, e.pub.province)} has ${e.pub.troops} troops and does not revolt.`,
   romaCapLost: (e) => `Roma is full (${e.pub.cap}): ${e.pub.lost} troop(s) lost${e.pub.reason ? ' (' + e.pub.reason + ')' : ''}.`,
   deckReshuffled: (e) => `The ${e.pub.deck} discard pile is shuffled into a new draw pile (${e.pub.cards} cards).`,
+  withheldCardsReleased: (e, st, d) => `The withheld cards join the Game deck at the first reshuffle: ${Object.entries(e.pub.released ?? {}).map(([def, n]) => `${n} ${d.cardDefsById[def]?.name ?? def}`).join(' and ')} (now ${e.pub.cards} cards in the draw pile).`,
   cardReshuffled: (e, st) => `${pn(st, e.pub.player)} may hold only one ${e.pub.def}: it is shuffled back and ${pn(st, e.pub.player)} draws again.`,
   discardShuffledUnder: (e, st) => `Only cards ${pn(st, e.pub.player)} may not hold are left in the draw pile: the discard pile is shuffled, ${pn(st, e.pub.player)} draws a card from it and the other ${e.pub.underneath} go under the draw pile (Q78).`,
   catapultBought: (e, st) => `${pn(st, e.pub.player)} buys a Catapult (now ${e.pub.catapults}).`,
@@ -173,6 +174,7 @@ const T = {
   fledTroopJoined: (e, st) => `The fled troop joins ${pn(st, e.pub.to)}.`,
   fledTroopReturned: (e, st, d) => `The fled troop returns to ${prov(d, e.pub.province)}.`,
   battleEnded: (e, st) => `Battle over after ${e.pub.rounds} round(s): ${e.pub.outcome}${e.pub.winner && e.pub.winner !== 'defender' ? ', ' + pn(st, e.pub.winner) + ' wins' : ''}.`,
+  defenderFled: (e, st, d) => `${pn(st, e.pub.player)} flees ${prov(d, e.pub.province)} rather than fight: loses ${e.pub.lost} of ${e.pub.troops} troops, ${e.pub.survivors} retreat to ${prov(d, e.pub.to)}${e.pub.general ? ' with the general' : ''}; ${pn(st, e.pub.attacker)} takes ${prov(d, e.pub.province)} without a battle${e.pub.borrowed ? ` (the ${e.pub.borrowed} borrowed troop(s) return to the province they came from, unharmed)` : ''} (17.aa).`,
   retreated: (e, st, d) => `${pn(st, e.pub.player)} retreats${e.pub.beforeRound1 ? ' before round 1 is rolled' : ''} to ${prov(d, e.pub.to)} with ${e.pub.own} troop(s).`,
   battleCardsReturned: (e, st, d) => `${pn(st, e.pub.player)} keeps the unused battle cards because the attacker retreated ${e.pub.round ? 'in round ' + e.pub.round : 'before round 1'}: ${cardList(d, e.pub.cards)} (17.k, 18.i).`,
   battleCardsSpent: (e, st, d) => `${pn(st, e.pub.player)}'s queued ${cardList(d, e.pub.cards)} ${e.pub.cards.length > 1 ? 'are' : 'is'} spent with the battle (18.i).`,
@@ -256,7 +258,7 @@ export function provinceRows(state, data) {
     return {
       id: def.id, name: def.name, number: p.number, reward: p.reward, owner: p.owner ? pn(state, p.owner) : '', ownerId: p.owner, status: p.status,
       troops: p.owner || def.id === 'roma' ? p.troops : null, natives: p.native.count === null ? '?' : `${p.native.present}/${p.native.count}`,
-      min, under: p.owner ? isUnderGarrisoned(state, data, def.id) : false, road: !!p.road, walls: p.walls.map(w => prov(data, w)).join(', '),
+      min, under: p.owner ? isUnderGarrisoned(state, data, def.id) : false, road: !!p.road, walls: p.walls?.length ? 'Wall' : '',
     };
   });
 }

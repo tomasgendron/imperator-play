@@ -82,11 +82,22 @@ export function toThrowaway(state, uid) { (state.throwaway ??= { game: [], resou
 /**
  * Takes the top card of a draw pile. An empty draw pile is first rebuilt by shuffling its discard pile (18.l); returns null only when
  * both are empty (every card is held: drawing does nothing, Q46).
+ * v31.30 (18.a): the FIRST such rebuild of the Game deck also releases the withheld cards — 3 Elephants! + 2 Sneak Attack from
+ * the Sea! held back for cycle 1 — shuffled into the new draw pile with the discards (cards still in players' hands stay in
+ * hands). Cycle 2+ is the full 33-card deck again. If the game ends before the first reshuffle, the withheld cards never appear.
+ * The Q78 path in turn.js (discards shuffled UNDER a non-empty pile) is not a rebuild, so it never releases them.
  */
 export function drawTop(ctx, deck) {
   const { state } = ctx;
   if (!state.decks[deck].length && state.discards[deck].length) {
     state.decks[deck] = shuffle(state.rng, state.discards[deck]); state.discards[deck] = [];
+    if (deck === 'game' && state.withheld?.game?.length) {
+      const released = state.withheld.game.splice(0);
+      state.decks.game = shuffle(state.rng, [...state.decks.game, ...released]);
+      const byDef = {};
+      for (const uid of released) byDef[state.cards[uid].def] = (byDef[state.cards[uid].def] ?? 0) + 1;
+      emit(ctx, 'withheldCardsReleased', { rule: '18.a', pub: { deck, cards: state.decks.game.length, released: byDef } });
+    }
     emit(ctx, 'deckReshuffled', { rule: '18.l', pub: { deck, cards: state.decks[deck].length } });
   }
   return state.decks[deck].shift() ?? null;

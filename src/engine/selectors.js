@@ -69,6 +69,11 @@ export const isUnderGarrisoned = (state, data, id) => {
   return p.owner !== null && (p.status === 'conquered') && p.troops < minGarrison(state, data, id).min;
 };
 
+/** v31.30 (19.k): a Wall defends its province from all sides — a province either has a Wall or it does not.
+ * `walls` holds every neighbouring province when a Wall is built (19.k/19.l), so any non-empty list is a Wall;
+ * a one-sided list in an old save still counts (readSave normalises it to all neighbours). */
+export const hasWall = (state, id) => (state.provinces[id]?.walls?.length ?? 0) > 0;
+
 /** Move route over provinces `pid` controls, land or sea (17.z). Fewest ally crossings wins; each ally crossed on the way (not the destination) costs 1 Gold (19.t). */
 export function moveRoute(state, data, pid, from, to) {
   if (!controls(state, pid, from) || !controls(state, pid, to) || from === to) return null;

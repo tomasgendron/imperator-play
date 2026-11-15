@@ -1,7 +1,7 @@
 // Pure model of the M5 game page: no DOM, so `node --test` drives exactly what the page shows and clicks.
 // The page keeps a console session (src/ui/consoleModel.js) and asks this module who looks at the screen, what a human may do
 // now (grouped for the phase bar, the map and the builder), what a card looks like, which sounds an event plays, and how a save file reads.
-import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets } from '../../engine/index.js';
+import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, fleeOptions } from '../../engine/index.js';
 import { newSession, play, aiToMove, aiMove, stateOf, current, formatEvent, describePrompt } from '../consoleModel.js';
 
 export { newSession, play, aiToMove, aiMove, stateOf, describePrompt };
@@ -233,13 +233,14 @@ export function soundsFor(e, state = null) {
     case 'cardPlayed': case 'resourceCardUsed': return ['card_play'];
     case 'troopsMoved': case 'troopsPlaced': case 'survivorsMoved': return ['troops_move'];
     case 'attackDeclared': return ['attack_confirm'];
+    case 'defenderFled': return ['troops_move'];
     case 'battleRoundRolled': return ['battle_round_start'];
     case 'provinceConquered': return ['conquest'];
     case 'provinceAllied': return ['ally_made'];
     case 'provinceRevolted': return ['revolt'];
     case 'romeRoll': return ['rome_roll'];
     case 'senateDecree': return ['senate_decree'];
-    case 'deckReshuffled': return ['deck_shuffle'];
+    case 'deckReshuffled': case 'withheldCardsReleased': return ['deck_shuffle'];
     case 'prestigeChanged': return e.pub.to > e.pub.from ? ['prestige_gain'] : [];
     case 'rewardGranted': return /gold/i.test(e.pub.reward) ? ['gold_gain'] : [];
     case 'turnEnded': return ['end_turn'];
@@ -257,7 +258,7 @@ export function frameTitle(state, data) {
   if (!f) return null;
   const T = {
     roll: 'Roll the dice', draw: 'Draw a card', setupGeneral: 'Choose your general', setupSide: 'Choose your side (west or east)', setupStartProvince: 'Choose your start province',
-    placeTroops: 'Place troops', resourceBuild: 'Build now or save the card', chooseProvince: f.purpose === 'bribeReinforce' ? 'Reinforce your new ally' : 'Choose a province', chooseBorrow: 'Borrow natives?',
+    placeTroops: 'Place troops', resourceBuild: 'Build now or save the card', chooseProvince: { bribeReinforce: 'Reinforce your new ally', fleeDestination: 'Flee to…' }[f.purpose] ?? 'Choose a province', chooseBorrow: 'Borrow natives?',
     chooseBattleCards: 'Battle cards', choosePerk: 'General perk', battleContinue: 'Continue the battle?', placeSurvivors: 'Place the survivors',
     returnReinforcements: 'Send the Horn troops home?',
     discardCards: "The Emperor's tax", responseWindow: { revoltResponse: 'A province revolts!', displeasedResponse: 'Rome is displeased with you', defenceAnnounced: 'You are attacked!' }[f.window] ?? 'Your answer',
@@ -286,10 +287,17 @@ export function backfillNewCards(state, data) {
   const have = {};
   for (const c of Object.values(state.cards)) have[c.def] = (have[c.def] ?? 0) + 1;
   const nextNum = {};
-  for (const uid of Object.keys(state.cards)) {
-    const m = /^([a-z])(\d+)$/.exec(uid);
-    if (m) nextNum[m[1]] = Math.max(nextNum[m[1]] ?? 0, +m[2]);
-  }
+  const noteUid = uid => { const m = /^([a-z])(\d+)$/.exec(uid); if (m) nextNum[m[1]] = Math.max(nextNum[m[1]] ?? 0, +m[2]); };
+  for (const uid of Object.keys(state.cards)) noteUid(uid);
+  // v31.30: also count uids still referenced in any pile (decks, discards, throwaway, withheld, hands, inPlay, savedResources).
+  // A save that lost a card from the registry but still lists its uid somewhere must never get that number re-minted for a
+  // different card — that is the g32/g33 double-count: the two Sneak Attacks were deleted from the registry yet still listed
+  // in withheld.game, so backfill re-minted g32/g33 into the deck and validation saw each uid twice.
+  for (const list of Object.values(state.decks)) for (const uid of list) noteUid(uid);
+  for (const list of Object.values(state.discards ?? {})) for (const uid of list) noteUid(uid);
+  for (const list of Object.values(state.throwaway ?? {})) for (const uid of list) noteUid(uid);
+  for (const list of Object.values(state.withheld ?? {})) for (const uid of list) noteUid(uid);
+  for (const p of state.players ?? []) for (const c of [...(p.hand ?? []), ...(p.inPlay ?? []), ...(p.savedResources ?? [])]) noteUid(c.uid);
   for (const deck of ['game', 'resource', 'displeased']) {
     const prefix = deck[0];
     for (const def of data.decks[deck]) {
@@ -301,6 +309,18 @@ export function backfillNewCards(state, data) {
         have[def.id] = (have[def.id] ?? 0) + 1;
       }
     }
+  }
+}
+/** v31.30 (19.k): old saves hold one-sided Walls — a list with a single facing. The facing concept is gone, so a
+ * province with any Wall at all now has a Wall on every border: fill `walls` with all its neighbours (sorted).
+ * A province already listing every neighbour, or with no Wall, is untouched. Runs in readSave before validation;
+ * the engine itself already treats any non-empty `walls` as a Wall (S.hasWall), so this only normalises the data. */
+export function normaliseWalls(state, data) {
+  if (!state?.provinces) return;
+  for (const [id, p] of Object.entries(state.provinces)) {
+    if (!p?.walls?.length) continue;
+    const all = [...new Set([...(data.provincesById[id]?.land ?? []), ...(data.provincesById[id]?.sea ?? [])])].sort();
+    if (p.walls.length !== all.length || p.walls.some(w => !all.includes(w))) p.walls = all;
   }
 }
 export function readSave(input, data) {
@@ -315,10 +335,12 @@ export function readSave(input, data) {
   }
   if (!Array.isArray(state.ships)) state.ships = [];   // v31.5: saves from before Merchant ships
   if (!state.throwaway) state.throwaway = { game: [], resource: [], displeased: [] };   // v31.11: saves from before the throwaway pile
+  if (!state.withheld) state.withheld = { game: [] };   // v31.30: saves from before the withheld pile load as already released — the 5 cards are in the deck/discards/hands already, so nothing is held back mid-game
   for (const p of state.players) if (!['normal', 'easy'].includes(p.difficulty)) p.difficulty = 'normal';   // v31.12: saves from before AI difficulty
   for (const p of state.players) if (p.pendingStealToRoma === undefined) p.pendingStealToRoma = null;   // v31.24 (18.r, 18.x): saves from before the deferred steal
   if (!state.turn.aiHumanAttacks) state.turn.aiHumanAttacks = {};   // v31.12: saves from before the Easy attack budget
   backfillNewCards(state, data);   // v31.9 (18.z): saves from before a card was added to a deck gain the new cards, shuffled into that deck (v31.11)
+  normaliseWalls(state, data);   // v31.30 (19.k): one-sided Walls in old saves become Walls on all sides
   let errs;
   try { errs = validateState(state, data); } catch (e) { errs = [e.message]; }
   if (errs.length) throw new Error(`This save does not fit this build's rules data, so it cannot be loaded safely.${made} The file itself is not changed. Details:\n` + errs.slice(0, 5).join('\n'));
@@ -402,7 +424,7 @@ export function cardPlayView(state, data, legal, uid) {
   const saved = legal.filter(d => d.type === 'USE_SAVED_RESOURCE' && d.action.cardUid === uid);
   const isSaved = state.players.some(p => p.savedResources.some(c => c.uid === uid));
   if ((saved.length || isSaved) && piece) {
-    const ok = saved.length && buildSteps(state, data, legal).pieces.find(x => x.piece === piece)?.provinces.some(p => p.free || p.facings?.some(f => f.free));
+    const ok = saved.length && buildSteps(state, data, legal).pieces.find(x => x.piece === piece)?.provinces.some(p => p.free);
     if (ok) return { mode: 'build', piece, list: saved };
     return { mode: 'none', list: [], reason: `No province of yours can take a ${piece === 'road' ? 'Road' : 'Wall'} right now.` };
   }
@@ -475,7 +497,13 @@ export function battleResultPopup(events, i, state, data) {
   const rest = after(events, i, x => x.type === 'battleEnded' || x.type === 'turnStarted');
   const lines = [`${nm(D)}, ${nm(A)} attacked your province ${t} from ${provName(data, p.from)}${p.sea ? ' by sea' : ''}.`];
   let title;
-  if (p.outcome === 'conquered') {
+  if (p.outcome === 'fled') {
+    // v31.30 (17.aa): the defender chose to flee at the announcement — no battle was fought.
+    title = `${t} has fallen — you fled!`;
+    const fl = rest.find(x => x.type === 'defenderFled' && x.pub.province === p.target);
+    lines.push(fl ? `You fled ${t} rather than fight: ${fl.pub.lost} of your ${fl.pub.troops} troop(s) are lost, ${fl.pub.survivors} retreat to ${provName(data, fl.pub.to)}${fl.pub.general ? ' with your general' : ''}. ${nm(A)} takes ${t} without a battle.` : `You fled ${t}; ${nm(A)} takes it without a battle.`);
+    lines.push('Prestige is as if you had lost the battle (12.f, 17.aa).');
+  } else if (p.outcome === 'conquered') {
     title = `${t} has fallen!`;
     const c = rest.find(x => x.type === 'provinceConquered' && x.pub.province === p.target);
     lines.push(`After ${p.rounds} round(s) your troops in ${t} are gone: ${nm(A)} conquers it${c ? ` and holds it with ${c.pub.troops} troop(s)` : ''}.`);
@@ -535,10 +563,9 @@ export function incomingAttack(state, data, viewerId = null) {
   const defenderTroops = b.def.player ? tp.troops : b.target === 'roma' ? tp.troops : (tp.native.present ?? 0);
   const dg = b.def.player ? playerById(state, b.def.player)?.general : null;
   const defenderGeneral = dg ? { name: data.generalsById[dg.id]?.name ?? dg.id, at: dg.at ?? null, here: dg.at === b.target } : null;
-  // Wall facing the attack's origin — the same rule as the engine's wallsActive (battle.js): Roma and neutral Carthage have
-  // walls on all sides; otherwise the target's walls must face the origin (or the entry side through neutral Carthage).
-  const side = data.rules.attackThroughNeutralWalls === 'entrySide' && b.via ? b.via : b.att.from;
-  const wall = b.target === 'roma' || (b.target === 'carthage' && !tp.owner) || (tp.walls ?? []).includes(side);
+  // v31.30 (19.k): a built Wall defends from ANY direction — the same rule as the engine's wallsActive (battle.js):
+  // Roma and neutral Carthage have walls on all sides; otherwise any Wall on the target counts, whatever it once faced.
+  const wall = b.target === 'roma' || (b.target === 'carthage' && !tp.owner) || (tp.walls ?? []).length > 0;
   const minGarrison = shownMin(state, data, b.target)?.min ?? null;
   const R = data.rules.battle ?? {};
   const defenderDice = wall ? (R.defenderDiceWithWall ?? 3) : (R.defenderDice ?? 2);
@@ -548,8 +575,39 @@ export function incomingAttack(state, data, viewerId = null) {
     troopText, cardText,
     line: `${troopText} attacking ${who}. Cards against ${who}: ${cardText}.`,
     targetName: provName(data, b.target), attackerName: nameOf(state, b.att.player), fromName: provName(data, b.att.from),
-    defenderTroops, defenderGeneral, wall, wallSide: side, minGarrison, defenderDice,
+    defenderTroops, defenderGeneral, wall, wallSide: null, minGarrison, defenderDice,
   };
+}
+/** v31.30 (17.aa): the flee brief for the "You are attacked!" screen — what fleeing costs and where the survivors go,
+ * shown BEFORE the defender commits. Null when no flee is offered (no battle, no player defender, a Decree battle,
+ * or no connecting owned province). The destinations come from the engine's fleeOptions, so the note and the legal
+ * list cannot disagree. */
+export function fleeBrief(state, data) {
+  const b = state.battle;
+  if (!b || b.mode !== 'attack' || !b.def?.player) return null;
+  const fl = fleeOptions(state, data);
+  if (!fl) return null;
+  const dg = playerById(state, b.def.player)?.general ?? null;
+  return {
+    ...fl,
+    destNames: fl.destinations.map(id => provName(data, id)),
+    targetName: provName(data, b.target),
+    attackerName: nameOf(state, b.att.player),
+    generalName: fl.general && dg ? (data.generalsById[dg.id]?.name ?? dg.id) : null,
+  };
+}
+/** v31.30 (17.aa): the flee note for the announcement screen, from fleeBrief(). '' when no flee is offered. */
+export function fleeNoteHtml(state, data) {
+  const fl = fleeBrief(state, data);
+  if (!fl) return '';
+  const dest = fl.destinations.length === 1 ? ` to ${escHtml(fl.destNames[0])}` : ' to a bordering province of yours (choose below)';
+  return `🏃 Flee the battle (17.aa): lose ${fl.losses} of ${fl.troops} troops — ${fl.survivors} retreat${dest}${fl.generalName ? ` with ${escHtml(fl.generalName)}` : ''}. ${escHtml(fl.attackerName)} takes ${escHtml(fl.targetName)} without a battle and keeps their battle cards; Prestige is as if you had lost the battle (12.f). Or stay and fight: pass, sound the Horn, or summon.`;
+}
+/** v31.30 (17.aa): the note on the retreat-destination picker — the same cost, with the choice spelled out. */
+export function fleeDestinationNoteHtml(state, data) {
+  const fl = fleeBrief(state, data);
+  if (!fl) return '';
+  return `You are fleeing ${escHtml(fl.targetName)} (17.aa): ${fl.losses} of ${fl.troops} troops are lost, ${fl.survivors} retreat${fl.generalName ? ` with ${escHtml(fl.generalName)}` : ''}. Choose where they go — ${escHtml(fl.attackerName)} takes ${escHtml(fl.targetName)} without a battle.`;
 }
 /** v31.24 (Update 4): the provinces that can legally attack `target` right now — the target-first "Attack here from ..."
  *  picker. Built from the ATTACK builder tree, so every engine legality rule (Road, troops, Roma, Carthage, links) applies. */
@@ -572,7 +630,13 @@ export function battleSummary(events, i, state, data) {
   const rest = after(events, i, x => x.type === 'battleEnded' || x.type === 'turnStarted');
   const lines = [];
   let title;
-  if (p.outcome === 'conquered') {
+  if (p.outcome === 'fled') {
+    // v31.30 (17.aa): no rounds were fought — the defender fled and the attacker takes the province outright.
+    const fl = rest.find(x => x.type === 'defenderFled' && x.pub.province === p.target);
+    title = `FLEE: ${nm(D)} flees ${t}`;
+    lines.push(fl ? `${nm(D)} flees ${t} rather than fight: loses ${fl.pub.lost} of ${fl.pub.troops} troop(s), ${fl.pub.survivors} retreat to ${provName(data, fl.pub.to)}${fl.pub.general ? ' with the general' : ''}; ${nm(A)} takes ${t} without a battle.` : `${nm(D)} flees ${t}; ${nm(A)} takes it without a battle.`);
+    if (topFrame(state)?.kind === 'placeSurvivors') lines.push(`${nm(A)} now decides the general and the survivors (17.y).`);
+  } else if (p.outcome === 'conquered') {
     const c = rest.find(x => x.type === 'provinceConquered' && x.pub.province === p.target);
     title = `VICTORY: ${nm(A)} conquers ${t}`;
     lines.push(`After ${p.rounds} round(s) ${dn} ${D ? 'loses' : 'lose'} ${t}; ${nm(A)} holds it with ${c?.pub.troops ?? p.attackerLeft} troop(s).`);
@@ -746,7 +810,8 @@ export function soundPlan(events, state = null) {
 
 /**
  * The step-by-step Build screen (item 9) from the legal list. Pieces Road, Wall, Catapult with cost, whether each is possible now and
- * why not; per piece the provinces (and for a Wall the borders), each with its paid descriptor and its free saved-card descriptor.
+ * why not; per piece the provinces, each with its paid descriptor and its free saved-card descriptor.
+ * v31.30 (19.k): a Wall has no facing — one descriptor per province, like a Road; `facings` stays as an empty list for shape stability.
  * For the resourceBuild frame (a Bonus Road/Wall card just drawn), `frame` is set and the piece is fixed (build free or save).
  */
 export function buildSteps(state, data, legal) {
@@ -755,8 +820,7 @@ export function buildSteps(state, data, legal) {
   if (f?.kind === 'resourceBuild') {
     const piece = f.piece; const provs = {};
     for (const d of legal.filter(x => x.type === 'RESOURCE_BUILD' && x.action.mode === 'build')) {
-      const p = (provs[d.action.province] ??= { id: d.action.province, name: provName(data, d.action.province), paid: null, free: d.action.facing ? null : d, facings: [] });
-      if (d.action.facing) p.facings.push({ id: d.action.facing, name: provName(data, d.action.facing), paid: null, free: d });
+      const p = (provs[d.action.province] ??= { id: d.action.province, name: provName(data, d.action.province), paid: null, free: d, facings: [] });
     }
     return { frame: true, pieces: [{ piece, name: piece === 'road' ? 'Road' : 'Wall', cost: 0, enabled: true, reason: '', free: true, provinces: Object.values(provs) }], save: legal.find(x => x.type === 'RESOURCE_BUILD' && x.action.mode === 'save') ?? null };
   }
@@ -769,16 +833,14 @@ export function buildSteps(state, data, legal) {
     for (const d of legal.filter(x => x.type === paidT || (x.type === 'USE_SAVED_RESOURCE' && data.cardDefsById[state.cards[x.action.cardUid].def]?.effect?.params?.piece === piece))) {
       const id = d.action.province; const kind = d.type === paidT ? 'paid' : 'free';
       const p = (provs[id] ??= { id, name: provName(data, id), paid: null, free: null, facings: [] });
-      if (piece === 'road') { if (!p[kind]) p[kind] = d; continue; }
-      let fc = p.facings.find(x => x.id === d.action.facing); if (!fc) p.facings.push(fc = { id: d.action.facing, name: provName(data, d.action.facing), paid: null, free: null });
-      if (!fc[kind]) fc[kind] = d;
+      if (!p[kind]) p[kind] = d;   // v31.30 (19.k): a Wall has no facing — one descriptor per province, like a Road
     }
     const list = Object.values(provs);
-    const nSaved = saved(piece); const anyPaid = list.some(p => p.paid || p.facings.some(x => x.paid));
+    const nSaved = saved(piece); const anyPaid = list.some(p => p.paid);
     let reason = '';
     if (!list.length) {
-      const room = piece === 'road' ? mine.some(id => !state.provinces[id].road) : mine.some(id => data.provincesById[id] && [...data.provincesById[id].land, ...data.provincesById[id].sea].some(n => !state.provinces[id].walls.includes(n)));
-      reason = !room ? (piece === 'road' ? 'every one of your provinces already has a Road' : 'every border of your provinces already has a Wall')
+      const room = piece === 'road' ? mine.some(id => !state.provinces[id].road) : mine.some(id => !(state.provinces[id].walls?.length));
+      reason = !room ? (piece === 'road' ? 'every one of your provinces already has a Road' : 'every one of your provinces already has a Wall')
         : left <= 0 ? `no actions left this turn (${data.rules.actionsPerTurn}/${data.rules.actionsPerTurn} used)` : (pl?.gold ?? 0) < cost ? `needs ${cost} Gold, you have ${pl?.gold ?? 0}` : 'not possible right now';
     } else if (!anyPaid) reason = left <= 0 ? `paying needs an action: none left (${data.rules.actionsPerTurn}/${data.rules.actionsPerTurn} used)` : (pl?.gold ?? 0) < cost ? `paying needs ${cost} Gold, you have ${pl?.gold ?? 0}` : '';
     return { piece, name, cost, enabled: list.length > 0, reason, saved: nSaved, provinces: list };
@@ -995,6 +1057,35 @@ export function hideAiBattlesOn() {
 export function setHideAiBattles(on) {
   try { globalThis.localStorage?.setItem(HIDE_AI_BATTLES_KEY, on ? '1' : '0'); } catch { /* private mode */ }
 }
+/**
+ * v31.30 (Update 4): DISPLAY-ONLY under-garrison check for the map token "!" marker and the province panels.
+ * The engine selector `isUnderGarrisoned` counts conquered provinces only and must stay that way (AI scoring,
+ * Horn gating, turn.js) — but an ALLIED province below the threshold the map already shows (displayMin: natives + 1,
+ * with Pompey / Garrison −1) is under-garrisoned for display too: it loses the Game Roll reward / bonus troop (19.e).
+ * Same test the desktop table and the mobile sheet already used inline; now one helper so both token renderers agree.
+ */
+export function displayUnderGarrisoned(state, data, id) {
+  const p = state?.provinces?.[id];
+  if (!p?.owner) return false;
+  if (p.status === 'allied') return p.troops < displayMin(state, data, id);
+  if (p.status === 'conquered') return p.troops < minGarrison(state, data, id).min;
+  return false;
+}
+export const SHOW_PROV_NUMBERS_KEY = 'imperator.showProvNumbers';
+/** v31.30 (Update 5): "Show Prov Numbers" map toggle. Off by default; remembered in this browser like Hide AI battles. */
+export function showProvNumbersOn() {
+  try { return globalThis.localStorage?.getItem(SHOW_PROV_NUMBERS_KEY) === '1'; } catch { return false; }
+}
+export function setShowProvNumbers(on) {
+  try { globalThis.localStorage?.setItem(SHOW_PROV_NUMBERS_KEY, on ? '1' : '0'); } catch { /* private mode */ }
+}
+/** The Game Roll number to show on `id`'s token when the toggle is on, or null. Roma has no number (null);
+ * every other province carries one (3–8, assigned at setup). `on` defaults to the saved toggle. */
+export function provNumberLabel(state, id, on = showProvNumbersOn()) {
+  if (!on) return null;
+  const n = state?.provinces?.[id]?.number;
+  return Number.isInteger(n) ? String(n) : null;
+}
 /** True when the full battle screen should be skipped. Natives are not a human. `on` defaults to the saved toggle. */
 export function skipBattleUi(state, attacker, defender, on = hideAiBattlesOn()) {
   if (!on || !state) return false;
@@ -1005,7 +1096,7 @@ export function skipBattleUi(state, attacker, defender, on = hideAiBattlesOn()) 
   };
   return !human(attacker) && !human(defender);
 }
-const BATTLE_FACE = new Set(['attackDeclared', 'battleStarted', 'battleRoundRolled', 'battleRoundResolved', 'battleDiceAdjusted', 'battleEnded', 'enemyFled', 'generalSummoned', 'generalPerkTriggered', 'casualtiesApplied', 'lossCapped', 'decreeBattle', 'decreeResolved']);
+const BATTLE_FACE = new Set(['attackDeclared', 'battleStarted', 'battleRoundRolled', 'battleRoundResolved', 'battleDiceAdjusted', 'battleEnded', 'defenderFled', 'enemyFled', 'generalSummoned', 'generalPerkTriggered', 'casualtiesApplied', 'lossCapped', 'decreeBattle', 'decreeResolved']);
 /** Who is in this battle event, even after the action has cleared state.battle. */
 export function battleParticipants(state, event) {
   const p = event?.pub ?? {};

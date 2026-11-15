@@ -13,6 +13,7 @@ export const ACTION_TYPES = Object.freeze([
   'BUY_MERCHANT_SHIP', 'MOVE_MERCHANT_SHIP',   // v31.5 ship on a sea link; v31.8 move it for free (22.c)
   'BUY_PRESTIGE',   // v31.14: buy 1 Prestige for 20 Gold (22.g)
   'SUMMON_GENERAL', 'RETURN_REINFORCEMENTS',   // v31.4: bring a general into a battle he can reach; Horn troops may go home (18.y)
+  'FLEE_BATTLE',   // v31.30: the defender flees instead of fighting (17.aa)
 ]);
 
 const MILESTONE = {

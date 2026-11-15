@@ -8,7 +8,7 @@
 import { loadGameData } from '../ui/loadData.js';
 import { resolveAsset } from '../ui/assets.js';
 import { setupChoices, checkSetup, current } from '../ui/consoleModel.js';
-import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, isUnderGarrisoned, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces } from '../engine/index.js';
+import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces } from '../engine/index.js';
 import * as G from '../ui/game/model.js';
 import { createSound } from '../ui/game/sound.js';
 import { createController } from '../ui/core/controller.js';
@@ -688,12 +688,13 @@ function renderTokens(s, legal) {
     const id = def.id, p = s.provinces[id]; let cls = 'tok', val;
     if (id === 'roma' && !p.owner) { cls += ' roma'; val = p.troops; }
     else if (!p.owner) { cls += ' nat'; val = p.native.present ?? '?'; }
-    else { val = p.troops; if (p.status === 'allied') cls += ' ally'; if (isUnderGarrisoned(s, data, id)) cls += ' low'; }
+    else { val = p.troops; if (p.status === 'allied') cls += ' ally'; if (G.displayUnderGarrisoned(s, data, id)) cls += ' low'; }
     if (selected === id) cls += ' sel'; if (picks.has(id)) cls += ' pick'; if (tg.has(id)) cls += ' tgt';
     const nd = nudge[id];
     const nat = p.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
     const g = gensAt[id];
-    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${p.number ? `<span class="nn">${p.number}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${g ? `<span class="gen" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%"></span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}${id === 'carthage' && s.carthage?.neutral ? ' · Under Roma\'s control' : ''}</span></button>`;
+    const num = G.provNumberLabel(s, id);   // v31.30 (Update 5): the number badge only shows while "Show Prov Numbers" is on (off by default)
+    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${num ? `<span class="nn">${num}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${g ? `<span class="gen" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%"></span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}${id === 'carthage' && s.carthage?.neutral ? ' · Under Roma\'s control' : ''}</span></button>`;
   }).join(''));
 }
 function tokenTap(id) {
@@ -1010,7 +1011,7 @@ function openAttackOrigins(target, origins) {
 }
 function openProvince(id, refresh = false) {
   const s = st(); const p = s.provinces[id]; const def = data.provincesById[id]; const legal = mineNow();
-  const m = G.shownMin(s, data, id); const under = p.status === 'allied' ? p.troops < (m?.min ?? 1) : (p.owner ? isUnderGarrisoned(s, data, id) : false);
+  const m = G.shownMin(s, data, id); const under = G.displayUnderGarrisoned(s, data, id);   // v31.30 (Update 4): one helper — allied below its shown minimum counts too
   const here = G.forProvince(legal, id).filter(d => d.type !== 'END_TURN');
   // v31.24 (Update 4): target-first attack — "Attack here from ..." when at least one of your provinces can attack this one.
   const atkOrigins = G.attackOriginsForTarget(legal, id);
@@ -1020,7 +1021,7 @@ function openProvince(id, refresh = false) {
   const html = `<div class="sh-head"><span class="sw" style="--c:${p.owner ? cvar(p.owner) : id === 'roma' ? 'var(--roma)' : 'var(--native)'};width:16px;height:16px"></span><h2>${esc(def.name)}<small>${id === 'carthage' && s.carthage?.neutral ? "Under Roma's control" : owner ? `${esc(owner)}'s province` : id === 'roma' ? 'Roma · no holder' : 'Unowned · natives'} · number ${p.number ?? '–'} · reward ${esc(p.reward ?? '–')}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body" id="provBody" data-id="${id}">
       <div class="stats"><div class="stat"><small>Troops</small><b>${p.owner || id === 'roma' ? p.troops : '–'}</b></div><div class="stat"><small>Natives</small><b>${p.native.count === null ? (id === 'roma' ? '–' : '?') : `${p.native.present}/${p.native.count}`}</b></div><div class="stat"><small>Min garrison</small><b class="${under ? 'warn' : 'ok'}">${m ? m.min : '–'}${p.owner ? (under ? ' ✗' : ' ✓') : ''}</b></div></div>
-      <div class="chips" style="margin-bottom:4px"><span class="pchip">🧱 ${p.walls?.length ? 'Wall facing ' + p.walls.map(prov).map(esc).join(', ') : 'No wall'}</span><span class="pchip">🛣 ${p.road ? 'Road' : 'No road'}</span><span class="pchip">⚑ ${gens.length ? esc(gens.join(', ')) + ' here' : 'No general'}</span><span class="pchip">${esc(p.status)}</span>${id === 'carthage' && s.carthage?.neutral ? '<span class="pchip">🏛 Under Roma\'s control (16.n)</span>' : ''}</div>
+      <div class="chips" style="margin-bottom:4px"><span class="pchip">🧱 ${p.walls?.length ? 'Wall — all sides (19.k)' : 'No wall'}</span><span class="pchip">🛣 ${p.road ? 'Road' : 'No road'}</span><span class="pchip">⚑ ${gens.length ? esc(gens.join(', ')) + ' here' : 'No general'}</span><span class="pchip">${esc(p.status)}</span>${id === 'carthage' && s.carthage?.neutral ? '<span class="pchip">🏛 Under Roma\'s control (16.n)</span>' : ''}</div>
       <div class="sec">Borders (⚓ by sea)</div>
       <div class="chips" id="provBorders">${nb.map(([x, k]) => { const o = s.provinces[x].owner; const t = reach.has(x); return `<button class="pchip${t ? ' tg' : ''}" data-goprov="${attr(x)}" aria-label="Open ${attr(prov(x))}"><span class="sw" style="--c:${o ? cvar(o) : x === 'roma' ? 'var(--roma)' : 'var(--native)'}"></span>${esc(prov(x))}${k === 'sea' ? ' ⚓' : ''}<small>${o || x === 'roma' ? s.provinces[x].troops : s.provinces[x].native.present ?? '?'}</small></button>`; }).join('')}</div>
       ${reach.size ? `<p class="note" style="margin:6px 2px 0">Gold ring = you can attack, ally with or move there from ${esc(def.name)} now (it glows on the map).</p>` : ''}
@@ -1179,7 +1180,7 @@ function openMenu() {
     <div class="sh-body menu">${sec('Game', game)}
       ${sec('Settings', [['sound', SND.isOn() ? '🔇 Sound off' : '🔊 Sound on', '']])}<div class="note" style="margin:8px 2px 4px">AI and animation speed</div>${speed}
       ${isHost() ? sec('Online', [['room', '🌐 Room and link', `room ${C.NET.code} · send it to the other players`]]) : ''}
-      ${isGuest() ? sec('Online', [['leave', '🚪 Leave the online game', `room ${C.NET.code}`]]) : `${sec('View', [['desktop', '🖥 Use desktop view', ''], ['auto', '↺ Automatic view', 'phone → mobile, computer → desktop']])}${sec('New', [['new', isHost() ? '⟲ End hosting, new game' : '⟲ New game', isHost() ? 'the other players are told; Resume reopens the room' : 'this game stays in Resume']])}`}
+      ${isGuest() ? sec('Online', [['leave', '🚪 Leave the online game', `room ${C.NET.code}`]]) : `${sec('View', [['desktop', '🖥 Use desktop view', ''], ['auto', '↺ Automatic view', 'phone → mobile, computer → desktop'], ['provnum', `${G.showProvNumbersOn() ? '✓ ' : ''}Show Prov Numbers`, 'Game Roll number on each province']])}${sec('New', [['new', isHost() ? '⟲ End hosting, new game' : '⟲ New game', isHost() ? 'the other players are told; Resume reopens the room' : 'this game stays in Resume']])}`}
       <p class="note">${isGuest() ? `Online game, room ${esc(C.NET.code)}: the host keeps the game. Reloading this page puts you back in your seat.` : isHost() ? `This phone hosts room ${esc(C.NET.code)}: the game is saved after every move, with the room, so Resume (or a save) reopens it for the same players.` : 'The game is saved after every move: switching views or reloading keeps it (Resume).'}</p></div>`);
   $$('#sheet [data-speed]').forEach(b => b.onclick = () => { C.speed = Number(b.dataset.speed) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } SND.play('button_click'); $$('#sheet [data-speed]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); });
   $$('#sheet [data-m]').forEach(b => b.onclick = () => {
@@ -1190,6 +1191,7 @@ function openMenu() {
     else if (k === 'decks') openDecks();
     else if (k === 'pause') { C.aiPaused = !C.aiPaused; render(); schedule(); }
     else if (k === 'sound') SND.toggle();
+    else if (k === 'provnum') { G.setShowProvNumbers(!G.showProvNumbersOn()); if (C.S) render(); openMenu(); }   // v31.30 (Update 5): mobile has no map-tools bar, so the toggle lives in Menu → View; same localStorage key as desktop
     else if (k === 'room') roomSheet();
     else if (k === 'new' || k === 'leave') askLeave();   // v30.5 (Q181): the same question as the back button
     else if (k === 'desktop' || k === 'auto') { if (isHost() && !window.confirm('Switch views? The other players are told the host left; the desktop view can resume the online game from its autosave.')) return; autosave(); goView(k); }
@@ -1535,7 +1537,7 @@ function incomingHtml(viewer) {
   const gen = info.defenderGeneral
     ? (info.defenderGeneral.here ? `${info.you ? 'Your' : 'Their'} general ${esc(info.defenderGeneral.name)} is here.` : `${info.you ? 'Your' : 'Their'} general ${esc(info.defenderGeneral.name)} is in ${esc(prov(info.defenderGeneral.at))}.`)
     : 'No general.';
-  const wall = info.wall ? `Wall facing ${esc(prov(info.wallSide))} — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.` : `No Wall — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.`;
+  const wall = info.wall ? `Wall — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.` : `No Wall — ${who} roll${info.you ? '' : 's'} ${info.defenderDice} dice.`;
   const min = info.minGarrison != null ? ` (min ${info.minGarrison})` : '';
   return `<b>${esc(info.attackerName)}</b> attacks <b>${esc(info.targetName)}</b> from ${esc(prov(info.from))} with <b class="n" id="attTroops">${esc(info.troopText)}</b>. <span class="cards" id="attCards">Cards against ${esc(who)}: ${esc(info.cardText)}.</span><br>${who === 'you' ? 'You hold' : `${esc(pn(info.defender))} holds`} <b>${esc(info.targetName)}</b> with <b>${info.defenderTroops} troop${info.defenderTroops === 1 ? '' : 's'}</b>${min}. ${wall} ${gen}`;
 }
@@ -1681,7 +1683,10 @@ function renderBattleCtl() {
   }
   // v31.29 (Update 3): the note only exists when a Horn is actually held — the announcement frame now also appears without one.
   const horn = f.kind === 'responseWindow' && f.window === 'defenceAnnounced' && f.card ? `<p class="note" id="hornNote">Horn of Titus Pullus: bring any number of troops from ONE bordering province of yours (allied ones too); at least 1 stays there. One Horn per battle (18.y).</p>` : '';
-  ask.innerHTML = title + gateNote(g) + horn + rowsHtml(legal, !g.live);
+  // v31.30 (17.aa): the flee cost, up front on the announcement screen, and the destination choice on the picker.
+  const fleeNote = f.kind === 'responseWindow' && f.window === 'defenceAnnounced' && G.fleeBrief(s, data) ? `<p class="note" id="fleeNote">${esc(G.fleeNoteHtml(s, data))}</p>` : '';
+  const fleeDestNote = f.kind === 'chooseProvince' && f.purpose === 'fleeDestination' ? `<p class="note" id="fleeDestNote">${esc(G.fleeDestinationNoteHtml(s, data))}</p>` : '';
+  ask.innerHTML = title + gateNote(g) + horn + fleeNote + fleeDestNote + rowsHtml(legal, !g.live);
   wireRows(ask, legal);
   ctl.innerHTML = `<span class="waitnote">Choose above · ▾ to look at the map</span>`;
 }
@@ -1780,6 +1785,17 @@ async function playEvents(events, before = null) {
     }
   }
   await maybeAiTurnSummary(events);
+  maybeWithheldCardsPopup(events);
+}
+/** v31.30: the desktop's withheld-cards popup, as a sheet. When the Game deck has gone through once, the withheld cards
+ *  join the draw pile (core.js drawTop). Fires on every screen that plays the reshuffle, exactly once per game, and never
+ *  blocks: non-sticky with autoMs spd(9000) like the v31.28 online AI summary, never awaited, so the host's apply loop
+ *  and a guest's drain run on while it is up. */
+function maybeWithheldCardsPopup(events) {
+  const e = events?.find(x => x.type === 'withheldCardsReleased');
+  if (!e) return;
+  const parts = Object.entries(e.pub.released ?? {}).map(([def, n]) => `${n} ${data.cardDefsById[def]?.name ?? def}`).join(' and ');
+  openPop('withheld', `<div class="sh-head"><h2>The withheld cards join the deck!</h2></div><div class="sh-body"><p>The Game deck has gone through once, so the cards held back at the start are shuffled in: <b>${esc(parts)}</b> — from now on the full deck is in play.</p><p class="note">Closes on its own — tap OK, or outside, to dismiss it now.</p></div><div class="sh-foot"><button class="btn gold wide" data-popok id="withheldOk">OK</button></div>`, { sticky: false, autoMs: spd(9000) });
 }
 /** v31.7: the desktop's AI turn summary. Offline only, so an online guest is not held up and the host does not stall the room.
  *  v31.28: online too, but never blocking: the same sheet, non-sticky, so it closes itself after spd(9000) (openPop's

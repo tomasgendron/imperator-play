@@ -7,7 +7,7 @@ import { applyAction } from './apply.js';
 import { sideLabel } from './setup.js';
 import { topFrame } from './core.js';
 import * as S from './selectors.js';
-import { attackTargets, summonGeneralTarget } from './battle.js';
+import { attackTargets, summonGeneralTarget, fleeOptions } from './battle.js';
 import { generalMoveTargets, sellableCards } from './turn.js';
 import { TURN_PLAYS, heldLongEnough, revoltTargets, bribeTargets, bribeOwnTargets, maxBribeReinforce, assassinTargets, assassinKills, strikeTroops, sneakAttacks } from './cards.js';
 
@@ -78,7 +78,7 @@ export function legalActions(state, data) {
         add({ type: 'RESOURCE_BUILD', mode: 'save' }, `Save the ${f.piece} card for later`);
         for (const id of S.provincesOf(state, who)) {
           if (f.piece === 'road') add({ type: 'RESOURCE_BUILD', mode: 'build', province: id }, `Build the Road in ${nm(data, id)}`);
-          else for (const n of S.neighbours(data, id)) add({ type: 'RESOURCE_BUILD', mode: 'build', province: id, facing: n }, `Build the Wall in ${nm(data, id)} facing ${nm(data, n)}`);
+          else if (!state.provinces[id].walls.length) add({ type: 'RESOURCE_BUILD', mode: 'build', province: id }, `Build the Wall in ${nm(data, id)} (defends from all sides, 19.k)`);
         }
         break;
       }
@@ -86,7 +86,7 @@ export function legalActions(state, data) {
         // v31.27 (18.v): after a rival bribe, move troops into the new ally from ONE own province — 0 is allowed (decline),
         // up to the move limit, no route needed. The slider (desktop optionsHtml / mobile rowsHtml) carries the count.
         if (f.purpose === 'bribeReinforce') { const max = maxBribeReinforce(state, data, id); add({ type: 'CHOOSE_PROVINCE', province: id, troops: max }, `Reinforce ${nm(data, f.target)} from ${nm(data, id)}: move 0-${max} troops (no route needed; ${stayNote(state, data, id)})`, { field: 'troops', min: 0, max }); continue; }
-        add({ type: 'CHOOSE_PROVINCE', province: id }, `${{ taxTroop: 'Pay the tax troop from', decreeLegion: 'Send the Decree legion from', removedProvince: 'The Emperor restores', removedTroops: 'Move the troops to' }[f.purpose] ?? 'Send the survivors to'} ${nm(data, id)}`);
+        add({ type: 'CHOOSE_PROVINCE', province: id }, `${{ taxTroop: 'Pay the tax troop from', decreeLegion: 'Send the Decree legion from', removedProvince: 'The Emperor restores', removedTroops: 'Move the troops to', fleeDestination: 'Flee to' }[f.purpose] ?? 'Send the survivors to'} ${nm(data, id)}`);
       } break;
       // battles (M2)
       case 'chooseBorrow':
@@ -118,6 +118,13 @@ export function legalActions(state, data) {
           break;
         }
         add({ type: 'PASS' }, 'Pass (no Horn of Titus Pullus)');
+        // v31.30 (17.aa): flee or fight, decided here — after seeing the attacker's battle cards, before committing
+        // any of the defender's own. The cost is shown up front; with one route the flee resolves at once, with
+        // several it opens a destination picker (chooseProvince fleeDestination).
+        if (f.window === 'defenceAnnounced') {
+          const fl = fleeOptions(state, data);
+          if (fl) add({ type: 'FLEE_BATTLE' }, `Flee the battle — lose ${fl.losses} of ${fl.troops} troops, ${fl.survivors} retreat${fl.destinations.length === 1 ? ` to ${nm(data, fl.destinations[0])}` : ' to a bordering province of yours'}${fl.general ? ', the general retreats with them' : ''} (17.aa)`);
+        }
         for (const src of f.sources ?? []) {
           add({ type: 'CALL_REINFORCEMENTS', from: src.province, troops: src.max }, `Horn: reinforce from ${nm(data, src.province)} (${stayNote(state, data, src.province)})`, { field: 'troops', min: 1, max: src.max });
           if (src.general && !S.generalRecalled(state, who)) add({ type: 'CALL_REINFORCEMENTS', from: src.province, troops: src.max, withGeneral: true }, `Horn: reinforce from ${nm(data, src.province)} with the general (${stayNote(state, data, src.province)})`, { field: 'troops', min: 1, max: src.max });
@@ -184,7 +191,7 @@ export function legalActions(state, data) {
       if (gold >= c.gameCardGold && state.provinces[id].troops > c.gameCardTroops) add({ type: 'BUY_GAME_CARD', fromProvince: id }, `Buy a Game Card, paying a troop from ${nm(data, id)} (${c.gameCardGold} Gold)`);
       const road = S.roadCost(state, data, who);
       if (gold >= road && !state.provinces[id].road) add({ type: 'BUILD_ROAD', province: id }, `Build a Road in ${nm(data, id)} (${road} Gold)`);
-      if (gold >= c.wall) for (const n of S.neighbours(data, id)) if (!state.provinces[id].walls.includes(n)) add({ type: 'BUILD_WALL', province: id, facing: n }, `Build a Wall in ${nm(data, id)} facing ${nm(data, n)} (${c.wall} Gold)`);
+      if (gold >= c.wall && !state.provinces[id].walls.length) add({ type: 'BUILD_WALL', province: id }, `Build a Wall in ${nm(data, id)} (${c.wall} Gold, defends from all sides, 19.k)`);
     }
     // cards played by hand in the Actions step (18.h): not an action, one per turn, held since an earlier turn
     if (!state.turn.nonBattleCardPlayed) {
@@ -226,7 +233,7 @@ export function legalActions(state, data) {
       const piece = data.cardDefsById[state.cards[c.uid].def].effect.params.piece;
       for (const id of mine) {
         if (piece === 'road') add({ type: 'USE_SAVED_RESOURCE', cardUid: c.uid, province: id }, `Use the saved Road card in ${nm(data, id)} (free)`);
-        else for (const n of S.neighbours(data, id)) add({ type: 'USE_SAVED_RESOURCE', cardUid: c.uid, province: id, facing: n }, `Use the saved Wall card in ${nm(data, id)} facing ${nm(data, n)} (free)`);
+        else if (!state.provinces[id].walls.length) add({ type: 'USE_SAVED_RESOURCE', cardUid: c.uid, province: id }, `Use the saved Wall card in ${nm(data, id)} (free, defends from all sides, 19.k)`);
       }
     }
     if (act) for (const from of mine) {

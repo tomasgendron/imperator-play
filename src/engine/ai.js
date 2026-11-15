@@ -12,7 +12,7 @@
 import { applyAction } from './apply.js';
 import { topFrame, playerOf, difficultyOf } from './core.js';
 import { legalActions, whoActs } from './legal.js';
-import { defForce, attackTargets, summonGeneralTarget } from './battle.js';
+import { defForce, attackTargets, summonGeneralTarget, wallsActive, battleCardsHeld, attForce } from './battle.js';
 import * as S from './selectors.js';
 import { attackOdds, liveOdds } from './odds.js';
 import { aiConfig, AI_CONFIG } from './aiConfig.js';
@@ -80,7 +80,7 @@ function playerScore(state, data, pid, cache) {
       const targets = nb.filter(n => state.provinces[n].owner !== pid && n !== 'roma' && !(n === 'carthage' && state.carthage.neutral)).length;
       s += targets ? W.road + Math.min(targets, 3) * Math.min(t - 1, 6) * 0.6 : 1;
     }
-    s += (pr.walls?.length ?? 0) * 0.8;
+    s += (pr.walls?.length ? 1 : 0) * 0.8;   // v31.30 (19.k): one Wall per province — it is worth the same however many borders it has
     // threat: the strongest rival army next door that has a Road to attack from (19.b)
     let threat = 0;
     for (const n of nb) {
@@ -175,6 +175,32 @@ export const AI_LEVELS = Object.freeze({ normal: { id: 'normal', name: 'Normal' 
 export const isHumanSeat = (state, id) => !!id && playerOf(state, id)?.controller !== 'ai';
 /** Attacks on human-owned provinces this Easy seat has already started this turn (one battle = one attack, v31.12). */
 export function humanAttacksUsed(state, pid) { return state.turn.aiHumanAttacks?.[pid] ?? 0; }
+/**
+ * v31.30 (17.aa): the defender's chance of HOLDING the province if the battle in progress is fought to the end, as
+ * the AI judges it at the defenceAnnounced frame. The attacker's committed battle cards count (they are spent at
+ * round 1, 18.i — committed but not yet played, so liveOdds' own elephants/moral counts are still 0); the defender's
+ * own battle cards in hand count (it would commit them all); the best Horn reinforcement (`hornBest` troops) counts;
+ * and Catapult / Germanicus Wall-cancelling counts, since startBattle has not run yet to set it. 1 minus the
+ * attacker's win chance from liveOdds.
+ */
+export function defenderHoldOdds(state, data, b, me, hornBest = 0) {
+  const committed = (b.att.cards ?? []).map(uid => state.cards[uid]?.def);
+  const held = battleCardsHeld(state, data, me);
+  let ignore = 0;
+  if (wallsActive(state, data, b)) {
+    ignore += (playerOf(state, b.att.player).items?.catapult ?? 0) * data.rules.catapult.wallRollsIgnoredEach;
+    if (b.att.general && playerOf(state, b.att.player)?.general?.id === 'germanicus' && S.generalPerksActive(state, b.att.player)) ignore += 1000;
+  }
+  const o = liveOdds(state, data, b, {
+    a: attForce(b), d: defForce(state, b) + hornBest,
+    attBonus: committed.filter(d => d === 'elephants').length,
+    attMoralUntil: committed.includes('moral_boost') ? 1 : 0,
+    defBonus: held.elephants?.length ?? 0,
+    defMoralUntil: (held.moral_boost?.length ?? 0) ? 1 : 0,
+    ignore,
+  });
+  return 1 - o.p;
+}
 /**
  * Easy's 50% coin flip (v31.12): a hash of the game seed, the seeded RNG's current state, the event sequence and the decision's salt.
  * Deterministic for a fixed seed + state and consumes no dice, so saves, replays and multiplayer sync hold — and asking the AI for a
@@ -303,6 +329,17 @@ export function chooseAction(state, data, opts = {}) {
     case 'responseWindow':
       if (f.window === 'defenceAnnounced') {
         const b = state.battle;
+        // v31.30 (17.aa): flee when holding is hopeless. The summon check above has already run, so a summoned
+        // general is already in place; the odds below count the best remaining defence (the defender's own battle
+        // cards in hand, the biggest Horn reinforcement) against the attacker's committed cards, so the AI flees
+        // only when even its best defence is hopeless — below fleeBar (0.15), far stricter than the attacker's
+        // 0.30 continue bar, because fleeing concedes the province and the Prestige outright.
+        const flee = byType('FLEE_BATTLE')[0];
+        if (flee) {
+          const horn0 = byType('CALL_REINFORCEMENTS');
+          const hornBest = horn0.length ? Math.max(...horn0.map(x => x.action.troops)) : 0;
+          if (defenderHoldOdds(state, data, b, me, hornBest) < (cfg.attack?.fleeBar ?? 0.15)) return flee.action;
+        }
         const horn = byType('CALL_REINFORCEMENTS');
         if (!horn.length) return byType('PASS')[0]?.action ?? legal[0].action;
         const p0 = liveOdds(state, data, b).p;

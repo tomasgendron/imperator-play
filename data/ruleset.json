@@ -546,7 +546,7 @@
   },
   "bribeOwnerPrestigeLoss": {
    "value": 0,
-   "rule": "18.v, Q89 (open, default): Prestige the old owner loses when Bribe the Ally! takes the province; 1 = treat it as a lost territory (12.f)"
+   "rule": "18.v, Q89 (ruled 2026-11-15, default): Prestige the old owner loses when Bribe the Ally! takes the province; 1 = treat it as a lost territory (12.f)"
   },
   "beeGoldTo": {
    "value": "taxRoute",

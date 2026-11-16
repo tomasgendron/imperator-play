@@ -78,6 +78,9 @@ button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:poin
 .mapinner{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
 .mapinner img.mapimg{display:block;width:100%;height:100%;user-select:none;-webkit-user-drag:none;filter:saturate(.95) brightness(.92)}
 #ships{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+/* v31.31 (Update 1): the links overlay — same lines as the desktop #links, hidden until Menu → View turns it on. */
+#links{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none}
+#links.on{display:block}
 .tok{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
   font-weight:800;font-size:17px;color:#fff;background:var(--c);border:2px solid #f3e7c4;box-shadow:0 2px 6px #000a,inset 0 -3px 0 #0003;text-shadow:0 1px 2px #0008;font-variant-numeric:tabular-nums}
 .tok.nat{--c:var(--native);border-style:dashed}

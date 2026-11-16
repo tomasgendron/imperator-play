@@ -1925,7 +1925,10 @@ function showInfo(id, pin) {
   // v31.30 (Update 4): the desktop panel had the same gap as the map tokens — an under-garrisoned ally showed no warning
   // (the table and the mobile sheet already did). For an ally the warning is the lost reward / bonus troop (19.e), not revolt.
   if (G.displayUnderGarrisoned(s, data, id)) rows.push(['Garrison', '<b class="pk-bad">UNDER-GARRISONED</b> — no bonus troop, no reward.']);
-  const acts = pin && !ab ? G.forProvince(mineNow(), id).filter(d => !['ATTACK', 'ALLY', 'MOVE', 'END_TURN'].includes(d.type)).slice(0, 8) : [];
+  // v31.31 (Updates 4–5): provinceSheetActs already drops the ATTACK rows (the "Attack here from …" flow below is the
+  // only attack path) and the Assassin! shortcut rows (play the card from your hand instead). Desktop additionally
+  // hides the Ally/Move builder rows here, as before — the builder owns those.
+  const acts = pin && !ab ? G.provinceSheetActs(mineNow(), id).filter(d => !['ALLY', 'MOVE'].includes(d.type)).slice(0, 8) : [];
   // v31.24 (Update 4): target-first attack — "Attack here from ..." when at least one of your provinces can attack this one.
   const atkOrigins = pin && !ab ? G.attackOriginsForTarget(mineNow(), id) : [];
   const info = $('#info');

@@ -323,7 +323,7 @@ TURN_PLAYS.bribe_the_ally = {
     const general = old.general?.at === plan.target;
     Object.assign(p, { owner: pid, status: 'allied', troops: stay, startingOf: null, healAtTurn: null });
     emit(ctx, 'allyBribed', { actor: pid, rule: '18.v', pub: { player: pid, province: plan.target, from: plan.owner, gold: plan.cost, switched: stay, lost, fled: flee } });
-    if (data.rules.bribeOwnerPrestigeLoss) awardPrestige(ctx, plan.owner, -data.rules.bribeOwnerPrestigeLoss, 'bribed', '18.v');   // Q89 flag (default 0)
+    if (data.rules.bribeOwnerPrestigeLoss) awardPrestige(ctx, plan.owner, -data.rules.bribeOwnerPrestigeLoss, 'bribed', '18.v');   // Q89 flag (ruled 2026-11-15, default 0)
     if (flee > 0 || general) {
       const cand = S.nearestOwned(state, data, plan.owner, plan.target);
       if (!cand.length) { emit(ctx, 'survivorsLost', { actor: plan.owner, rule: '18.v', pub: { player: plan.owner, from: plan.target, n: flee, reason: 'no other province to flee to' } }); if (general) old.general.at = null; }

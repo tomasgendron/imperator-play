@@ -147,6 +147,14 @@ export function provincesOf(d) {
 /** The main province of a descriptor (where a map click selects it). */
 export const mainProvince = d => d.action.province ?? d.action.fromProvince ?? d.action.target ?? d.action.to ?? d.action.from ?? (d.action.placements?.[0]?.province) ?? null;
 export const forProvince = (legal, id) => legal.filter(d => provincesOf(d).includes(id));
+/** v31.31 (Updates 4–5): the rows a province tap/click may offer. ATTACK entries are gone — the "Attack here from …"
+ *  flow is the only attack path — and so are the Assassin! shortcut rows: play the card from your hand instead.
+ *  Everything else the province offers (Ally, Move, Revolt!, Bribe the Ally!, builds, previews) stays. An Assassin!
+ *  play is a PLAY_CARD whose action carries `kills` — no other descriptor does. */
+export function isAssassinPlay(d) {
+  return d?.type === 'PLAY_CARD' && Array.isArray(d?.action?.kills);
+}
+export const provinceSheetActs = (legal, id) => forProvince(legal, id).filter(d => d.type !== 'END_TURN' && d.type !== 'ATTACK' && !isAssassinPlay(d));
 
 /**
  * The attack / ally / move builder (PLAN 10.8) from the legal list: origins -> destinations -> variants (with or without the general).
@@ -1085,6 +1093,32 @@ export function provNumberLabel(state, id, on = showProvNumbersOn()) {
   if (!on) return null;
   const n = state?.provinces?.[id]?.number;
   return Number.isInteger(n) ? String(n) : null;
+}
+export const SHOW_LINKS_KEY = 'imperator.showLinks';
+/** v31.31 (Update 1): "Show links" map toggle for mobile (Menu → View). Off by default, like the desktop checkbox;
+ *  remembered in this browser. The desktop checkbox itself is still session-only; this key is the mobile toggle's store. */
+export function showLinksOn() {
+  try { return globalThis.localStorage?.getItem(SHOW_LINKS_KEY) === '1'; } catch { return false; }
+}
+export function setShowLinks(on) {
+  try { globalThis.localStorage?.setItem(SHOW_LINKS_KEY, on ? '1' : '0'); } catch { /* private mode */ }
+}
+export const SHOW_MIN_GARRISON_KEY = 'imperator.showMinGarrison';
+/** v31.31 (Update 1): "Min garrison on map" toggle for mobile (Menu → View). On by default, like the desktop checkbox;
+ *  remembered in this browser. */
+export function showMinGarrisonOn() {
+  try { const v = globalThis.localStorage?.getItem(SHOW_MIN_GARRISON_KEY); return v === null || v === undefined ? true : v === '1'; } catch { return true; }
+}
+export function setShowMinGarrison(on) {
+  try { globalThis.localStorage?.setItem(SHOW_MIN_GARRISON_KEY, on ? '1' : '0'); } catch { /* private mode */ }
+}
+/** The "min N" label for `id`'s token when the toggle is on, or null. The same number the desktop map shows (shownMin:
+ *  conquered = natives + 1, starting = 1, allied = the reward threshold; Roma-held and unowned show nothing).
+ *  `on` defaults to the saved toggle. */
+export function minGarrisonLabel(state, data, id, on = showMinGarrisonOn()) {
+  if (!on) return null;
+  const m = shownMin(state, data, id);
+  return m?.min ? `min ${m.min}` : null;
 }
 /** True when the full battle screen should be skipped. Natives are not a human. `on` defaults to the saved toggle. */
 export function skipBattleUi(state, attacker, defender, on = hideAiBattlesOn()) {

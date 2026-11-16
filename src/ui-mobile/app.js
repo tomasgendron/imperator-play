@@ -684,6 +684,7 @@ function renderTokens(s, legal) {
   const sp = data.map.map.tokenSpace; const picks = pickSet(s, legal); const gensAt = {}; const tg = reachFrom(selected, legal);
   for (const pl of s.players) if (pl.general?.at && !pl.out) gensAt[pl.general.at] = pl.general.id;
   renderShips(s);
+  renderLinks();   // v31.31 (Update 1): the links overlay follows its own toggle, like the desktop #links
   setHTML($('#tokens'), data.provinces.map(def => {
     const id = def.id, p = s.provinces[id]; let cls = 'tok', val;
     if (id === 'roma' && !p.owner) { cls += ' roma'; val = p.troops; }
@@ -694,7 +695,8 @@ function renderTokens(s, legal) {
     const nat = p.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
     const g = gensAt[id];
     const num = G.provNumberLabel(s, id);   // v31.30 (Update 5): the number badge only shows while "Show Prov Numbers" is on (off by default)
-    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${num ? `<span class="nn">${num}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${g ? `<span class="gen" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%"></span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}${id === 'carthage' && s.carthage?.neutral ? ' · Under Roma\'s control' : ''}</span></button>`;
+    const minLbl = G.minGarrisonLabel(s, id);   // v31.31 (Update 1): the "min N" label, on by default; Menu → View turns it off
+    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${num ? `<span class="nn">${num}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${g ? `<span class="gen" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%"></span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}${id === 'carthage' && s.carthage?.neutral ? ' · Under Roma\'s control' : ''}${minLbl ? ` · ${minLbl}` : ''}</span></button>`;
   }).join(''));
 }
 function tokenTap(id) {
@@ -719,6 +721,21 @@ function renderShips(s) {
   const sp = data.map.map.tokenSpace;
   svg.setAttribute('viewBox', `0 0 ${sp.w} ${sp.h}`);
   svg.innerHTML = shipSegments(s, data).map(g => `<line x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}" stroke="var(--${col(g.player)})" stroke-width="5" stroke-linecap="round"/><circle cx="${g.mx}" cy="${g.my}" r="8" fill="var(--${col(g.player)})" stroke="#fff" stroke-width="1.5"/>`).join('');
+}
+/** v31.31 (Update 1): the links overlay — the same land/sea lines the desktop map draws (solid white land, dashed blue sea),
+ *  in the same token coordinates. Built once per map (the lines depend only on the map, never on the game); the 'on' class
+ *  follows the saved toggle (Menu → View), off by default like the desktop checkbox. */
+let linksBuiltFor = null;
+function renderLinks() {
+  const svg = $('#links'); if (!svg || !data) return;
+  const sp = data.map.map.tokenSpace;
+  svg.setAttribute('viewBox', `0 0 ${sp.w} ${sp.h}`);
+  if (linksBuiltFor !== data.mapId) {
+    let links = ''; const seen = new Set();
+    for (const p of data.provinces) for (const kind of ['land', 'sea']) for (const b of p[kind]) { const k = [p.id, b].sort().join('|') + kind; if (seen.has(k)) continue; seen.add(k); const A = p.token, B = data.provincesById[b].token; links += `<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${kind === 'sea' ? '#bde3ff' : '#fff'}" stroke-width="1.6" ${kind === 'sea' ? 'stroke-dasharray="5 4"' : ''} opacity=".85"/>`; }
+    svg.innerHTML = links; linksBuiltFor = data.mapId;
+  }
+  svg.classList.toggle('on', G.showLinksOn());
 }
 /** v30.3: the provinces this seat may attack, ally with or move to from `id` now (they glow while its sheet is open). */
 function reachFrom(id, legal) {
@@ -799,7 +816,7 @@ function barModel(s, legal) {
   else if (f && legal.length) gold = { k: 'answer', ic: '❗', t: 'Answer', on: true, due: true, go: () => openAsk() };
   else gold = { k: 'end', ic: '✓', t: 'End turn', on: free && c.end.length > 0, go: () => act(c.end[0]) };
   return [mv('ATTACK'), mv('ALLY'), mv('MOVE'),
-    { k: 'buy', ic: '🛒', t: 'Buy', on: free && c.buy.length > 0, go: () => openList('Buy', c.buy, '1 troop is 2 Gold, 2 troops are 5 Gold, 3 troops are 10 Gold. Each pack is 1 action and goes to one province. A Game Card is from the deck. 1 Prestige is 20 Gold (banked, permanent).') },
+    { k: 'buy', ic: '🛒', t: 'Buy', on: free && c.buy.length > 0, go: () => openBuy() },
     { k: 'build', ic: '🏛', t: 'Build', on: free && c.build.length > 0, go: () => openBuildList() },
     { k: 'cards', ic: '🂠', t: 'Cards', on: !!h.owner, badge: h.cards.length, go: () => openCards() },
     { k: 'more', ic: '⋯', t: 'More', on: free && more.length > 0, go: () => openList('More actions', more) },
@@ -945,6 +962,73 @@ function openShipBuy() {
   };
   draw();
 }
+/** v31.31 (Update 3): the Buy sheet asks WHAT first, then WHERE — like desktop (openBuy/renderBuy in src/ui/game/app.js).
+ *  It walks G.buySteps: step 1 picks the item (prices shown, greyed with a reason), step 2 picks the province, step 3
+ *  confirms and pays. The descriptor paid is the same one the old flat list acted on, so the cost (1 action + the Gold
+ *  shown) is unchanged. A WHAT choice with exactly one legal province skips step 2 — the province is named on the
+ *  confirm step, and Back there returns to step 1. Nothing is spent until Pay is tapped. */
+const BUY_ICON = { troop: '🛒', troops2: '🛒', troops3: '🛒', gameCard: '🂠', prestige: '👑' };
+let buySel = null;
+function openBuy() {
+  buySel = { item: null, province: null, skippedWhere: false };
+  drawBuy();
+}
+function drawBuy() {
+  const s = st(); const legal = mineNow();
+  const m = G.buySteps(s, data, legal);
+  let it = buySel.item ? m.items.find(x => x.item === buySel.item) : null;
+  if (buySel.item && !it) { buySel = { item: null, province: null, skippedWhere: false }; it = null; }
+  const pv = it && buySel.province ? it.provinces.find(x => x.id === buySel.province) : null;
+  const stepNo = !it ? 1 : it.provinces.length === 0 ? 3 : !pv ? 2 : 3;
+  const n = it?.n ?? 1;
+  const what = stepNo === 3 ? it.item === 'prestige' ? '1 Prestige — banked and permanent (22.g)' : it.item === 'gameCard' ? `1 Game Card, paying a troop from ${pv.name}` : `${n} troop${n === 1 ? '' : 's'} in ${pv.name}` : '';
+  const head = stepNo === 1 ? `Buy<small>${m.gold} Gold · ${m.actionsLeft} action${m.actionsLeft === 1 ? '' : 's'} left · step 1 of 3: what?</small>`
+    : stepNo === 2 ? `Buy ${esc(it.name)}<small>step 2 of 3: where does it go?</small>`
+    : `Buy ${esc(what)}<small>step 3 of 3: pay</small>`;
+  let body = '';
+  if (stepNo === 1) {
+    body = `<div class="alist">${m.items.map(x => `<button class="arow" data-item="${x.item}"${x.enabled ? '' : ' disabled'}><span class="ic">${BUY_ICON[x.item] ?? '🛒'}</span><span class="t"><b>${esc(x.name)}</b><small>${esc(x.costText)}${x.reason ? ' · ' + esc(x.reason) : ''}</small></span><span class="go">›</span></button>`).join('')}</div>
+    <p class="note">Each costs an action unless it says free. A Game Card comes from the deck; 1 Prestige is banked and permanent (22.g).</p>`;
+  } else if (stepNo === 2) {
+    const q = it.item === 'gameCard' ? 'Which province pays the troop? At least 1 must stay there (17.s, 17.f).' : `Which province gets ${n === 1 ? 'the new troop' : 'all ' + n + ' troops'}?`;
+    body = `<p class="note">${q}</p><div class="alist">${it.provinces.map(x => `<button class="arow" data-prov="${x.id}"${x.enabled ? '' : ' disabled'}><span class="t"><b>${esc(x.name)}</b><small>${x.troops} troop${x.troops === 1 ? '' : 's'}${x.reason ? ' · ' + esc(x.reason) : it.item === 'gameCard' ? ` → ${x.troops - 1}` : ` → ${x.troops + n}`}</small></span><span class="go">›</span></button>`).join('')}</div>`;
+  } else {
+    body = `<p><b>${esc(what)}</b></p><p class="note">${it.item === 'prestige' ? 'Unlike Gold Prestige (22.f), bought Prestige is never lost when the Gold is spent or confiscated.' : 'No card makes this free, so it is paid in Gold.'} The whole purchase uses 1 of your ${data.rules.actionsPerTurn} actions.</p><p class="note">You have ${m.gold} Gold; ${m.gold - it.cost} left after.</p>`;
+  }
+  const back = stepNo > 1 ? '<button class="btn" id="buyBack">◀ Back</button>' : '';
+  const pay = stepNo === 3 ? `<button class="btn gold wide" id="buyPay">Pay ${it.cost} Gold${it.item === 'gameCard' ? ' + 1 troop' : ''} (1 action) ▶</button>` : '';
+  openSheet('buy', `<div class="sh-head"><h2>${head}</h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body">${body}</div>
+    <div class="sh-foot">${back}<span class="spacer"></span><button class="btn" data-close>Cancel</button>${pay}</div>`);
+  $$('#sheet [data-item]').forEach(b => b.onclick = () => {
+    const pick = m.items.find(x => x.item === b.dataset.item); if (!pick?.enabled) return;
+    SND.play('button_click');
+    buySel = { item: pick.item, province: null, skippedWhere: false };
+    const ok = pick.provinces.filter(x => x.enabled);
+    if (pick.provinces.length && ok.length === 1) { buySel.province = ok[0].id; buySel.skippedWhere = true; }
+    drawBuy();
+  });
+  $$('#sheet [data-prov]').forEach(b => b.onclick = () => {
+    const pick = it.provinces.find(x => x.id === b.dataset.prov); if (!pick?.enabled) return;
+    SND.play('province_select'); flashToken(b.dataset.prov);
+    buySel.province = pick.id; drawBuy();
+  });
+  const bk = $('#buyBack'); if (bk) bk.onclick = () => {
+    SND.play('button_click');
+    if (buySel.province && !buySel.skippedWhere) buySel.province = null;
+    else buySel = { item: null, province: null, skippedWhere: false };
+    drawBuy();
+  };
+  const go = $('#buyPay'); if (go) go.onclick = () => {
+    if (C.busy) return;
+    const m2 = G.buySteps(st(), data, mineNow());
+    const it2 = m2.items.find(x => x.item === buySel.item);
+    const pv2 = it2 && buySel.province ? it2.provinces.find(x => x.id === buySel.province) : null;
+    const d = pv2?.paid ?? it2?.paid;
+    if (!d) { SND.play('error_denied'); toast('That purchase is no longer possible.'); closeSheet(true); return; }
+    SND.play('button_click'); closeSheet(true); act(d);
+  };
+}
 function openList(title, list, note = '') {
   openSheet('list', `<div class="sh-head"><h2>${esc(title)}<small>${list.length} possible now · each costs an action unless it says free</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body">${rowsHtml(list)}${note ? `<p class="note">${esc(note)}</p>` : ''}</div>`);
@@ -1012,7 +1096,7 @@ function openAttackOrigins(target, origins) {
 function openProvince(id, refresh = false) {
   const s = st(); const p = s.provinces[id]; const def = data.provincesById[id]; const legal = mineNow();
   const m = G.shownMin(s, data, id); const under = G.displayUnderGarrisoned(s, data, id);   // v31.30 (Update 4): one helper — allied below its shown minimum counts too
-  const here = G.forProvince(legal, id).filter(d => d.type !== 'END_TURN');
+  const here = G.provinceSheetActs(legal, id);   // v31.31 (Updates 4–5): no ATTACK rows (use "Attack here from …" below) and no Assassin! rows (play the card from your hand); Revolt!/Bribe/Ally/Move stay
   // v31.24 (Update 4): target-first attack — "Attack here from ..." when at least one of your provinces can attack this one.
   const atkOrigins = G.attackOriginsForTarget(legal, id);
   const owner = p.owner ? pn(p.owner) : null;
@@ -1176,11 +1260,19 @@ function openMenu() {
   const game = isGuest() ? [['chat', '💬 Chat', 'messages to the other players'], ['decks', '🂠 The decks', 'every card in each deck · cards left']]
     : [['chat', '💬 Chat', 'messages to the other players'], ['save', '💾 Save…', 'on this phone (3 slots) or as a file'], ['load', '📂 Load…', 'a saved game, the autosave or a file'], ['decks', '🂠 The decks', 'every card in each deck · cards left'], ...(C.S && st().phase !== 'finished' ? [['pause', C.aiPaused ? '▶ Resume the AI' : '⏸ Pause the AI', '']] : [])];
   const speed = `<div class="seg" id="mnSpeed" role="group" aria-label="AI and animation speed">${SPEEDS.map(([v, t]) => `<button data-speed="${v}" class="${String(C.speed) === v ? 'on' : ''}" aria-pressed="${String(C.speed) === v}">${t}</button>`).join('')}</div>`;
+  // v31.31 (Update 1): the View section is for everyone — a guest used to get an 'Online' section instead of 'View' and so had
+  // no Prov Numbers toggle at all, and nobody on mobile had the links / min-garrison toggles. The view-switch rows stay
+  // host/local only: a guest switching views mid-game would drop out of the room.
+  const view = [['provnum', `${G.showProvNumbersOn() ? '✓ ' : ''}Show Prov Numbers`, 'Game Roll number on each province'],
+    ['links', `${G.showLinksOn() ? '✓ ' : ''}Show links`, 'land and sea connections on the map'],
+    ['mingarr', `${G.showMinGarrisonOn() ? '✓ ' : ''}Min garrison on map`, 'minimum garrison under each province']];
+  const viewItems = isGuest() ? view : [['desktop', '🖥 Use desktop view', ''], ['auto', '↺ Automatic view', 'phone → mobile, computer → desktop'], ...view];
   openSheet('menu', `<div class="sh-head"><h2>Menu<small>${esc(C.uiLabel)}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body menu">${sec('Game', game)}
       ${sec('Settings', [['sound', SND.isOn() ? '🔇 Sound off' : '🔊 Sound on', '']])}<div class="note" style="margin:8px 2px 4px">AI and animation speed</div>${speed}
       ${isHost() ? sec('Online', [['room', '🌐 Room and link', `room ${C.NET.code} · send it to the other players`]]) : ''}
-      ${isGuest() ? sec('Online', [['leave', '🚪 Leave the online game', `room ${C.NET.code}`]]) : `${sec('View', [['desktop', '🖥 Use desktop view', ''], ['auto', '↺ Automatic view', 'phone → mobile, computer → desktop'], ['provnum', `${G.showProvNumbersOn() ? '✓ ' : ''}Show Prov Numbers`, 'Game Roll number on each province']])}${sec('New', [['new', isHost() ? '⟲ End hosting, new game' : '⟲ New game', isHost() ? 'the other players are told; Resume reopens the room' : 'this game stays in Resume']])}`}
+      ${sec('View', viewItems)}
+      ${isGuest() ? sec('Online', [['leave', '🚪 Leave the online game', `room ${C.NET.code}`]]) : `${sec('New', [['new', isHost() ? '⟲ End hosting, new game' : '⟲ New game', isHost() ? 'the other players are told; Resume reopens the room' : 'this game stays in Resume']])}`}
       <p class="note">${isGuest() ? `Online game, room ${esc(C.NET.code)}: the host keeps the game. Reloading this page puts you back in your seat.` : isHost() ? `This phone hosts room ${esc(C.NET.code)}: the game is saved after every move, with the room, so Resume (or a save) reopens it for the same players.` : 'The game is saved after every move: switching views or reloading keeps it (Resume).'}</p></div>`);
   $$('#sheet [data-speed]').forEach(b => b.onclick = () => { C.speed = Number(b.dataset.speed) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } SND.play('button_click'); $$('#sheet [data-speed]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); });
   $$('#sheet [data-m]').forEach(b => b.onclick = () => {
@@ -1192,6 +1284,8 @@ function openMenu() {
     else if (k === 'pause') { C.aiPaused = !C.aiPaused; render(); schedule(); }
     else if (k === 'sound') SND.toggle();
     else if (k === 'provnum') { G.setShowProvNumbers(!G.showProvNumbersOn()); if (C.S) render(); openMenu(); }   // v31.30 (Update 5): mobile has no map-tools bar, so the toggle lives in Menu → View; same localStorage key as desktop
+    else if (k === 'links') { G.setShowLinks(!G.showLinksOn()); if (C.S) render(); openMenu(); }   // v31.31 (Update 1): same pattern — re-render applies the overlay class, reopening the menu refreshes the ✓
+    else if (k === 'mingarr') { G.setShowMinGarrison(!G.showMinGarrisonOn()); if (C.S) render(); openMenu(); }   // v31.31 (Update 1): re-render applies the "min N" labels
     else if (k === 'room') roomSheet();
     else if (k === 'new' || k === 'leave') askLeave();   // v30.5 (Q181): the same question as the back button
     else if (k === 'desktop' || k === 'auto') { if (isHost() && !window.confirm('Switch views? The other players are told the host left; the desktop view can resume the online game from its autosave.')) return; autosave(); goView(k); }
@@ -1365,7 +1459,7 @@ function genActs(pid) {
     B('draw', '🂠', draws.length === 1 ? draws[0].label : 'Draw card', draws.length, () => (draws.length === 1 ? act(draws[0]) : openList('Draw a card', draws)), no('No draw is due for this player now.')),
     ...(f && legal.length && !rolls.length && !draws.length ? [B('answer', '❗', `${G.frameTitle(s, data)}…`, true, () => (s.battle ? (battleOff = null, openBattle()) : openAsk()), '')] : []),
     ...['ATTACK', 'ALLY', 'MOVE'].map(t => B(t.toLowerCase(), ICON[t], { ATTACK: 'Attack', ALLY: 'Ally', MOVE: 'Move' }[t], free && c.move.some(d => d.type === t), () => openMoves(t), no(f ? 'Finish the current step first.' : `No ${t.toLowerCase()} is possible right now.`))),
-    B('buy', '🛒', 'Buy', free && c.buy.length, () => openList('Buy', c.buy), no(f ? 'Finish the current step first.' : 'Nothing to buy now.')),
+    B('buy', '🛒', 'Buy', free && c.buy.length, () => openBuy(), no(f ? 'Finish the current step first.' : 'Nothing to buy now.')),
     B('build', '🏛', 'Build', free && c.build.length, () => openBuildList(), no(f ? 'Finish the current step first.' : 'Nothing to build now.')),
     B('card', '🂠', 'Card', g.live && heldCards && pid === C.viewer, () => openCards(), no('No card to play.')),
     B('sell', '💰', 'Sell', free && c.sell.length, () => openList('Sell a card', c.sell), no('No card to sell.')),

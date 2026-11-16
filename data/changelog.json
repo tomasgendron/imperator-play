@@ -1,6 +1,14 @@
 [
  {
   "bullets": [
+   "Fixed: on the phone, the card you just drew flashed away before you could read it — the popup's timer was tied to your animation-speed setting, so on the fastest setting it only lasted a fifth of a second. It now stays up until you tap OK, or 16 seconds, just like on desktop — and only then does the follow-up choice (like \"Build now or save the card\") appear."
+  ],
+  "date": "2026-11-15",
+  "title": "Drawn cards stay visible on the phone",
+  "version": "31.32"
+ },
+ {
+  "bullets": [
    "Every view toggle now works for every player, on phone and desktop: guests in an online game get the same View menu, and the phone now has the links overlay and the minimum-garrison label too.",
    "The phone Buy screen now asks what you are buying first, then where it goes — just like the desktop version — instead of one long list of every combination.",
    "Tapping a province now offers only the \"Attack here from …\" option; the long per-origin attack rows are gone (the minimum-garrison detail still shows once you pick where to attack from).",

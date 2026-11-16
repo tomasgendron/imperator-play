@@ -1588,12 +1588,16 @@ async function assassinSheet(p) {
     <div class="sh-body"><div class="pophero"><img src="${attr(img('card.assassin'))}" alt=""></div><ul class="poplines">${p.strikes.map(x => `<li data-prov="${x.province}"><b>${esc(x.name)}</b>: ${x.killed} killed · ${x.left} left</li>`).join('')}</ul>${p.lines.map(l => `<p class="note">${esc(l)}</p>`).join('')}</div>
     <div class="sh-foot"><button class="btn gold wide" data-popok id="assOk">OK, I understand</button></div>`, { sticky: true });
 }
-/** A card drawn by a human (or any public draw): the card, big, for a moment (the desktop's flip). */
-async function drawSheet(deck, def, who, caption) {
+/** A card drawn by a human (or any public draw): the card, big, for a moment (the desktop's flip).
+ *  v31.32: the reveal waits for OK or the desktop's fixed CARD_VIEW_MS (16 s) — never the old speed-scaled spd(4400).
+ *  At "instant" speed the old timer was 220 ms: the card flashed unreadably and the next sheet (the resourceBuild /
+ *  placeTroops decision for the card just drawn) opened over it at once — Tomas's video, Turn 3, Build the Wall. An
+ *  AI's draw keeps the desktop's shorter spd(3800) look. */
+async function drawSheet(deck, def, who, caption, mine = true) {
   const c = G.cardView(data, def);
   await openPop('draw', `${whoBar(who, caption)}<div class="sh-head"><h2 id="drawName">${esc(c.name)}<small>${esc(G.DECK_TITLES[deck]?.[0] ?? deck)}</small></h2></div>
-    <div class="sh-body"><div class="pophero"><img class="bigcard" src="${attr(img(c.art))}" alt=""></div><p class="note" style="text-align:center">${esc(c.text)}</p></div>
-    <div class="sh-foot"><button class="btn gold wide" data-popok>OK</button></div>`, { sticky: false, autoMs: spd(4400) });
+    <div class="sh-body"><div class="pophero"><img class="bigcard" src="${attr(img(c.art))}" alt=""></div><p class="note" style="text-align:center">${esc(c.text)}</p><p class="note" style="text-align:center">Closes on its own — tap OK, or outside, to dismiss it now.</p></div>
+    <div class="sh-foot"><button class="btn gold wide" data-popok>OK</button></div>`, { sticky: false, autoMs: mine ? CARD_VIEW_MS : spd(3800) });
 }
 /** v27: the "card played" popup, non-blocking: a card at the top that says whose it is and what it did; closes after 16 s or on Close. */
 let cpSeq = 0;
@@ -1856,11 +1860,11 @@ async function playEvents(events, before = null) {
         await battleResult(p && !away && p.player === meNow(s) ? { ...sum, title: p.title, lines: p.lines } : sum, look.length > 0);
         break;
       }
-      case 'displeasedDrawn': await drawSheet('displeased', e.pub.def, e.pub.player, 'draws from Rome Is Displeased'); break;
+      case 'displeasedDrawn': await drawSheet('displeased', e.pub.def, e.pub.player, 'draws from Rome Is Displeased', G.isHuman(s, e.pub.player)); break;
       case 'cardDrawn': {
         if (e.pub.autoPlay) break;   // v31.3: an auto-played Prestige / Garrison card is shown by its cardPlayed popup
         const def = e.pub.def ?? (e.priv && e.pub.player === C.viewer ? e.priv.def : null);
-        if (def && (G.isHuman(s, e.pub.player) || e.pub.deck !== 'game')) await drawSheet(e.pub.deck, def, e.pub.player, `draws a ${e.pub.deck === 'game' ? 'Game' : 'Resource'} card`);
+        if (def && (G.isHuman(s, e.pub.player) || e.pub.deck !== 'game')) await drawSheet(e.pub.deck, def, e.pub.player, `draws a ${e.pub.deck === 'game' ? 'Game' : 'Resource'} card`, G.isHuman(s, e.pub.player));
         else toast(`${pn(e.pub.player)} draws a ${e.pub.deck === 'game' ? 'Game Card (hidden)' : e.pub.deck + ' card'}`);
         break;
       }

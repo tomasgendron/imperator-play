@@ -352,7 +352,7 @@ export function readSave(input, data) {
   let errs;
   try { errs = validateState(state, data); } catch (e) { errs = [e.message]; }
   if (errs.length) throw new Error(`This save does not fit this build's rules data, so it cannot be loaded safely.${made} The file itself is not changed. Details:\n` + errs.slice(0, 5).join('\n'));
-  return { data, seed: o.seed ?? 'loaded', steps: [{ state, events: [], action: null, error: null }] };
+  return { data, seed: o.seed ?? 'loaded', steps: [{ state, events: [], action: null, error: null }], ...(o.meta?.test ? { test: { ...o.meta.test } } : {}) };   // v31.33: a test save reloads as a test game (TEST badge, Test Setup button)
 }
 export const saveFileName = state => `imperator-${state.gameId ?? 'game'}-turn${state.turn?.number ?? 0}.json`;
 

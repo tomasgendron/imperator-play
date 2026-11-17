@@ -1,6 +1,16 @@
 [
  {
   "bullets": [
+   "New: Test Mode. From the start screen, tap Test Mode and the AI plays a game by itself until a situation you pick is reached — like \"highest score reaches 7 Prestige\" — then hands you the seat of your choice (1st, 2nd or 3rd place). The seed is shown, so the same run can be repeated exactly.",
+   "The Test Setup panel lets you change the board before you start — or at any time mid-game from the Test Setup button in the top bar: give any province to you, another player, or make it neutral (with troop counts), set anyone's Prestige and Gold, or give yourself any card (if none is left in the deck it is quietly taken from a player holding it). Impossible values are clamped and a province below its minimum is topped up automatically.",
+   "Test games are clearly marked with a TEST badge and the seed in the top bar, and their saves are kept separate from your real games."
+  ],
+  "date": "2026-11-16",
+  "title": "Test Mode: AI sets up a situation, then you take over",
+  "version": "31.33"
+ },
+ {
+  "bullets": [
    "Fixed: on the phone, the card you just drew flashed away before you could read it — the popup's timer was tied to your animation-speed setting, so on the fastest setting it only lasted a fifth of a second. It now stays up until you tap OK, or 16 seconds, just like on desktop — and only then does the follow-up choice (like \"Build now or save the card\") appear."
   ],
   "date": "2026-11-15",

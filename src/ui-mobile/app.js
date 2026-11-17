@@ -17,6 +17,7 @@ import { createGuest, NAME_KEY, normCode, HOST_AWAY_MS, PEND_RETRY_MS, whyText }
 import { createHost, onlineSave, joinLink } from './host.js';
 import * as Chat from '../net/chat.js';   // v31.27 (Update 2): the in-game player chat (Menu → 💬 Chat)
 import { forgetSeat, parseJoin } from '../net/seats.js';
+import { renderTestSetupPage, renderTweakPanel } from '../ui/game/testSetup.js';   // v31.33 Test Mode (shared renderer with the desktop)
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -159,6 +160,7 @@ async function boot() {
   $('#bMenu').onclick = () => openMenu();
   applyHideAiBattles();
   const ab = $('#bAiBattles'); if (ab) ab.onclick = () => { SND.play('button_click'); setHideAiBattles(!G.hideAiBattlesOn()); };
+  const tb = $('#bTestSetup'); if (tb) tb.onclick = () => openTestPanel();   // v31.33 Test Mode: the in-game tweak panel
   $('#dieChip').onclick = () => openLog();
   $('#importFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadFrom(await f.text(), $('#svErr')); };
   const q = new URLSearchParams(location.search);
@@ -214,6 +216,7 @@ function hostSeats(on) {
   else { seats.forEach((x, i) => { if (x.controller === 'remote') x.controller = localCtl?.[i] && localCtl[i] !== 'remote' ? localCtl[i] : 'human'; }); if (localCtl?.[0] && seats[0]) seats[0].controller = localCtl[0]; localCtl = null; }
 }
 const autosaveText = () => { try { return localStorage.getItem('imperator.autosave'); } catch { return null; } };
+const testAutosaveText = () => { try { return localStorage.getItem('imperator.autosave.test'); } catch { return null; } };   // v31.33: a test autosave never touches the real one
 function renderStart() {
   document.body.dataset.screen = 'setup'; $('#app').hidden = true; const el = $('#start'); el.hidden = false; closeSheet(true);
   if (playWhere !== 'join') setMap(mapWanted());   // v31.2
@@ -228,6 +231,8 @@ function renderStart() {
   const r = checkSetup(data, engineSeats(), startMode); const errs = r.ok ? '' : r.errors.map(e => (e.seat !== null ? `Seat ${e.seat + 1}: ` : '') + e.message).join('\n');
   const auto = autosaveText(); let autoInfo = '';
   try { const o = auto && JSON.parse(auto); if (o?.snapshot) autoInfo = ` (turn ${o.snapshot.turn?.number ?? 0})`; } catch { /* */ }
+  const testAuto = testAutosaveText(); let testAutoInfo = '';   // v31.33: a test autosave is resumed from its own button, never Resume
+  try { const o = testAuto && JSON.parse(testAuto); if (o?.snapshot) testAutoInfo = ` (turn ${o.snapshot.turn?.number ?? 0}, seed ${String(o.seed ?? '').split('#')[0]})`; } catch { /* keep the label */ }
   el.innerHTML = `<div class="hero"><span class="ver" id="mVer">${esc(C.uiLabel.split(' · ')[0])} · mobile</span><h1>IMPERATOR</h1><p>2 or 3 players · win with ${data.rules.winPrestige} Prestige</p></div>
   <div class="form">
     <div class="seg" role="group" aria-label="Where the players are">${[['local', '📱 This phone'], ['host', '🌐 Host'], ['join', '🔗 Join']].map(([k, t]) => `<button data-where="${k}" class="${playWhere === k ? 'on' : ''}" aria-pressed="${playWhere === k}">${t}</button>`).join('')}</div>
@@ -246,7 +251,7 @@ function renderStart() {
     <div class="serr" id="mErr">${esc(errs)}</div>
     ${viewLinks()}
   </div>
-  <div class="sfoot">${playWhere === 'join' ? `<button class="btn gold big${joinBusy ? ' busy' : ''}" id="mJoinGo">Join ▶</button>` : `<button class="btn gold big" id="mStart" ${r.ok && !online && (playWhere !== 'host' || NETH.readiness(seats).ok) ? '' : 'disabled'}>Start game ▶</button>`}<div class="row"><button class="btn wide" id="mHow">How to Win</button><button class="btn wide" id="mWhatsNew">What's New</button><button class="btn wide" id="mResume" ${auto ? '' : 'disabled'}>${onlineSave(auto) ? '🌐 Resume online' : '↺ Resume'}${esc(autoInfo)}</button><button class="btn wide" id="mLoad">📂 Load…</button></div></div>`;
+  <div class="sfoot">${playWhere === 'join' ? `<button class="btn gold big${joinBusy ? ' busy' : ''}" id="mJoinGo">Join ▶</button>` : `<button class="btn gold big" id="mStart" ${r.ok && !online && (playWhere !== 'host' || NETH.readiness(seats).ok) ? '' : 'disabled'}>Start game ▶</button><button class="btn big" id="mTestMode" ${playWhere === 'local' ? '' : 'hidden'} title="Set up a test game: the AI plays all seats until your condition is met, then you take over one seat and tweak the board">🧪 Test Mode</button>`}${testAuto && playWhere !== 'join' ? `<button class="btn wide" id="mResumeTest">🧪 Resume test autosave${esc(testAutoInfo)}</button>` : ''}<div class="row"><button class="btn wide" id="mHow">How to Win</button><button class="btn wide" id="mWhatsNew">What's New</button><button class="btn wide" id="mResume" ${auto ? '' : 'disabled'}>${onlineSave(auto) ? '🌐 Resume online' : '↺ Resume'}${esc(autoInfo)}</button><button class="btn wide" id="mLoad">📂 Load…</button></div></div>`;
   $$('[data-where]', el).forEach(b => b.onclick = () => { if (b.dataset.where === playWhere) return; if (playWhere === 'join') { NETG.leave(); joinBusy = false; joinLobby = null; joinMsg = null; }
     if (playWhere === 'host') { NETH.leave(); hostErr = null; hostSeats(false); }
     playWhere = b.dataset.where; if (playWhere === 'host') { hostSeats(true); hostOpen(); } SND.play('button_click'); renderStart(); });
@@ -267,6 +272,8 @@ function renderStart() {
   const spx = $('#mSpeed'); if (spx) spx.onchange = () => { C.speed = Number(spx.value) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } };
   const so = $('#mSound'); if (so) so.onclick = () => { SND.toggle(); renderStart(); };
   if ($('#mStart')) $('#mStart').onclick = startGame;
+  const tm = $('#mTestMode'); if (tm) tm.onclick = openTestSetup;   // v31.33 Test Mode (local only)
+  const rt = $('#mResumeTest'); if (rt) rt.onclick = () => { const t = testAutosaveText(); if (t) loadFrom(t); };   // v31.33: resume the test autosave
   if ($('#mHow')) $('#mHow').onclick = () => showHowToWin();
   if ($('#mWhatsNew')) $('#mWhatsNew').onclick = () => showChangelog();   // v31.24 (Update 1): player-facing changelog
   if (playWhere === 'join') wireJoin(el);
@@ -400,6 +407,40 @@ function startGame() {
   SND.play('deck_shuffle'); enterGame(true);
   if (host) NETH.push();
 }
+// ------------------------------------------------------------------ v31.33 Test Mode (local only: never an online game; the desktop's testHost, mirrored)
+const testHost = () => ({
+  dataForMap: id => datasets[id] ?? data,
+  mapIds: Object.keys(datasets ?? {}),
+  mapId: data.mapId,
+  img: id => img(id),
+  toast: m => toast(m),
+  sound: id => SND.play(id),
+  onStartTest: session => { setMap(session.data.mapId); C.S = session; closeTestSetup(true); SND.play('deck_shuffle'); enterGame(true); },
+  onCancel: () => closeTestSetup(),
+  getSession: () => C.S,
+  applyTweak: fn => { const r = fn(C.S); if (!r.error) { C.S = r.session; render(); } return r; },
+});
+function openTestSetup() {
+  if (playWhere !== 'local') { toast('Test Mode is for games on this phone'); return; }
+  $('#start').hidden = true; $('#app').hidden = true; $('#testSetup').hidden = false;
+  document.body.dataset.screen = 'test';
+  renderTestSetupPage($('#testSetup'), testHost());
+  SND.play('button_click');
+}
+function closeTestSetup(staying = false) {
+  $('#testSetup').hidden = true; $('#testSetup').innerHTML = '';
+  if (!staying) renderStart();
+}
+/** The in-game tweak panel, as a bottom sheet: the AI waits while it is open and resumes when it closes. */
+function openTestPanel() {
+  if (!C.S?.test) return;
+  C.aiPaused = true; render();   // the AI waits while the panel is open
+  openSheet('testpanel', `<div class="sh-head"><h2>🧪 Test Setup <span class="ts-testbadge">TEST MODE</span></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="sh-body"><p class="ts-panelnote">Game paused on turn ${st().turn.number} · seed ${C.S.seed.split('#')[0]}. Changes apply at once; nothing resets.</p><div id="tsPanel"></div></div>
+    <div class="sh-foot"><button class="btn gold wide" data-close>Apply &amp; resume game</button></div>`);
+  renderTweakPanel($('#tsPanel'), testHost());
+  return new Promise(res => { closeHook = res; }).then(() => { C.aiPaused = false; render(); schedule(); });
+}
 function loadFrom(text, errEl = null, { local = false } = {}) {
   const on = !local && onlineSave(text);
   if (on) { askResume(on); return true; }   // v30.4 (the desktop's M14): a hosted online game: reopen the room, or play it here
@@ -471,11 +512,14 @@ function saveLine(o) {
 function openSaves(mode, armed = null) {
   const saving = mode === 'save'; const live = !!C.S && inGame() && st().phase !== 'finished';
   if (saving && (!C.S || isGuest())) { toast(isGuest() ? 'The host keeps the online game: nothing to save here.' : 'No game to save yet'); return; }
-  const auto = readSaveObj('imperator.autosave');
+  const test = !!C.S?.test;   // v31.33: in a test game the menus show the test saves, never the real ones
+  const autoKey = test ? 'imperator.autosave.test' : 'imperator.autosave';
+  const slotK = n => test ? 'imperator.save.slot' + n + '.test' : slotKey(n);
+  const auto = readSaveObj(autoKey);
   const row = (k, title, o, i) => { const info = saveLine(o); const arm = armed === k;
     const on = saving || !!info; const sub = arm ? (saving ? 'Tap again to overwrite this save' : 'Tap again: the game on screen is replaced') : info ?? 'empty';
-    return `<div class="rowwrap svrow"><button class="arow${arm ? ' on' : ''}" data-sv="${attr(k)}" ${on ? '' : 'disabled'}><span class="ic">${i}</span><span class="t"><b>${esc(title)}</b><small>${esc(sub)}</small></span><span class="go">›</span></button>${!saving && info && k !== 'imperator.autosave' ? `<button class="iconbtn svdel" data-del="${attr(k)}" aria-label="Delete ${attr(title)}">${armed === 'del:' + k ? '✔' : '🗑'}</button>` : ''}</div>`; };
-  const rows = [...(saving ? [] : [row('imperator.autosave', 'Autosave (Resume)', auto, '↺')]), ...SLOTS.map(n => row(slotKey(n), `Slot ${n}${n === 1 ? ' · shared with the desktop view' : ''}`, readSaveObj(slotKey(n)), '💾'))];
+    return `<div class="rowwrap svrow"><button class="arow${arm ? ' on' : ''}" data-sv="${attr(k)}" ${on ? '' : 'disabled'}><span class="ic">${i}</span><span class="t"><b>${esc(title)}</b><small>${esc(sub)}</small></span><span class="go">›</span></button>${!saving && info && k !== autoKey ? `<button class="iconbtn svdel" data-del="${attr(k)}" aria-label="Delete ${attr(title)}">${armed === 'del:' + k ? '✔' : '🗑'}</button>` : ''}</div>`; };
+  const rows = [...(saving ? [] : [row(autoKey, 'Autosave (Resume)', auto, '↺')]), ...SLOTS.map(n => row(slotK(n), `Slot ${n}${n === 1 ? ' · shared with the desktop view' : ''}`, readSaveObj(slotK(n)), '💾'))];
   openSheet('saves', `<div class="sh-head"><h2>${saving ? 'Save the game' : 'Load a game'}<small>${saving ? 'on this phone (this browser) or as a file' : 'from this phone, or a file you saved'}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body" id="savesBox" data-mode="${mode}"><div class="alist">${rows.join('')}
       <button class="arow" id="svFile"><span class="ic">${saving ? '⬇' : '📂'}</span><span class="t"><b>${saving ? 'Export a file (.json)' : 'Import a file…'}</b><small>${saving ? 'keep it, or open it on another device' : 'a save exported from Imperator'}</small></span><span class="go">›</span></button></div>
@@ -486,7 +530,7 @@ function openSaves(mode, armed = null) {
     if (saving) {
       if (o && armed !== k) { SND.play('button_click'); openSaves(mode, k); return; }
       try { localStorage.setItem(k, JSON.stringify(makeSaveNow('slot'))); } catch (e) { SND.play('error_denied'); $('#svErr').textContent = `Could not save on this phone: ${e.message}. Export a file instead.`; return; }
-      SND.play('card_play'); toast(`Saved in ${k === slotKey(1) ? 'slot 1' : 'slot ' + k.slice(-1)}`); openSaves(mode); return;
+      SND.play('card_play'); toast(`Saved in slot ${/slot(\d)/.exec(k)?.[1] ?? '?'}`); openSaves(mode); return;
     }
     if (!o) return;
     if (live && armed !== k) { SND.play('button_click'); openSaves(mode, k); return; }
@@ -553,7 +597,8 @@ function render() {
   document.body.dataset.frame = topFrame(s)?.kind ?? (s.phase === 'turn' ? 'free' : s.phase);
   document.body.dataset.viewer = C.viewer ?? '';
   document.body.dataset.humanTurn = legal.length ? '1' : '';
-  $('#topInfo').textContent = `${s.phase === 'setup' ? 'Setup' : s.phase === 'finished' ? 'Game over' : `Turn ${s.turn.number}`} · ${isHost() ? '🌐 ' + C.NET.code : C.uiLabel.split(' · ')[0]}`;
+  $('#topInfo').textContent = `${s.phase === 'setup' ? 'Setup' : s.phase === 'finished' ? 'Game over' : `Turn ${s.turn.number}`} · ${isHost() ? '🌐 ' + C.NET.code : C.uiLabel.split(' · ')[0]}${C.S.test ? ` · 🧪 TEST · seed ${C.S.seed.split('#')[0]}` : ''}`;   // v31.33: a test game is never confused with a real one
+  const bt = $('#bTestSetup'); if (bt) bt.hidden = !C.S.test;   // v31.33: the tweak panel's button, only in a test game
   $('#dieVal').textContent = lastRoll ? lastRoll.value : '–';
   const t0 = performance.now();
   renderPlayers(s); renderSteps(s, legal); renderTokens(s, legal); renderActs(s, legal); renderLogPeek(s);
@@ -837,6 +882,7 @@ function renderLogPeek(s) {
 // ------------------------------------------------------------------ bottom sheets
 let sheetKind = null, sheetSticky = false;
 function openSheet(kind, html, { half = false, side = false, sticky = false } = {}) {
+  if (sheetKind === 'testpanel' && closeHook) { const h = closeHook; closeHook = null; h(); }   // v31.33: a sheet replacing the test panel resumes the AI
   const sh = $('#sheet'); sheetKind = kind; sheetSticky = sticky;
   sh.className = 'sheet' + (half ? ' half' : '') + (side ? ' side' : ''); sh.dataset.kind = kind;
   sh.innerHTML = '<div class="handle"><i></i></div>' + html;

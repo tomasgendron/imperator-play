@@ -14,6 +14,7 @@ import { createPeerTransport, createBroadcastTransport, loadIceServers } from '.
 import { roomCode, normCode } from '../../net/protocol.js';
 import * as Chat from '../../net/chat.js';   // v31.27 (Update 2): the in-game player chat (replaces the Which Die? panel)
 import { createController } from '../core/controller.js';
+import { renderTestSetupPage, renderTweakPanel } from './testSetup.js';   // v31.33 Test Mode
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -225,6 +226,9 @@ function renderSetup() {
   if (!$('#seed').value) $('#seed').value = 'g' + Math.floor(Math.random() * 1e6);
   let auto = null; try { auto = localStorage.getItem('imperator.autosave'); } catch { /* */ }
   $('#resumeAuto').hidden = !auto;
+  let testAuto = null; try { testAuto = localStorage.getItem('imperator.autosave.test'); } catch { /* */ }   // v31.33: a test autosave never touches the real one
+  const testAutoBtn = $('#resumeTestAuto'); if (testAutoBtn) { testAutoBtn.hidden = !testAuto; if (testAuto) { try { const o = JSON.parse(testAuto); testAutoBtn.textContent = `🧪 Resume test autosave (turn ${o.snapshot?.turn?.number ?? 0}, seed ${String(o.seed ?? '').split('#')[0]})`; } catch { /* keep the label */ } } }
+  const tm = $('#testModeBtn'); if (tm) tm.hidden = playWhere !== 'local';   // v31.33: Test Mode is for games on this computer only
   const on = onlineSave(auto);   // M14: the autosave of an online game this browser hosted
   $('#resumeOnline').hidden = !on || playWhere === 'join';
   if (on) $('#resumeOnline').textContent = `🌐 Resume online game (room ${on.online.code}, turn ${on.snapshot?.turn?.number ?? 0})`;
@@ -374,6 +378,39 @@ function startGame() {
   } catch (e) { $('#setupErrors').textContent = e.message; return; }
   if (C.NET?.role === 'host') { C.NET.me = G.stateOf(C.S).players[seats.findIndex(x => x.controller === 'human')].id; C.NET.room.start(G.stateOf(C.S).players.map(p => p.id)); }
   SND.play('deck_shuffle'); enterGame();
+}
+
+// ------------------------------------------------------------------ v31.33 Test Mode (local only: never an online game)
+const testHost = () => ({
+  dataForMap: id => datasets[id] ?? data,
+  mapIds: Object.keys(datasets ?? {}),
+  mapId: data.mapId,
+  img: id => img(id),
+  toast: m => toast(m),
+  sound: id => SND.play(id),
+  onStartTest: session => { setMap(session.data.mapId); C.S = session; closeTestSetup(true); SND.play('deck_shuffle'); enterGame(); },
+  onCancel: () => closeTestSetup(),
+  getSession: () => C.S,
+  applyTweak: fn => { const r = fn(C.S); if (!r.error) { C.S = r.session; render(); } return r; },
+});
+function openTestSetup() {
+  if (playWhere !== 'local') { toast('Test Mode is for games on this computer'); return; }
+  $('#setup').hidden = true; $('#testSetup').hidden = false;
+  document.body.className = 'screen-test'; document.body.dataset.screen = 'test';
+  renderTestSetupPage($('#testSetup'), testHost());
+  SND.play('button_click');
+}
+function closeTestSetup(staying = false) {
+  $('#testSetup').hidden = true; $('#testSetup').innerHTML = '';
+  if (!staying) { $('#setup').hidden = false; renderSetup(); }
+}
+async function openTestPanel() {
+  if (!C.S?.test) return;
+  C.aiPaused = true; render();   // the AI waits while the panel is open
+  const done = openModal(`<div class="ts-panelwrap"><h2>🧪 Test Setup <span class="ts-testbadge">TEST MODE</span></h2><p class="small">Game paused on turn ${st().turn.number} · seed ${C.S.seed.split('#')[0]}. Changes apply at once; nothing resets.</p><div id="tsPanel"></div><button class="btn gold" data-close>Apply &amp; resume game</button></div>`, { cls: 'testpanel' });
+  renderTweakPanel($('#tsPanel'), testHost());
+  await done;   // resolves when the panel closes (button, backdrop or Escape)
+  C.aiPaused = false; render(); schedule();
 }
 function enterGame() {
   window.__imperatorMarkBooted?.();
@@ -1285,7 +1322,8 @@ function deadEndFlag() {
 }
 function renderTop() {
   const s = st();
-  $('#tbInfo').textContent = s.phase === 'setup' ? `Setup · seed ${C.S.seed.split('#')[0]}` : `Turn ${s.turn.number} · round ${s.turn.round} · seed ${C.S.seed.split('#')[0]}`;
+  $('#tbInfo').textContent = s.phase === 'setup' ? `Setup · seed ${C.S.seed.split('#')[0]}` : `Turn ${s.turn.number} · round ${s.turn.round} · seed ${C.S.seed.split('#')[0]}${C.S.test ? ' · 🧪 TEST' : ''}`;   // v31.33: a test game is never confused with a real one
+  const bt = $('#bTestSetup'); if (bt) bt.hidden = !C.S.test;
 }
 function renderPhase(legal) {
   const s = st(); const f = topFrame(s); const a = s.phase === 'turn' ? s.turn.activePlayerId : whoActs(s);
@@ -2295,12 +2333,12 @@ function download(name, text) { const a = document.createElement('a'); a.href = 
 function saveMenu() {
   if (!C.S) { toast('No game to save yet'); return; }
   openModal(`<div class="ask" style="display:flex;flex-direction:column;gap:8px;min-width:380px"><h2>Save game</h2><button class="btn gold" id="svSlot">Save in this browser</button><button class="btn" id="svFile">Export a JSON file</button><p class="small">The file holds everything, hidden hands included: keep it for yourself, do not share it mid-game. The game also autosaves after every move.${C.NET?.role === 'host' ? ' An online game\'s save also keeps the room and your friends\' seats: load it and choose "Resume online" to reopen the room.' : ''}</p><button class="btn" data-close>Close</button></div>`);
-  $('#svSlot').onclick = () => { try { localStorage.setItem('imperator.save.slot1', JSON.stringify(makeSaveNow('slot'))); toast('Saved in this browser'); SND.play('card_play'); closeModal(); } catch (e) { toast('Could not save: ' + e.message); } };
+  $('#svSlot').onclick = () => { try { localStorage.setItem(C.S.test ? 'imperator.save.slot1.test' : 'imperator.save.slot1', JSON.stringify(makeSaveNow('slot'))); toast('Saved in this browser'); SND.play('card_play'); closeModal(); } catch (e) { toast('Could not save: ' + e.message); } };   // v31.33: a test save never overwrites the real browser save
   $('#svFile').onclick = () => { download(G.saveFileName(st()), JSON.stringify(makeSaveNow('file'))); toast('Save file exported'); closeModal(); };
 }
 function loadMenu() {
   const get = k => { try { const t = localStorage.getItem(k); return t ? JSON.parse(t) : null; } catch { return null; } };
-  const slot = get('imperator.save.slot1'), auto = get('imperator.autosave');
+  const slot = get(C.S?.test ? 'imperator.save.slot1.test' : 'imperator.save.slot1'), auto = get(C.S?.test ? 'imperator.autosave.test' : 'imperator.autosave');   // v31.33: in a test game the menus show the test saves
   const when = o => (o ? `${new Date(o.meta.savedAt).toLocaleString('en-US', { timeZone: 'America/Edmonton', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} MT · turn ${o.snapshot?.turn?.number ?? 0} · ${(o.snapshot?.players ?? []).map(p => p.name).join(', ')}${o.meta?.appVersion ? ' · made by ' + String(o.meta.appVersion).split(' · ')[0] : ''}` : 'none');
   openModal(`<div class="ask" style="display:flex;flex-direction:column;gap:8px;min-width:420px"><h2>Load game</h2>
     <button class="btn gold" id="ldSlot" ${slot ? '' : 'disabled'}>Browser save: ${esc(when(slot))}</button>
@@ -2350,7 +2388,7 @@ function wireStatic() {
   wireChat();   // v31.27 (Update 2): the chat panel (replaces Which Die?) — input, Send, tap-to-send emojis
   $('#speed').onchange = e => { C.speed = Number(e.target.value) || 1; try { localStorage.setItem('imperator.speed', String(C.speed)); } catch { /* */ } };
   applyHideAiBattles();
-  const ab = $('#bAiBattles'); if (ab) ab.onclick = () => { SND.play('button_click'); setHideAiBattles(!G.hideAiBattlesOn()); };
+  const abBtn = $('#bAiBattles'); if (abBtn) abBtn.onclick = () => { SND.play('button_click'); setHideAiBattles(!G.hideAiBattlesOn()); };   // v31.33: was `const ab` — it shadowed the module-level builder `ab`, so pressing Escape threw "Assignment to constant variable" instead of clearing the builder
   $('#bSave').onclick = saveMenu; $('#bLoad').onclick = loadMenu; $('#setupLoad').onclick = loadMenu;
   $('#bNew').onclick = () => { if (!C.S || C.S && st().phase === 'finished' || window.confirm(leaveText())) toSetup(); };   // v30.5 (Q181): the same question as the back button
   $$('#playWhere .segb').forEach(b => b.onclick = () => setPlayWhere(b.dataset.where));
@@ -2377,6 +2415,9 @@ function wireStatic() {
   const ex = $('#bExportLog'); if (ex) ex.onclick = () => exportFullLog();
   $('#resumeOnline').onclick = () => { const o = onlineSave(localStorage.getItem('imperator.autosave')); if (o) resumeOnline(o); };
   $('#resumeAuto').onclick = () => { try { loadFrom(JSON.parse(localStorage.getItem('imperator.autosave'))); } catch (e) { $('#setupErrors').textContent = 'The autosave could not be read: ' + e.message; } };
+  $('#resumeTestAuto').onclick = () => { try { loadFrom(JSON.parse(localStorage.getItem('imperator.autosave.test'))); } catch (e) { $('#setupErrors').textContent = 'The test autosave could not be read: ' + e.message; } };
+  $('#testModeBtn').onclick = openTestSetup;   // v31.33 Test Mode (local only)
+  $('#bTestSetup').onclick = openTestPanel;
   $('#importFile').onchange = async e => { const f = e.target.files[0]; if (!f) return; const text = await f.text(); e.target.value = ''; let o = text; try { o = JSON.parse(text); } catch { /* readSave says why */ } loadFrom(o); };
   $$('.tab').forEach(b => b.onclick = () => { if (tabsHidden) setTabsHidden(false); setTab(b.dataset.tab); });
   $('#tabsToggle').onclick = () => { SND.play('button_click'); setTabsHidden(!tabsHidden); };

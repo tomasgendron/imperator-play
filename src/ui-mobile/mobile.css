@@ -553,3 +553,56 @@ button.pchip{min-height:var(--tap);color:var(--ink)}
   .sv-big{font-size:1.32rem}
   .sv-readout{font-size:.88rem}
 }
+
+/* ------------------------------------------------------------------ v31.33 Test Mode (mobile half)
+ * The shared renderer (src/ui/game/testSetup.js) writes the same markup as on the desktop; the desktop's 5-column
+ * province grid would overflow a phone, so everything here is single-column: name + note on one line, owner select +
+ * stepper below, compact 32px steppers. The setup page is the same parchment card as the desktop's .ts-page. */
+#testSetup{position:fixed;inset:0;z-index:5;display:none;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:var(--sat) var(--sar) var(--sab) var(--sal)}
+body[data-screen="test"] #testSetup{display:block}
+.ts-page{background:rgba(251,246,232,.97);color:#2b2016;border:3px solid var(--gold);border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.5);padding:14px 14px calc(14px + var(--sab));margin:0 auto;max-width:560px;display:flex;flex-direction:column;gap:12px}
+.ts-page h2{font-family:var(--serif);letter-spacing:.08em;color:#5a3d0c;font-size:1.5em;margin:0}
+.ts-page h3{font-family:var(--serif);color:#5a3d0c;font-size:1.15em;margin:0}
+.ts-page h4{color:#5a3d0c;margin:8px 0 4px}
+.ts-page .small,#tsPanel .small{font-size:.85em;color:#6d5c40}
+.ts-page p,#tsPanel p{margin:0;line-height:1.45}
+.ts-head{display:flex;flex-direction:column;gap:6px}
+.ts-step{border-top:2px solid var(--gold);padding-top:10px;display:flex;flex-direction:column;gap:8px}
+.ts-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.ts-row label{display:inline-flex;gap:6px;align-items:center;font-weight:700}
+.ts-page select,.ts-page input,#tsPanel select{font-size:16px;min-height:44px;border-radius:10px;border:1px solid #b8a06a;background:#fffdf6;color:#2b2016;padding:0 8px;max-width:100%}
+.ts-page input[type="number"]{width:76px}
+.ts-page .btn.sm,#tsPanel .btn.sm{min-height:36px;padding:0 10px;font-size:13px}
+.ts-page .btn.big,#tsPanel .btn.big{min-height:50px;font-size:16px;width:100%}
+.ts-runlog{border:1px solid #d8cba6;border-radius:8px;background:#fffdf6;padding:8px 10px;font-size:.92em;line-height:1.5;max-height:150px;overflow:auto}
+.ts-result{border:1.5px solid var(--gold);border-radius:8px;background:#fff8e1;padding:8px 12px;display:flex;flex-direction:column;gap:6px}
+.ts-standrow{padding:2px 0}
+.ts-standrow.me{font-weight:700}
+.ts-youtag{background:var(--gold);border-radius:4px;padding:1px 6px;font-size:.85em}
+.ts-testbadge{background:var(--gold);color:#2b2016;border-radius:4px;padding:1px 8px;font-size:.7em;vertical-align:middle;white-space:nowrap}
+.ts-tweaks{display:flex;flex-direction:column;gap:6px}
+#tsPanel .ts-tweaks{background:rgba(251,246,232,.97);color:#2b2016;border:2px solid var(--gold);border-radius:12px;padding:10px 12px}
+.ts-panelnote{font-size:12.5px;color:var(--ink2);margin:0 0 8px;line-height:1.4}
+.ts-sec{border-top:1px solid #d8cba6;padding-top:6px}
+.ts-provlist{display:flex;flex-direction:column}
+.ts-provrow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:7px 0;border-top:1px solid #d8cba6}
+.ts-provname{font-weight:700}
+.ts-provnote{flex:1;min-width:0;color:#6d5c40;font-size:12.5px}
+.ts-owner{flex:1 1 55%;min-width:140px}
+.ts-stepper{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
+.ts-stepper button{width:32px;height:32px;border:1px solid #b8a06a;border-radius:8px;background:#fff;font-weight:700;font-size:17px;cursor:pointer;color:#2b2016}
+.ts-stepper button:active{background:#fff8e1;border-color:var(--gold)}
+.ts-stepper b{min-width:22px;text-align:center}
+.ts-max{display:none}
+.ts-quick{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.ts-playrow{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;padding:7px 0;border-top:1px solid #d8cba6}
+.ts-playname{flex:1 1 100%;font-weight:700}
+.ts-playrow label{display:inline-flex;gap:6px;align-items:center;font-weight:700}
+.ts-recall.on{background:var(--gold);border-color:#8a6a1f;font-weight:700}
+.ts-give{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.ts-give select{flex:1 1 55%;min-width:160px}
+.ts-hand{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px}
+.ts-chip{background:#fff;border:1px solid #b8a06a;border-radius:999px;padding:2px 4px 2px 10px;font-size:.9em}
+.ts-chip button{border:0;background:none;cursor:pointer;color:#a3262a;font-weight:700;padding:0 4px;font-size:15px}
+.ts-tweaklog{margin:0;padding-left:1.2em;font-size:.92em;line-height:1.5;max-height:140px;overflow:auto}
+.ts-warn{background:#fbe9e5;border:1.5px solid #bc2418;color:#8f1d12;border-radius:8px;padding:8px 12px;font-weight:700}

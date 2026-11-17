@@ -109,6 +109,7 @@ const T = {
   taxTroopSkipped: (e, st) => `${pn(st, e.pub.player)} pays nothing (${e.pub.reason}).`,
   deckEmpty: (e) => `The ${e.pub.deck} deck is empty: nothing is drawn.`,
   gameCreated: (e, st) => `Game created (seed ${e.pub.seed}): ${e.pub.players.map(p => p.name).join(', ')}.`,
+  testTweak: e => `TEST: ${e.pub.text}`,   // v31.33 Test Mode board edit (no rule, no dice)
   diceRolled: (e, st) => `${pn(st, e.actor)} rolled ${e.pub.value} on ${e.pub.die} (${e.pub.purpose}).`,
   turnStarted: (e, st) => `--- Turn ${e.pub.number}, round ${e.pub.round}: ${pn(st, e.pub.player)} ---`,
   stepStarted: (e, st) => `${pn(st, e.pub.player)}: ${e.pub.step} step.`,

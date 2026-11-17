@@ -126,8 +126,8 @@ export function createController(view) {
   // ------------------------------------------------------------------ save
   /** M14: a host's save keeps the room (code, seats, guest tokens, the seed salt), so "Resume online game" can reopen it. */
   const withOnline = o => (c.NET?.role === 'host' && c.NET.me && c.NET.room.started ? { ...o, online: { code: c.NET.code, me: c.NET.me, salt: c.NET.salt, room: c.NET.room.snapshot() } } : o);
-  const makeSaveNow = kind => withOnline(G.makeSave(c.S, { appVersion: c.uiLabel, kind }));
-  function autosave() { if (!c.S || c.NET?.role === 'guest') return; try { localStorage.setItem('imperator.autosave', JSON.stringify(makeSaveNow('autosave'))); } catch (e) { console.warn('autosave failed', e.message); } }
+  const makeSaveNow = kind => withOnline(G.makeSave(c.S, { appVersion: c.uiLabel, kind, ...(c.S.test ? { test: c.S.test } : {}) }));   // v31.33: a test game's saves carry the test flag
+  function autosave() { if (!c.S || c.NET?.role === 'guest') return; try { localStorage.setItem(c.S.test ? 'imperator.autosave.test' : 'imperator.autosave', JSON.stringify(makeSaveNow('autosave'))); } catch (e) { console.warn('autosave failed', e.message); } }   // v31.33: a test autosave never touches the real autosave
 
   return Object.assign(c, { hostHidden, later, sleep, spd, full, st, mineNow, apply, schedule, humanAuto, displeasedDraw, human, withOnline, makeSaveNow, autosave });
 }

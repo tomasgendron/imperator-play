@@ -207,6 +207,7 @@ const T = {
   displeasedDeferred: (e, st, d) => `${pn(st, e.pub.player)} loses all their bonus troops to Roma at the start of their next turn (${d?.cardDefsById?.[e.pub.def]?.name ?? e.pub.def}${e.pub.redirectedBy ? `, sent by ${pn(st, e.pub.redirectedBy)}'s Busy Little Bee!` : ''}, 18.r).`,
   displeasedNoEffect: (e, st) => `${e.pub.def}: no effect on ${pn(st, e.pub.player)} (${e.pub.reason}).`,
   generalRecalled: (e, st, d) => `${pn(st, e.pub.player)}'s general is recalled to Rome${e.pub.from ? ` from ${prov(d, e.pub.from)}` : ''}: no general perks through turn ${e.pub.throughTurn}.`,
+  recallEnded: (e, st) => `${pn(st, e.pub.player)}'s recall is over: the general is free to move again (recalled through turn ${e.pub.throughTurn}, 18.o).`,
   goldConfiscated: (e, st) => `The Emperor confiscates ${G(e.pub.lost)} from ${pn(st, e.pub.player)} (${e.pub.left} left)${e.pub.poverty ? '; poverty costs 1 Prestige' : ''}.`,
   provinceRemoved: (e, st, d) => `The Emperor removes ${pn(st, e.pub.player)} from ${prov(d, e.pub.province)}: it is unconquered again (no Prestige lost)${e.pub.carthageRegainedSpirit ? '; Carthage regains its spirit' : ''}.`,
   troopsStolen: (e, st) => `The Emperor steals ${e.pub.total} bonus troop(s) from ${pn(st, e.pub.player)}: ${e.pub.toRoma} go to Roma.`,

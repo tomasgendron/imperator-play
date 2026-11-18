@@ -61,7 +61,7 @@ const genLetter = gid => (data.generalsById[gid]?.name ?? gid ?? '?')[0];
 
 // ------------------------------------------------------------------ toast / modal helpers
 let toastT;
-function toast(m) { if (SND.since() > 250) SND.play('toast_notice', { vol: 0.5 }); const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), Math.max(1200, spd(2200))); }
+function toast(m, { quiet = false } = {}) { if (!quiet && SND.since() > 250) SND.play('toast_notice', { vol: 0.5 }); const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), Math.max(1200, spd(2200))); }
 let modalDone = null;
 function openModal(html, { autoMs = 0, cls = '' } = {}) {
   const box = $('#modalBox'); box.className = 'modal ' + cls; box.innerHTML = html; $('#ovModal').classList.add('on');
@@ -941,6 +941,27 @@ async function playEvents(events, before = null) {
       case 'provinceConquered': toast(`${pn(e.pub.player)} conquers ${prov(e.pub.province)}!`); break;
       case 'provinceAllied': toast(`${pn(e.pub.player)} allies with ${prov(e.pub.province)}`); break;
       case 'turnStarted': toast(`Turn ${e.pub.number}: ${pn(e.pub.player)}`); $('#arrows').innerHTML = ''; if (!s.battle) clearBattle(); break;
+      case 'recallEnded': {   // v31.34 (Update 3, 18.o): the recall is over — only the recalled player's own screen says so
+        const me = C.NET ? C.NET.me : G.viewerFor(s, C.viewer);   // playEvents runs before render(), so C.viewer is still the previous player in hot-seat
+        if (e.pub.player === me && G.isHuman(s, e.pub.player)) {
+          const pl = s.players.find(p => p.id === e.pub.player);
+          const gen = pl?.general ? data.generalsById[pl.general.id]?.name ?? 'Your general' : 'Your general';
+          let move = false;
+          const p = openModal(`<div class="ask" id="recallOver"><h2>Your recall is over!</h2><p><b>${esc(gen)}</b> is free to move again — the Emperor's recall has ended (18.o).</p><p class="small">Leaving Roma he may go to any owned province, not just a neighbouring one. Move him from the ⚑ General button or by tapping his token on the map.</p><div class="foot"><button class="btn" data-close>Later</button><span class="spacer"></span><button class="btn gold" id="recallMove">Move general</button></div></div>`);
+          const btn = $('#recallMove'); if (btn) btn.onclick = () => { move = true; closeModal(); };
+          await p;
+          if (move) {   // the free move is only offered in the Actions step (legal.js): at turn start it is not legal yet
+            if (mineNow().some(d => d.type === 'MOVE_GENERAL')) { SND.play('button_click'); openGenMove(); }
+            else toast('Your general is free — move him from the ⚑ General button once the Actions step starts.');
+          }
+        }
+        break;
+      }
+      case 'romeTaxPaid': {   // v31.34 (Update 7, 16.j): one ding when another player's Rome Roll pays Gold to you as Roma's holder
+        const msg = G.romaTaxNotice(s, C.NET ? C.NET.me : G.viewerFor(s, C.viewer), e);
+        if (msg) { SND.play('gold_gain'); toast(msg, { quiet: true }); }   // quiet: gold_gain is the one ding, not toast_notice as well
+        break;
+      }
       case 'playerEliminated': toast(`${pn(e.pub.player)} is out of the game`); break;
     }
   }
@@ -949,14 +970,15 @@ async function playEvents(events, before = null) {
 }
 /** v31.30: when the Game deck has gone through once, the withheld cards join the draw pile (core.js drawTop). The popup fires
  *  on every screen that plays the reshuffle (host and guests alike — the event is in the shared log), exactly once per game
- *  (the engine event fires only at the first reshuffle), and never blocks: shown with autoMs spd(9000) like the v31.28
- *  online AI summary and NOT awaited, so the host's apply loop and a guest's drain run on while it is up, and a later
- *  popup may replace it. OK / click outside still dismisses it early. Node tests never call this. */
+ *  (the engine event fires only at the first reshuffle), and never blocks: shown with a FIXED autoMs of 10000 (v31.34:
+ *  the old spd(9000) was 450 ms at instant speed, unreadable — the same bug class as the v31.32 Draw popup) and NOT
+ *  awaited, so the host's apply loop and a guest's drain run on while it is up, and a later popup may replace it.
+ *  OK / click outside still dismisses it early. Node tests never call this. */
 function maybeWithheldCardsPopup(events) {
   const e = events?.find(x => x.type === 'withheldCardsReleased');
   if (!e || !$('#ovModal')) return;
   const parts = Object.entries(e.pub.released ?? {}).map(([def, n]) => `${n} ${data.cardDefsById[def]?.name ?? def}`).join(' and ');
-  openModal(`<div class="ask aiturn" id="withheldCards"><h2>The withheld cards join the deck!</h2><p>The Game deck has gone through once, so the cards held back at the start are shuffled in: <b>${esc(parts)}</b> — from now on the full deck is in play.</p><p class="small">It closes on its own — OK, or click outside, to dismiss it now.</p><div class="foot"><span class="spacer"></span><button class="btn gold" data-close id="withheldOk">OK</button></div></div>`, { cls: 'aiturn', autoMs: spd(9000) });
+  openModal(`<div class="ask aiturn" id="withheldCards"><h2>The withheld cards join the deck!</h2><p>The Game deck has gone through once, so the cards held back at the start are shuffled in: <b>${esc(parts)}</b> — from now on the full deck is in play.</p><p class="small">Closes by itself in 10 s — OK, or click outside, to dismiss it now.</p><div class="foot"><span class="spacer"></span><button class="btn gold" data-close id="withheldOk">OK</button></div></div>`, { cls: 'aiturn', autoMs: 10000 });
 }
 /** v31.7: after an AI turn, a short summary the human dismisses with OK or a click outside. Offline only, so an online host must not
  *  wait here (guests would stall), and a guest must not pause on a stream of updates. Node tests never call this.
@@ -1890,7 +1912,14 @@ function renderMap(legal) {
     if (!p.owner && id !== 'roma' && p.native.present !== null && p.native.count !== null && p.native.present < p.native.count) mk('lbl', p.native.present + '/' + p.native.count, x, y + 5.7, 'natives present / count (depleted)');
   }
   const canMoveGen = legal.some(x => x.type === 'MOVE_GENERAL');   // v31.13: the viewer's own token is clickable when the free move is available
-  for (const pl of s.players) if (pl.general?.at && !pl.out) { const [x, y] = tokenFor(pl.general.at); mk('gen ' + col(pl.id) + (pl.id === C.viewer && canMoveGen ? ' clickable' : ''), genLetter(pl.general.id), x - (LM ? 2.9 : 2.3), y - (LM ? 0 : 3.9), `${data.generalsById[pl.general.id].name} (${pl.name})${pl.id === C.viewer && canMoveGen ? ' — click to move (15.j)' : ''}`, ` data-at="${pl.general.at}" data-gen="${pl.id}"${LM ? ' data-side="l"' : ''}`); }
+  // v31.34 (Bug 2): generals sharing a province (Roma after a recall, or any other stack) fan out — G.generalTokenFan
+  // keeps one general on the exact old spot and spreads a stack in a row, so every letter is visible and clickable
+  const genHere = new Map();
+  for (const pl of s.players) if (pl.general?.at && !pl.out) { const l = genHere.get(pl.general.at) ?? []; l.push(pl); genHere.set(pl.general.at, l); }
+  for (const [at, pls] of genHere) {
+    const [x, y] = tokenFor(at); const fan = G.generalTokenFan(pls.length, LM);
+    pls.forEach((pl, i) => { const o = fan[i]; mk('gen ' + col(pl.id) + (pl.id === C.viewer && canMoveGen ? ' clickable' : ''), genLetter(pl.general.id), x + o.dx, y + o.dy, `${data.generalsById[pl.general.id].name} (${pl.name})${pl.id === C.viewer && canMoveGen ? ' — click to move (15.j)' : ''}`, ` data-at="${at}" data-gen="${pl.id}"${o.side ? ' data-side="l"' : ''}`); });
+  }
   { const [cx, cy] = tokenFor('carthage'); if (!s.provinces.carthage.owner) mk('wall', 'WALLS', cx + (LM ? 4.4 : 0), cy - (LM ? 0 : 5.8), 'Carthage: walls on all sides', LM ? ' data-at="carthage" data-side="r"' : ''); const [rx, ry] = tokenFor('roma'); mk('wall', 'WALLS', rx + (LM ? 4.4 : 0), ry - (LM ? 0 : 6.2), 'Roma: walls on all sides', LM ? ' data-at="roma" data-side="r"' : ''); }
   $('#tokens').innerHTML = h; placeSideMarks(); renderShips(s);
   const r = s.provinces.roma; $('#romainfo').innerHTML = `ROMA: ${r.troops} troops · Gold pile ${s.roma?.goldPile ?? 0} · ${r.owner ? 'held by ' + esc(pn(r.owner)) : 'no holder'}<br><span style="opacity:.85">Walls on all sides · Ingrained Loyalty</span>`;
@@ -2371,7 +2400,8 @@ function showGameOver() {
   const ov = $('#ovOver');
   const won = [...s.log].reverse().find(e => e.type === 'gameWon' && e.pub.player === s.winner);
   const how = won?.pub.goldPrestige ? ` with ${won.pub.prestige} Prestige + ${won.pub.goldPrestige} Gold Prestige (${won.pub.gold} Gold)` : w.prestige >= data.rules.winPrestige ? ` with ${w.prestige} Prestige` : ' as the last player standing';
-  ov.innerHTML = `<h1>IMPERATOR!</h1><div style="font-size:1.6em"><b style="color:var(--${col(w.id)});background:#f3e7c4;padding:0 10px;border-radius:6px" id="winnerName">${esc(w.name)}</b> wins${how} on turn ${s.turn.number}.</div>
+  const vic = w.general ? img('ui.victory_' + w.general.id + '_desktop') : null;   // v31.34 (Update 2): the winner's own victory image, on top; a missing file hides itself rather than showing a broken icon
+  ov.innerHTML = `${vic ? `<img src="${vic}" alt="" style="width:min(640px,92vw,calc(38vh*16/9));border-radius:8px;display:block" onerror="this.style.display='none'">` : ''}<h1>IMPERATOR!</h1><div style="font-size:1.6em"><b style="color:var(--${col(w.id)});background:#f3e7c4;padding:0 10px;border-radius:6px" id="winnerName">${esc(w.name)}</b> wins${how} on turn ${s.turn.number}.</div>
     <table id="finalTable"><tr><th>Player</th><th>Seat</th><th>Prestige</th><th>Provinces</th><th>Troops</th><th>Gold</th></tr>${rows}</table>
     <div class="row"><button class="btn gold big" id="ovNew">New game</button><button class="btn" id="ovLook">Look at the board</button>${C.NET?.role === 'guest' ? '' : '<button class="btn" id="ovExport">Export the save</button>'}</div>`;
   ov.classList.add('on'); document.body.dataset.over = s.winner;

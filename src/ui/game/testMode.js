@@ -33,6 +33,14 @@ export function rankedSeats(state) {
     .sort((a, b) => b.prestige - a.prestige || b.gold - a.gold || order.indexOf(a.id) - order.indexOf(b.id));
 }
 
+/** Every seat ranked the same way, eliminated players included (marked `out`) — for DISPLAY only (v31.34 Bug 3: an eliminated seat was invisible, so "2nd place" was computed among the survivors). The seat pick must always use the live-only rankedSeats. */
+export function rankedSeatsAll(state) {
+  const order = state.turnOrder.length ? state.turnOrder : state.players.map(p => p.id);
+  return state.players
+    .map(p => ({ ...p, provinces: Object.values(state.provinces).filter(pr => pr.owner === p.id).length }))
+    .sort((a, b) => b.prestige - a.prestige || b.gold - a.gold || order.indexOf(a.id) - order.indexOf(b.id));
+}
+
 const conditionMet = (state, data, cond) => {
   const live = state.players.filter(p => !p.out);
   const highest = Math.max(...live.map(p => p.prestige));
@@ -41,6 +49,12 @@ const conditionMet = (state, data, cond) => {
   if (cond.kind === 'roma') return romaHolder(state) !== null && highest >= cond.value;
   if (cond.kind === 'turn') return state.turn.number >= cond.value;
   return false;
+};
+
+/** The live players who meet the condition right now — who the "reached X Prestige" line names. A 'turn' condition has no one. */
+const conditionMetBy = (state, data, cond) => {
+  if (cond.kind === 'turn') return [];
+  return state.players.filter(p => !p.out && p.prestige >= cond.value);
 };
 
 /** True when the chosen seat's turn is starting cleanly (the handover point).
@@ -68,23 +82,29 @@ const logTweak = (state, text, actor = null) => {
  * condition is met (or the turn cap / move cap stops it), then keeps playing
  * until the chosen seat's turn starts cleanly and hands that seat to the human.
  * Synchronous — the UI runs it in slices via `runSpeedRun`.
- * Returns { session, seed, met, metTurn, finished, standings, place, seatId,
- *   cleanHandover, moves, log, error }.
+ * Returns { session, seed, met, metTurn, metBy, condition, finished, standings, allStandings, place, seatId,
+ *   cleanHandover, moves, log, error }. `standings` is live-only (the seat pick); `allStandings` lists
+ *   every seat, eliminated players marked `out`, for display.
  */
 export function speedRunSync(data, { seed, players = 3, difficulty = 'normal', condition = { kind: 'highest', value: 7 }, place = 1, capTurn = 60, maxMoves = 6000, onProgress = null } = {}) {
   const names = TEST_SEAT_NAMES.slice(0, Math.max(2, Math.min(3, players)));
   const seats = names.map(name => ({ name, controller: 'ai', difficulty, general: 'random', startProvince: 'random' }));
   let s = playRollOff(newSession(data, { seed, seats, mode: 'random' }));
   const log = [`Test run started — seed ${seed}, ${names.length} players, ${difficulty} AI.`];
-  let moves = 0, met = false, metTurn = null, metMoves = 0, finished = false, error = null, cleanHandover = false;
+  let moves = 0, met = false, metTurn = null, metBy = [], metMoves = 0, finished = false, error = null, cleanHandover = false;
   while (moves < maxMoves) {
     const st = stateOf(s);
     if (st.phase === 'finished') { finished = true; log.push(`Game finished on turn ${st.turn.number} — ${playerOf(st, st.winner)?.name ?? 'nobody'} won with ${playerOf(st, st.winner)?.prestige ?? 0} Prestige.`); break; }
     if (!met && conditionMet(st, data, condition)) {
       met = true; metTurn = st.turn.number; metMoves = moves;
+      // Name who met it NOW: a score can drop again in the same turn (Vidi hit 7 then fell to 5 on turn 19, seed t990459).
+      const reachers = conditionMetBy(st, data, condition);
+      metBy = reachers.map(p => p.id);
       log.push(`Condition met on turn ${metTurn} — ${describeCondition(data, condition)}.`);
+      if (reachers.length) log.push(`${reachers.map(p => p.name).join(', ')} reached ${condition.value} Prestige on turn ${metTurn}.`);
     }
     if (met) {
+      // The pick is live-only (rankedSeats drops eliminated players): an eliminated seat can never be handed over.
       const seat = rankedSeats(st)[Math.min(place, rankedSeats(st).length) - 1];
       if (seat && handoverReady(st, seat.id)) { cleanHandover = true; break; }
       if (moves - metMoves > 300) { log.push(`Handover point not reached cleanly after 300 more moves — handing over mid-turn.`); break; }
@@ -101,19 +121,22 @@ export function speedRunSync(data, { seed, players = 3, difficulty = 'normal', c
   if (moves >= maxMoves && !finished) { error = `run stopped at the ${maxMoves}-move safety cap`; }
   const st = stateOf(s);
   const standings = rankedSeats(st);
+  const allStandings = rankedSeatsAll(st);
   // A finished game has nothing to hand over: the human would be taking a
   // seat in a game that is already decided. Report the finish instead.
   const seat = !finished ? (standings[Math.min(place, standings.length) - 1] ?? null) : null;
   if (!error && seat) {
+    // Honest place when someone is out: "2nd place of the 2 remaining players", not "2nd place" of three.
+    const placeText = standings.length < st.players.length ? `${ordinal(place)} place of the ${standings.length} remaining players` : `${ordinal(place)} place`;
     const ns = clone(st);
     const pl = playerOf(ns, seat.id);
     pl.controller = 'human';
-    logTweak(ns, `You take over ${seat.name}'s seat (${ordinal(place)} place, ${seat.prestige} Prestige, playing ${genName(data, seat.general?.id)}) — the other seats stay AI.`, seat.id);
+    logTweak(ns, `You take over ${seat.name}'s seat (${placeText}, ${seat.prestige} Prestige, playing ${genName(data, seat.general?.id)}) — the other seats stay AI.`, seat.id);
     validateState(ns, data);
     s = { ...s, steps: [...s.steps, { state: ns, events: ns.log.slice(-1), action: null, error: null }], test: { seed, condition, place, metTurn, startedAtTurn: ns.turn.number } };
-    log.push(`You take over ${ordinal(place)} place — ${seat.name}'s seat, playing ${genName(data, seat.general?.id)}, at the start of turn ${ns.turn.number}.`);
+    log.push(`You take over ${placeText} — ${seat.name}'s seat, playing ${genName(data, seat.general?.id)}, at the start of turn ${ns.turn.number}.`);
   }
-  return { session: s, seed, met, metTurn, finished, standings, place, seatId: seat?.id ?? null, cleanHandover, moves, log, error };
+  return { session: s, seed, met, metTurn, metBy, condition, finished, standings, allStandings, place, seatId: seat?.id ?? null, cleanHandover, moves, log, error };
 }
 
 const ordinal = n => (n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : n + 'th');
@@ -148,8 +171,21 @@ export async function runSpeedRun(data, opts, onProgress) {
 // validates, logs one `testTweak` event and pushes a new step. The session
 // is returned (the input session is never mutated).
 
-/** Pushes a tweaked state as a new step, with the tweak event in the log. */
-const pushTweak = (s, ns, ev) => ({ ...s, steps: [...s.steps, { state: ns, events: [ev], action: null, error: null }] });
+/** Repairs hand/saved cards missing drawnOnTurn (pre-v31.34 test-given cards were a bare {uid}, so heldLongEnough was NaN forever, 18.h). Stamped a turn ago, like a fresh test-given card, so they are usable at once. Returns how many were repaired. */
+const backfillDrawnOnTurn = ns => {
+  let n = 0;
+  for (const pl of ns.players) for (const list of ['hand', 'savedResources']) for (const c of pl[list]) {
+    if (!Number.isFinite(c.drawnOnTurn)) { c.drawnOnTurn = ns.turn.number - 1; n++; }
+  }
+  return n;
+};
+
+/** Pushes a tweaked state as a new step, with the tweak event in the log. Also repairs any hand card missing a draw turn (see backfillDrawnOnTurn) — a tweak is the only mutation path test sessions have, so this is where a broken card from an already-running test game revives. */
+const pushTweak = (s, ns, ev) => {
+  const repaired = backfillDrawnOnTurn(ns);
+  if (repaired) ev.pub.text += ` (also repaired ${repaired} card${repaired === 1 ? '' : 's'} missing a draw turn — now usable)`;
+  return { ...s, steps: [...s.steps, { state: ns, events: [ev], action: null, error: null }] };
+};
 
 /**
  * Flips a province's owner (a live player, or null for neutral) and sets its
@@ -267,6 +303,26 @@ export function tweakRecall(s, { player, recalled }) {
   return { session: pushTweak(s, ns, ev), notes: [text], error: null };
 }
 
+/** Swaps a player's general (v31.34 Update 6; the picker lives in the shared tweak panel, so the Test Setup Page and the in-game panel both get it). Only the identity and perks change: the token stays where it is (general.at untouched) and the recall state rides with the seat, not the general (generalRecalledThroughTurn untouched). Perks apply from the moment of the swap — the engine reads the general's id live (battle.js, selectors.js) — and a swap mid-battle is allowed; the host re-renders the battle panel on every tweak. */
+export function tweakChangeGeneral(s, { player, general }) {
+  const data = s.data, st = stateOf(s);
+  const pl = playerOf(st, player);
+  if (!pl) return { session: s, notes: [], error: `unknown player ${player}` };
+  if (pl.out) return { session: s, notes: [], error: `${pl.name} is eliminated` };
+  if (!pl.general) return { session: s, notes: [], error: `${pl.name} has no general` };
+  const gen = data.generalsById[general];
+  if (!gen) return { session: s, notes: [], error: `unknown general ${general}` };
+  const ns = clone(st);
+  const q = playerOf(ns, player);
+  const was = genName(data, q.general.id);
+  const at = q.general.at;
+  q.general.id = general;
+  const recalled = q.generalRecalledThroughTurn !== null && q.generalRecalledThroughTurn !== undefined;
+  const ev = logTweak(ns, `${q.name}'s general is now ${gen.name} (was ${was})${at ? ` — token stays in ${provName(data, at)}` : ''}${recalled ? `, still recalled through turn ${q.generalRecalledThroughTurn}` : ''}`);
+  validateState(ns, data);
+  return { session: pushTweak(s, ns, ev), notes: [ev.pub.text], error: null };
+}
+
 /** Where every copy of a card def lives right now (for the give-a-card picker). */
 export function cardLocations(s, def) {
   const st = stateOf(s);
@@ -320,7 +376,9 @@ export function tweakGiveCard(s, { player, def }) {
       if (i >= 0) { other[list].splice(i, 1); break; }
     }
   }
-  playerOf(ns, player).hand.push({ uid });
+  playerOf(ns, player).hand.push({ uid, drawnOnTurn: ns.turn.number - 1 });
+  // v31.34 Bug 5: stamped a turn ago, so the card is usable at once (18.h hold-a-turn). A bare {uid} made heldLongEnough NaN forever, so a
+  // test-given non-battle card could never be played by hand — and a test-given Bee never opened the Displeased response window.
   const ev = logTweak(ns, `${defRec.name} given to ${pl.name} (${source})`);
   validateState(ns, data);
   return { session: pushTweak(s, ns, ev), notes: [ev.pub.text], error: null };

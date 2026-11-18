@@ -234,6 +234,18 @@ export function logFor(state, data, limit = 250, viewer = null) {
 }
 
 /** Sounds for one event (PLAN 14 audio names; the page picks a random variant for names like card_draw). */
+/**
+ * v31.34 (Update 7): the toast when another player's Rome Roll pays Gold to the holder of Roma (16.j). Pure, so the
+ * desktop and mobile pages share it. Returns the toast string, or null when there is nothing to ding about: no Gold
+ * in the event (the holder's own roll, nothing: true; the troop variant), the tax went to Roma's Gold pile
+ * (to: 'roma'), or the viewer is not the holder / is the payer themself.
+ */
+export function romaTaxNotice(state, viewerId, ev) {
+  const p = ev?.pub;
+  if (!p || p.gold == null || p.to !== viewerId || p.player === viewerId) return null;
+  return `You earned ${p.gold} Gold from ${nameOf(state, p.player)} because you control Roma!`;
+}
+
 export function soundsFor(e, state = null) {
   switch (e.type) {
     case 'diceRolled': return [e.pub.die === 'd10' ? 'dice_roll_d10' : 'dice_roll_d6'];
@@ -988,11 +1000,27 @@ export function survivorsSplitAt(split, stay) {
     shortTarget: Math.max(0, split.minTarget - stay), shortOrigin: Math.max(0, split.minOrigin - originTotal),
   };
 }
+/**
+ * v31.34 (Update 4): the flee behind a survivors split, if the province fell because the defender fled (17.aa).
+ * The frame carries no history, so this reads the log: the latest battleEnded for the target, and the defenderFled
+ * event of that same battle. Null when the province fell in battle, or the log holds no battle for it.
+ */
+export function survivorsFlee(state, data, f) {
+  const log = state?.log ?? [];
+  let ended = null;
+  for (let i = log.length - 1; i >= 0; i--) { const e = log[i]; if (e.type === 'battleEnded' && e.pub?.target === f.target) { ended = e; break; } }
+  if (!ended || ended.pub.outcome !== 'fled') return null;
+  const fl = [...log].reverse().find(e => e.type === 'defenderFled' && e.pub?.battleId === ended.pub.battleId && e.pub?.province === f.target);
+  if (!fl) return null;
+  return { defender: fl.pub.player, defenderName: nameOf(state, fl.pub.player), targetName: provName(data, f.target), to: fl.pub.to, toName: provName(data, fl.pub.to), troops: fl.pub.troops, lost: fl.pub.lost, survivors: fl.pub.survivors, general: fl.pub.general };
+}
 /** The survivors popup HTML (desktop ask box and mobile sheet share it; each page wires its own controls). The Confirm button
  *  repeats the split in words; the general is a single checkbox when he took part in the attack. */
 export function placeSurvivorsHtml(state, data, f) {
   const sp = survivorsSplit(state, data, f);
   const at = survivorsSplitAt(sp, sp.defaultStay);
+  const fl = survivorsFlee(state, data, f);
+  const fleeLine = fl ? ` ${escHtml(fl.defenderName)} fled ${escHtml(fl.targetName)} rather than fight — you take it without a battle.` : '';
   const pct = v => (v * 100).toFixed(1) + '%';
   const card = (role, name, count, min, status, under) => `<div class="sv-card sv-${role}${under ? ' is-under' : ''}" data-sv-card="${role}">
       <span class="sv-role">${role === 'origin' ? 'You attacked from here' : 'Newly conquered'}</span>
@@ -1010,7 +1038,7 @@ export function placeSurvivorsHtml(state, data, f) {
   return `<div class="sv" data-sv-root data-own="${sp.own}" data-maxback="${sp.maxBack}" data-origintroops="${sp.originTroops}"
       data-mintarget="${sp.minTarget}" data-minorigin="${sp.minOrigin}" data-staymin="${sp.stayMin}" data-staymax="${sp.stayMax}"
       data-general="${f.general ? escHtml(sp.generalName) : ''}">
-    <p class="sv-sub">You conquered <b>${escHtml(sp.targetName)}</b> from <b>${escHtml(sp.originName)}</b>. <b>${sp.own} survivor${sp.own === 1 ? '' : 's'}</b> — decide where they stand.</p>
+    <p class="sv-sub">You conquered <b>${escHtml(sp.targetName)}</b> from <b>${escHtml(sp.originName)}</b>.${fleeLine} <b>${sp.own} survivor${sp.own === 1 ? '' : 's'}</b> — decide where they stand.</p>
     <div class="sv-cards">
       ${card('origin', sp.originName, at.originTotal, sp.minOrigin, statusFor(at.originOk, at.originTotal, sp.minOrigin, sp.originName, at.shortOrigin), !at.originOk)}
       ${card('target', sp.targetName, at.targetTotal, sp.minTarget, statusFor(at.targetOk, at.targetTotal, sp.minTarget, sp.targetName, at.shortTarget), !at.targetOk)}
@@ -1119,6 +1147,20 @@ export function minGarrisonLabel(state, data, id, on = showMinGarrisonOn()) {
   if (!on) return null;
   const m = shownMin(state, data, id);
   return m?.min ? `min ${m.min}` : null;
+}
+/**
+ * v31.34 (Bug 2): stacked general tokens — when several generals share a province (Roma after a recall, or any
+ * other stack), fan their tokens out so every letter stays visible and clickable. One general keeps the exact old
+ * spot (no visual change at all); with n > 1 the tokens spread in a row at the same height. Returns one
+ * { dx, dy, side } per general, in map-% offsets from the province token: off the Large Map the row is centred
+ * on the old above-left spot; on the Large Map it steps left from clear of the Wall badge (the old spot goes
+ * through placeSideMarks, so only a lone general keeps `side: true`).
+ */
+export function generalTokenFan(n, largeMap) {
+  if (n <= 1) return [{ dx: largeMap ? -2.9 : -2.3, dy: largeMap ? 0 : -3.9, side: largeMap }];
+  const step = 2.2;
+  if (largeMap) return Array.from({ length: n }, (_, i) => ({ dx: -5.1 - i * step, dy: 0, side: false }));
+  return Array.from({ length: n }, (_, i) => ({ dx: -2.3 + (i - (n - 1) / 2) * step, dy: -3.9, side: false }));
 }
 /** True when the full battle screen should be skipped. Natives are not a human. `on` defaults to the saved toggle. */
 export function skipBattleUi(state, attacker, defender, on = hideAiBattlesOn()) {

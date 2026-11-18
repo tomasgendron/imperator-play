@@ -31,6 +31,46 @@
    "path": "ui/button_roll.png",
    "kind": "image"
   },
+  "ui.victory_caesar_desktop": {
+   "path": "ui/victory_caesar_desktop.jpg",
+   "kind": "image"
+  },
+  "ui.victory_caesar_mobile": {
+   "path": "ui/victory_caesar_mobile.jpg",
+   "kind": "image"
+  },
+  "ui.victory_scipio_desktop": {
+   "path": "ui/victory_scipio_desktop.jpg",
+   "kind": "image"
+  },
+  "ui.victory_scipio_mobile": {
+   "path": "ui/victory_scipio_mobile.jpg",
+   "kind": "image"
+  },
+  "ui.victory_pompey_desktop": {
+   "path": "ui/victory_pompey_desktop.jpg",
+   "kind": "image"
+  },
+  "ui.victory_pompey_mobile": {
+   "path": "ui/victory_pompey_mobile.jpg",
+   "kind": "image"
+  },
+  "ui.victory_germanicus_desktop": {
+   "path": "ui/victory_germanicus_desktop.jpg",
+   "kind": "image"
+  },
+  "ui.victory_germanicus_mobile": {
+   "path": "ui/victory_germanicus_mobile.jpg",
+   "kind": "image"
+  },
+  "ui.victory_augustus_desktop": {
+   "path": "ui/victory_augustus_desktop.jpg",
+   "kind": "image"
+  },
+  "ui.victory_augustus_mobile": {
+   "path": "ui/victory_augustus_mobile.jpg",
+   "kind": "image"
+  },
   "deck.game": {
    "path": "decks/game.png",
    "kind": "image"

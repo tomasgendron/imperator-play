@@ -664,6 +664,17 @@ export function nextTurn(ctx) {
   const next = order[i];
   state.turn = { number: t.number + 1, round: Math.ceil((t.number + 1) / order.length), activePlayerId: next, step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} };
   emit(ctx, 'turnStarted', { actor: next, rule: '17.a', pub: { number: state.turn.number, round: state.turn.round, player: next } });
+  // v31.34 (Update 3, 18.o): the recall is over on the recalled player's first turn after its through-turn — tell them, once,
+  // so they know the general is free to move again. Clearing here is safe: the recalled label (app.js) and the move lock
+  // (selectors generalRecalled) both read turn.number <= throughTurn, already false, and a later second recall recomputes
+  // via Math.max (displeased.js, null counts as 0). Only when the general is still in Roma: if he already left (e.g. a
+  // Test Mode free), there is nothing to announce and the flag is left for the next recall to recompute.
+  const pl = playerOf(state, next);
+  if (pl?.generalRecalledThroughTurn !== null && pl?.generalRecalledThroughTurn !== undefined && state.turn.number > pl.generalRecalledThroughTurn && pl.general?.at === 'roma') {
+    const through = pl.generalRecalledThroughTurn;
+    pl.generalRecalledThroughTurn = null;
+    emit(ctx, 'recallEnded', { actor: next, rule: '18.o', pub: { player: next, throughTurn: through } });
+  }
 }
 define('END_TURN', {
   turn: true,

@@ -727,7 +727,9 @@ function pickSet(s, legal) {
 }
 function renderTokens(s, legal) {
   const sp = data.map.map.tokenSpace; const picks = pickSet(s, legal); const gensAt = {}; const tg = reachFrom(selected, legal);
-  for (const pl of s.players) if (pl.general?.at && !pl.out) gensAt[pl.general.at] = pl.general.id;
+  // v31.34 (Bug 2): several generals may share a province (e.g. Roma after recalls) — keep every one, in seat order,
+  // so their portraits fan out instead of the last one overwriting the rest.
+  for (const pl of s.players) if (pl.general?.at && !pl.out) (gensAt[pl.general.at] ??= []).push(pl.general.id);
   renderShips(s);
   renderLinks();   // v31.31 (Update 1): the links overlay follows its own toggle, like the desktop #links
   setHTML($('#tokens'), data.provinces.map(def => {
@@ -738,10 +740,14 @@ function renderTokens(s, legal) {
     if (selected === id) cls += ' sel'; if (picks.has(id)) cls += ' pick'; if (tg.has(id)) cls += ' tgt';
     const nd = nudge[id];
     const nat = p.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
-    const g = gensAt[id];
+    const gs = gensAt[id] ?? [];
     const num = G.provNumberLabel(s, id);   // v31.30 (Update 5): the number badge only shows while "Show Prov Numbers" is on (off by default)
     const minLbl = G.minGarrisonLabel(s, id);   // v31.31 (Update 1): the "min N" label, on by default; Menu → View turns it off
-    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${num ? `<span class="nn">${num}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${g ? `<span class="gen" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%"></span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}${id === 'carthage' && s.carthage?.neutral ? ' · Under Roma\'s control' : ''}${minLbl ? ` · ${minLbl}` : ''}</span></button>`;
+    // v31.34 (Bug 2): one portrait per general here; when several share the province they fan out across the top of the
+    // token (20 px apart, each with its own data-gen) so every one stays visible and tappable — a lone general keeps the
+    // old top-right spot exactly.
+    const genHtml = gs.map((g, i) => `<span class="gen" data-gen="${attr(g)}" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%${gs.length > 1 ? `;left:calc(50% - 12px + ${(i - (gs.length - 1) / 2) * 20}px);right:auto;top:-14px` : ''}"></span>`).join('');
+    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${num ? `<span class="nn">${num}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${genHtml}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}${id === 'carthage' && s.carthage?.neutral ? ' · Under Roma\'s control' : ''}${minLbl ? ` · ${minLbl}` : ''}</span></button>`;
   }).join(''));
 }
 function tokenTap(id) {
@@ -750,9 +756,11 @@ function tokenTap(id) {
   $$('#tokens .tok').forEach(t => { t.classList.toggle('sel', t.dataset.id === id); t.classList.toggle('tgt', tg.has(t.dataset.id)); });
 }
 /** v31.13: tapping the general's token on the map moves the general (15.j), like the ⚑ General button. Only the active player's
- *  own token opens the move picker; any other tap explains why, and never offers an illegal move. */
-function genTokenTap(id) {
-  const s = st(); const pl = s.players.find(p => p.general?.at === id);
+ *  own token opens the move picker; any other tap explains why, and never offers an illegal move.
+ *  v31.34 (Bug 2): `genId` picks which general when several share the province (each portrait carries its own data-gen);
+ *  without it the first general there answers, as before. */
+function genTokenTap(id, genId = null) {
+  const s = st(); const pl = s.players.find(p => p.general?.at === id && (!genId || p.general.id === genId)) ?? s.players.find(p => p.general?.at === id);
   if (!pl) return;
   if (pl.id !== C.viewer) { SND.play('error_denied'); toast('That is not your general.'); return; }
   const g = gateFor(pl.id);
@@ -828,11 +836,11 @@ function mapTap(e) {
   if (e.defaultPrevented || e.target.closest('.mapctl, .minimap')) return;
   const tok = e.target.closest('.tok');
   // v31.13: tapping the general's token (the portrait circle on the province) moves the general (15.j), like the ⚑ General button
-  if (!e.detail && tok) { if (e.target.closest('.gen')) { genTokenTap(tok.dataset.id); return; } tokenTap(tok.dataset.id); return; }   // a keyboard or scripted click: the element itself
+  if (!e.detail && tok) { const gen = e.target.closest('.gen'); if (gen) { genTokenTap(tok.dataset.id, gen.dataset.gen); return; } tokenTap(tok.dataset.id); return; }   // a keyboard or scripted click: the element itself
   // the finger's own point (pointerup): a browser may move a touch's click onto the nearest button (Chrome's touch adjustment)
   const p = lastUp && Math.abs(e.timeStamp - lastUp.t) < 1000 ? lastUp : { x: e.clientX, y: e.clientY }; lastUp = null;
   const genEl = document.elementFromPoint(p.x, p.y)?.closest('.gen');
-  if (genEl) { const t = genEl.closest('.tok'); if (t) { genTokenTap(t.dataset.id); return; } }
+  if (genEl) { const t = genEl.closest('.tok'); if (t) { genTokenTap(t.dataset.id, genEl.dataset.gen); return; } }
   const c = tapCandidates(p.x, p.y);
   if (!c.length) return;
   if (c.length > 1 && c[1].d - c[0].d < TAP_TIE) { openWhich(c.filter(x => x.d - c[0].d < TAP_TIE).slice(0, 3).map(x => x.id)); return; }
@@ -1357,7 +1365,8 @@ function showGameOver() {
   const won = [...s.log].reverse().find(e => e.type === 'gameWon' && e.pub.player === s.winner);
   const how = won?.pub.goldPrestige ? `${won.pub.prestige} Prestige + ${won.pub.goldPrestige} Gold Prestige (${won.pub.gold} Gold)` : `${w.prestige} Prestige`;
   const rows = [...s.players].sort((a, b) => b.prestige - a.prestige).map(p => `<tr><td><span class="sw" style="--c:var(--${col(p.id)})"></span> ${esc(p.name)}</td><td>${p.prestige}${goldPrestige(p.gold, data) ? '+' + goldPrestige(p.gold, data) : ''}</td><td>${ownedBy(s, p.id).length}</td><td>${totalTroops(s, p.id)}</td><td>${p.gold}</td></tr>`).join('');
-  openSheet('over', `<div class="sh-head"><h2>IMPERATOR!<small id="winnerName">${esc(w.name)} wins with ${esc(how)} on turn ${s.turn.number}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Look at the board">✕</button></div>
+  const vic = w.general ? img('ui.victory_' + w.general.id + '_mobile') : null;   // v31.34 (Update 2): the winner's own victory image, on top (portrait art capped so the table stays reachable); a missing file hides itself
+  openSheet('over', `${vic ? `<img src="${vic}" alt="" style="width:100%;max-height:320px;object-fit:cover;object-position:center top;display:block" onerror="this.style.display='none'">` : ''}<div class="sh-head"><h2>IMPERATOR!<small id="winnerName">${esc(w.name)} wins with ${esc(how)} on turn ${s.turn.number}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Look at the board">✕</button></div>
     <div class="sh-body over"><table><tr><th>Player</th><th>⭐</th><th>Prov.</th><th>⚔</th><th>💰</th></tr>${rows}</table></div>
     <div class="sh-foot"><button class="btn gold wide" id="ovNew">New game</button><button class="btn wide" data-close>Look at the board</button></div>`);
   document.body.dataset.over = s.winner; $('#ovNew').onclick = () => toStart();
@@ -1924,6 +1933,26 @@ async function playEvents(events, before = null) {
       case 'revoltRollSkipped': toast(`${pn(e.pub.player)}: no Revolt Roll (fewer than 2 conquered provinces, 17.c)`); break;
       case 'provinceConquered': flashToken(e.pub.province); toast(`${pn(e.pub.player)} conquers ${prov(e.pub.province)}!`); break;
       case 'turnStarted': toast(`Turn ${e.pub.number}: ${pn(e.pub.player)}`); break;
+      case 'romeTaxPaid': {
+        // v31.34 (Update 7): the shared helper decides whether this seat is owed a notice — null for the Roma pile,
+        // the holder's own roll and the troop variant. soundsFor('romeTaxPaid') is [] and toast() plays no sound,
+        // so this one gold_gain is the only ding the holder hears.
+        const msg = G.romaTaxNotice(s, meNow(s), e);
+        if (msg) { SND.play('gold_gain'); toast(msg); }
+        break;
+      }
+      case 'recallEnded': {
+        // v31.34 (Update 3): the recall ran through turn e.pub.throughTurn and the general is still in Roma; the
+        // engine fires this exactly once per recall, at the recalled player's next turn start. Only the recalled
+        // human on this screen sees it — AI seats and other humans (hot-seat or online) are filtered out here.
+        // Sticky, so it waits for an answer; "Move general" reuses the map's general-move flow (genTokenTap).
+        if (e.pub.player !== meNow(s)) break;
+        const pl = G.playerById(s, e.pub.player);
+        const gname = pl?.general ? data.generalsById[pl.general.id]?.name ?? 'Your general' : 'Your general';
+        const p = openPop('recallEnded', `<div class="sh-head"><h2>Your recall is over!</h2></div><div class="sh-body"><p>${esc(gname)} is free to move again — the recall that ran through turn ${esc(e.pub.throughTurn)} has ended.</p><p class="note">Leaving Roma he may go to any owned province (18.o).</p></div><div class="sh-foot"><button class="btn gold wide" id="recallMove">Move general</button><button class="btn wide" data-popok>Later</button></div>`, { sticky: true });
+        $('#recallMove').onclick = () => { SND.play('button_click'); closePop(); genTokenTap('roma', pl?.general?.id ?? null); };
+        await p; break;
+      }
       case 'playerEliminated': toast(`${pn(e.pub.player)} is out of the game`); break;
       default: if (G.isDispleasedResult(e)) await deliver(G.displeasedPopup(events, i, s, data)); break;
     }
@@ -1933,13 +1962,14 @@ async function playEvents(events, before = null) {
 }
 /** v31.30: the desktop's withheld-cards popup, as a sheet. When the Game deck has gone through once, the withheld cards
  *  join the draw pile (core.js drawTop). Fires on every screen that plays the reshuffle, exactly once per game, and never
- *  blocks: non-sticky with autoMs spd(9000) like the v31.28 online AI summary, never awaited, so the host's apply loop
- *  and a guest's drain run on while it is up. */
+ *  blocks: non-sticky, never awaited, so the host's apply loop and a guest's drain run on while it is up.
+ *  v31.34 (Bug 4): the auto-close is a FLAT 10 s, never spd(...) — at "instant" speed the old spd(9000) was 450 ms
+ *  and the sheet flashed unreadably, the same bug class as the v31.32 Draw popup (fixed there with a fixed 16 s). */
 function maybeWithheldCardsPopup(events) {
   const e = events?.find(x => x.type === 'withheldCardsReleased');
   if (!e) return;
   const parts = Object.entries(e.pub.released ?? {}).map(([def, n]) => `${n} ${data.cardDefsById[def]?.name ?? def}`).join(' and ');
-  openPop('withheld', `<div class="sh-head"><h2>The withheld cards join the deck!</h2></div><div class="sh-body"><p>The Game deck has gone through once, so the cards held back at the start are shuffled in: <b>${esc(parts)}</b> — from now on the full deck is in play.</p><p class="note">Closes on its own — tap OK, or outside, to dismiss it now.</p></div><div class="sh-foot"><button class="btn gold wide" data-popok id="withheldOk">OK</button></div>`, { sticky: false, autoMs: spd(9000) });
+  openPop('withheld', `<div class="sh-head"><h2>The withheld cards join the deck!</h2></div><div class="sh-body"><p>The Game deck has gone through once, so the cards held back at the start are shuffled in: <b>${esc(parts)}</b> — from now on the full deck is in play.</p><p class="note">Closes by itself in 10 s — tap OK, or outside, to dismiss it now.</p></div><div class="sh-foot"><button class="btn gold wide" data-popok id="withheldOk">OK</button></div>`, { sticky: false, autoMs: 10000 });
 }
 /** v31.7: the desktop's AI turn summary. Offline only, so an online guest is not held up and the host does not stall the room.
  *  v31.28: online too, but never blocking: the same sheet, non-sticky, so it closes itself after spd(9000) (openPop's

@@ -1,6 +1,21 @@
 [
  {
   "bullets": [
+   "When a player wins, the game-over popup now shows that general's own victory image above the final standings — the desktop image on desktop, the phone image on mobile.",
+   "When a recall ends, a popup on your next turn tells you your general is free to move again, with a button to move him (leaving Roma he may go to any owned province).",
+   "Generals sharing a province no longer hide under each other on the map: their tokens fan out, and each one can still be tapped to move.",
+   "The survivors popup now says when the defender fled rather than fought.",
+   "Test Mode standings now show eliminated players (marked eliminated), name who met the condition, and rank the takeover honestly among the players still in the game. You can also change your General at any time from the Test Setup panel.",
+   "When another player's Rome Roll pays you Gold as the holder of Roma, you hear a ding and see \"You earned 1 Gold from ... because you control Roma!\"",
+   "The withheld-cards popup now stays up for a full 10 seconds instead of flashing past at fast speeds.",
+   "Cards given through Test Setup now work at once: a test-given Busy Little Bee! will offer its redirect, and test-given cards can be played by hand. Cards given before this fix are repaired the next time you use any tweak."
+  ],
+  "date": "2026-11-17",
+  "title": "Victory images, recall popup, and Test Mode fixes",
+  "version": "31.34"
+ },
+ {
+  "bullets": [
    "New: Test Mode. From the start screen, tap Test Mode and the AI plays a game by itself until a situation you pick is reached — like \"highest score reaches 7 Prestige\" — then hands you the seat of your choice (1st, 2nd or 3rd place). The seed is shown, so the same run can be repeated exactly.",
    "The Test Setup panel lets you change the board before you start — or at any time mid-game from the Test Setup button in the top bar: give any province to you, another player, or make it neutral (with troop counts), set anyone's Prestige and Gold, or give yourself any card (if none is left in the deck it is quietly taken from a player holding it). Impossible values are clamped and a province below its minimum is topped up automatically.",
    "Test games are clearly marked with a TEST badge and the seed in the top bar, and their saves are kept separate from your real games."

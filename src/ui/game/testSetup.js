@@ -7,7 +7,7 @@
 // The renderer owns no game state of its own on the setup page: the speed-run
 // result and the tweaked session live in a closure here; in-game it works on
 // the live session through the host. Every tweak applies at once and is logged.
-import { runSpeedRun, rankedSeats, tweakFlipProvince, tweakPlayerStat, tweakRecall, tweakGiveCard, tweakRemoveCard, giveableCards, TEST_CONDITIONS, TEST_LIMITS } from './testMode.js';
+import { runSpeedRun, rankedSeats, rankedSeatsAll, tweakFlipProvince, tweakPlayerStat, tweakRecall, tweakChangeGeneral, tweakGiveCard, tweakRemoveCard, giveableCards, TEST_CONDITIONS, TEST_LIMITS } from './testMode.js';
 import { stateOf } from './model.js';
 import { playerOf } from '../../engine/index.js';
 
@@ -57,6 +57,7 @@ function tweakPanelHtml(session, data, humanId, notes, battleWarn) {
     const recalled = pl.generalRecalledThroughTurn !== null && pl.generalRecalledThroughTurn !== undefined;
     return `<div class="ts-playrow" data-player="${attr(pl.id)}">
       <span class="ts-playname">${pl.id === humanId ? 'Me — ' : ''}${esc(pl.name)} <span class="small">(${esc(genName(data, pl.general?.id))}${pl.general?.at ? ' · in ' + esc(provName(data, pl.general.at)) : ''})</span></span>
+      <label>General <select class="ts-general" data-player="${attr(pl.id)}" aria-label="General for ${esc(pl.name)}">${data.generals.map(g => `<option value="${attr(g.id)}" ${pl.general?.id === g.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>
       <label>Prestige <span class="ts-stepper"><button type="button" data-stat="prestige" data-step="-1" data-player="${attr(pl.id)}">−</button><b>${pl.prestige}</b><button type="button" data-stat="prestige" data-step="1" data-player="${attr(pl.id)}">+</button></span></label>
       <label>Gold <span class="ts-stepper"><button type="button" data-stat="gold" data-step="-1" data-player="${attr(pl.id)}">−</button><b>${pl.gold}</b><button type="button" data-stat="gold" data-step="1" data-player="${attr(pl.id)}">+</button></span></label>
       <button type="button" class="btn sm ts-recall${recalled ? ' on' : ''}" data-player="${attr(pl.id)}" ${pl.general ? '' : 'disabled'}>${recalled ? `General recalled (thru turn ${pl.generalRecalledThroughTurn}) — tap to free` : 'Recall general'}</button>
@@ -132,6 +133,10 @@ function wireTweakPanel(box, host, getSession, apply, snapshot, notes) {
     const cur = playerOf(stateOf(getSession()), pid);
     const recalled = cur.generalRecalledThroughTurn !== null && cur.generalRecalledThroughTurn !== undefined;
     done(apply(s => tweakRecall(s, { player: pid, recalled: !recalled })));
+  });
+  // General picker (v31.34 Update 6): swapping the general keeps the token and the recall state; perks apply at once.
+  box.querySelectorAll('.ts-general').forEach(sel => sel.onchange = () => {
+    done(apply(s => tweakChangeGeneral(s, { player: sel.dataset.player, general: sel.value })));
   });
   // Give-a-card picker: the source line says where the copy comes from.
   const pick = box.querySelector('#tsCardPick');
@@ -261,9 +266,13 @@ export function renderTestSetupPage(box, host) {
       return;
     }
     const st = stateOf(run.session);
-    const rows = rankedSeats(st).map((p, i) => `<div class="ts-standrow${p.id === run.seatId ? ' me' : ''}"><b>${ordinal(i + 1)}</b> ${esc(p.name)} · ${esc(genName(run.session.data, p.general?.id))} · ${p.prestige} Prestige · ${p.gold} Gold · ${p.provinces} provinces${p.id === run.seatId ? ' — <span class="ts-youtag">YOU TAKE THIS SEAT</span>' : ''}</div>`).join('');
-    res.innerHTML = `<p>${run.met ? `Condition met on turn ${run.metTurn}.` : `Closest match — the condition was not met by turn ${run.capTurn ?? ''}.`} Seed <b>${esc(run.seed)}</b> · the game is still live.</p>${rows}
-      <p class="small">You take over ${ordinal(run.place)} place — ${esc(playerOf(st, run.seatId)?.name ?? '')}'s seat, playing ${esc(genName(run.session.data, playerOf(st, run.seatId)?.general?.id))}, at the start of turn ${st.turn.number}. The other seats stay AI.</p>`;
+    // All seats, eliminated players included and marked — the pick itself stays live-only (rankedSeats in testMode.js).
+    const rows = rankedSeatsAll(st).map((p, i) => `<div class="ts-standrow${p.id === run.seatId ? ' me' : ''}"><b>${ordinal(i + 1)}</b> ${esc(p.name)} · ${esc(genName(run.session.data, p.general?.id))} · ${p.prestige} Prestige · ${p.gold} Gold · ${p.provinces} provinces${p.out ? ' — eliminated' : ''}${p.id === run.seatId ? ' — <span class="ts-youtag">YOU TAKE THIS SEAT</span>' : ''}</div>`).join('');
+    const metByNames = (run.metBy ?? []).map(id => playerOf(st, id)?.name).filter(Boolean);
+    const liveCount = rankedSeats(st).length;
+    const placeText = liveCount < st.players.length ? `${ordinal(run.place)} place of the ${liveCount} remaining players` : `${ordinal(run.place)} place`;
+    res.innerHTML = `<p>${run.met ? `Condition met on turn ${run.metTurn}${metByNames.length ? ` — ${esc(metByNames.join(', '))} reached ${run.condition.value} Prestige` : ''}.` : `Closest match — the condition was not met by turn ${run.capTurn ?? ''}.`} Seed <b>${esc(run.seed)}</b> · the game is still live.</p>${rows}
+      <p class="small">You take over ${placeText} — ${esc(playerOf(st, run.seatId)?.name ?? '')}'s seat, playing ${esc(genName(run.session.data, playerOf(st, run.seatId)?.general?.id))}, at the start of turn ${st.turn.number}. The other seats stay AI.</p>`;
     session = run.session;
     notes = [];
     snapshot = provinceSnapshot(session);

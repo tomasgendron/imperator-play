@@ -525,9 +525,14 @@ table.seats .pickbtn.on{outline:2px solid var(--gold);background:#fff4cf}
 .modal.event{max-width:min(900px,96vw)}
 /* hot-seat curtain + game over */
 .ov.pass .who2{font-size:1.6em}
-.ov.over{background:radial-gradient(rgba(59,49,44,.92),rgba(23,17,14,.96));flex-direction:column;gap:12px;color:#f3e7c4;text-align:center;z-index:130}
-.ov.over h1{font-family:Georgia,serif;letter-spacing:.14em;color:var(--gold);font-size:3em}
-.ov.over table{border-collapse:collapse;background:rgba(0,0,0,.25);border-radius:8px}
+.ov.over{background:radial-gradient(rgba(59,49,44,.92),rgba(23,17,14,.96));flex-direction:column;color:#f3e7c4;text-align:center;z-index:130;padding:0;overflow:hidden}   /* v31.35: the victory image fills the whole popup (see .over-bg); the gradient is only the no-image fallback */
+.ov.over .over-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 28%}   /* v31.35: full-height cover, the general kept in frame like the approved mockup */
+.ov.over .over-scrim{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(12,9,6,.42) 0%,rgba(12,9,6,0) 26%,rgba(12,9,6,0) 46%,rgba(12,9,6,.38) 74%,rgba(12,9,6,.66) 100%)}   /* v31.35: mockup scrim — overlaid text stays readable without hiding the art */
+.ov.over .over-content{position:relative;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:clamp(10px,1.8vh,20px);padding:84px 16px clamp(20px,4.5vh,44px);overflow-y:auto}   /* v31.35: title, winner line, table and buttons stacked toward the bottom, over the image */
+.ov.over h1{font-family:Georgia,serif;letter-spacing:.14em;color:var(--gold);font-size:3em;text-shadow:0 2px 4px rgba(0,0,0,.55),0 6px 28px rgba(0,0,0,.65)}
+.ov.over .over-win{text-shadow:0 1px 3px rgba(0,0,0,.8),0 2px 14px rgba(0,0,0,.7)}
+.ov.over .over-panel{background:rgba(14,10,7,.30);-webkit-backdrop-filter:blur(7px) saturate(1.15);backdrop-filter:blur(7px) saturate(1.15);border:1px solid rgba(227,188,85,.45);border-radius:12px;padding:10px 14px 12px;box-shadow:0 14px 44px rgba(0,0,0,.45)}   /* v31.35: Tomas's pick — 30% panel (the mockup's default was 55%), light blur */
+.ov.over table{border-collapse:collapse;border-radius:8px}
 .ov.over td,.ov.over th{padding:4px 12px;border-bottom:1px solid rgba(255,255,255,.15)}
 .ov.over .row{display:flex;gap:10px;justify-content:center}
 .log li .r{color:var(--muted);font-size:.8em;margin-left:4px}

@@ -1,6 +1,14 @@
 [
  {
   "bullets": [
+   "On desktop, the game-over popup now fills the screen with the winning general's victory image, with the IMPERATOR! title, winner line, final standings and buttons laid over the top of it — the table sits on a dark panel (30% background) so it stays readable while the artwork shows through."
+  ],
+  "date": "2026-11-18",
+  "title": "Victory image fills the desktop game-over screen",
+  "version": "31.35"
+ },
+ {
+  "bullets": [
    "When a player wins, the game-over popup now shows that general's own victory image above the final standings — the desktop image on desktop, the phone image on mobile.",
    "When a recall ends, a popup on your next turn tells you your general is free to move again, with a button to move him (leaving Roma he may go to any owned province).",
    "Generals sharing a province no longer hide under each other on the map: their tokens fan out, and each one can still be tapped to move.",

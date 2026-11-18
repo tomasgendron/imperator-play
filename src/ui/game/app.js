@@ -2400,10 +2400,10 @@ function showGameOver() {
   const ov = $('#ovOver');
   const won = [...s.log].reverse().find(e => e.type === 'gameWon' && e.pub.player === s.winner);
   const how = won?.pub.goldPrestige ? ` with ${won.pub.prestige} Prestige + ${won.pub.goldPrestige} Gold Prestige (${won.pub.gold} Gold)` : w.prestige >= data.rules.winPrestige ? ` with ${w.prestige} Prestige` : ' as the last player standing';
-  const vic = w.general ? img('ui.victory_' + w.general.id + '_desktop') : null;   // v31.34 (Update 2): the winner's own victory image, on top; a missing file hides itself rather than showing a broken icon
-  ov.innerHTML = `${vic ? `<img src="${vic}" alt="" style="width:min(640px,92vw,calc(38vh*16/9));border-radius:8px;display:block" onerror="this.style.display='none'">` : ''}<h1>IMPERATOR!</h1><div style="font-size:1.6em"><b style="color:var(--${col(w.id)});background:#f3e7c4;padding:0 10px;border-radius:6px" id="winnerName">${esc(w.name)}</b> wins${how} on turn ${s.turn.number}.</div>
-    <table id="finalTable"><tr><th>Player</th><th>Seat</th><th>Prestige</th><th>Provinces</th><th>Troops</th><th>Gold</th></tr>${rows}</table>
-    <div class="row"><button class="btn gold big" id="ovNew">New game</button><button class="btn" id="ovLook">Look at the board</button>${C.NET?.role === 'guest' ? '' : '<button class="btn" id="ovExport">Export the save</button>'}</div>`;
+  const vic = w.general ? img('ui.victory_' + w.general.id + '_desktop') : null;   // v31.34 (Update 2): the winner's own victory image; a missing file hides itself rather than showing a broken icon. v31.35: the image is the full-height background (cover), with the title, winner line, table and buttons overlaid on top — desktop only, mobile is unchanged.
+  ov.innerHTML = `${vic ? `<img class="over-bg" src="${vic}" alt="" onerror="this.style.display='none'"><div class="over-scrim" aria-hidden="true"></div>` : ''}<div class="over-content"><h1>IMPERATOR!</h1><div class="over-win" style="font-size:1.6em"><b style="color:var(--${col(w.id)});background:#f3e7c4;padding:0 10px;border-radius:6px" id="winnerName">${esc(w.name)}</b> wins${how} on turn ${s.turn.number}.</div>
+    <div class="over-panel"><table id="finalTable"><tr><th>Player</th><th>Seat</th><th>Prestige</th><th>Provinces</th><th>Troops</th><th>Gold</th></tr>${rows}</table></div>
+    <div class="row"><button class="btn gold big" id="ovNew">New game</button><button class="btn" id="ovLook">Look at the board</button>${C.NET?.role === 'guest' ? '' : '<button class="btn" id="ovExport">Export the save</button>'}</div></div>`;
   ov.classList.add('on'); document.body.dataset.over = s.winner;
   $('#ovNew').onclick = () => { ov.classList.remove('on'); toSetup(); };
   $('#ovLook').onclick = () => ov.classList.remove('on');

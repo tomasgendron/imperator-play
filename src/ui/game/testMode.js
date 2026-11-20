@@ -227,14 +227,14 @@ export function tweakFlipProvince(s, { province, owner, troops }) {
       if (n < R.provinceFloor) { n = R.provinceFloor; notes.push(`topped up to ${n} — an owned province can't hold 0 troops`); }
       q.troops = n;
       q.native = { rolled: R.carthageNative[1], count: R.carthageNative[1], present: R.carthageNative[1] };
-      ns.carthage.defeated = true; ns.carthage.neutral = false; ns.carthage.decreeLegionsLost = 0;
+      ns.carthage.defeated = true; ns.carthage.neutral = false; ns.carthage.decreeLegionsLost = 0; ns.carthage.destroyedForGood = false;
       notes.push('Carthage counts as defeated — natives salted to 3');
     } else {
       // Mirror a revolt (17.c, 16.n): attackable neutral Carthage, fresh natives.
       q.owner = null; q.status = 'native'; q.startingOf = null; q.troops = 0;
       q.native = { rolled: n, count: n, present: n };
       q.healAtTurn = null;
-      ns.carthage.defeated = false; ns.carthage.neutral = false; ns.carthage.decreeLegionsLost = 0;
+      ns.carthage.defeated = false; ns.carthage.neutral = false; ns.carthage.decreeLegionsLost = 0; ns.carthage.destroyedForGood = false;
     }
   } else if (newOwner) {
     q.owner = newOwner;

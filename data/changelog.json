@@ -1,6 +1,14 @@
 [
  {
   "bullets": [
+   "New rule 16.o, Carthage is destroyed for good: once a Senate Decree battle destroys Carthage, Game Rolls 2 and 9 do nothing except show \"The Senate is satisfied with Carthage’s destruction! No decrees for now.\" — no Senate Decree, Rome Roll, tax, Rome Is Displeased card, reward or Game Card. Each player who sent a legion still gains +1 Prestige once, and Carthage still turns neutral with 5 troops. Only Roma's defeat resets this; if Carthage then comes back as a native province, Senate Decrees on 2 and 9 return. A Carthage a player conquers in a normal attack works as before."
+  ],
+  "date": "2026-11-19",
+  "title": "Carthage is destroyed for good (16.o)",
+  "version": "31.36"
+ },
+ {
+  "bullets": [
    "On desktop, the game-over popup now fills the screen with the winning general's victory image, with the IMPERATOR! title, winner line, final standings and buttons laid over the top of it — the table sits on a dark panel (30% background) so it stays readable while the artwork shows through."
   ],
   "date": "2026-11-18",

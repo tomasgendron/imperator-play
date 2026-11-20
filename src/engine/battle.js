@@ -812,6 +812,7 @@ function conquer(ctx, b, after) {
   // wasAlly is captured before the status overwrite above (the province is 'conquered' by the time this runs). The provinceLost event still fires either way.
   // v31.28: losing Carthage in battle costs its owner 2 Prestige (12.f) — the loss mirrors the +2 conquest gain.
   if (prev) { emit(ctx, 'provinceLost', { actor: prev, rule: '12.f', pub: { player: prev, province: t, to: A, allied: wasAlly } }); const loss = t === 'carthage' ? data.rules.prestige.carthage : data.rules.prestige.loss; if (!wasAlly) awardPrestige(ctx, prev, -loss, 'provinceLost', '12.f'); if (state.phase !== 'turn') return; }
+  if (t === 'roma') state.carthage.destroyedForGood = false;       // 16.o: only Roma's defeat (12.g) lifts "Carthage is destroyed for good"
   if (t === 'roma' && state.carthage.neutral) {                   // Carthage is back (12.g, 16.n)
     const n = data.rules.carthageBackTroops; Object.assign(state.carthage, { neutral: false, defeated: false, decreeLegionsLost: 0 });
     state.provinces.carthage.native = { rolled: n, count: n, present: n }; state.provinces.carthage.healAtTurn = null;
@@ -865,7 +866,8 @@ function finishDecree(ctx, b, outcome) {
     const survivors = b.att.own;
     const n = D.neutralCarthageTroops;
     c.native = { rolled: n, count: n, present: n }; c.healAtTurn = null;
-    Object.assign(state.carthage, { neutral: true, defeated: false, decreeLegionsLost: 0 });
+    // v31.36 (16.o, Vidi 2026-11-18): Carthage is destroyed for good — Game Rolls 2 and 9 are only the satisfied message until Roma falls (12.g).
+    Object.assign(state.carthage, { neutral: true, defeated: false, decreeLegionsLost: 0, destroyedForGood: true });
     emit(ctx, 'carthageNeutral', { rule: '16.n', pub: { troops: n, survivorsToRoma: survivors } });
     if (survivors) changeTroops(ctx, 'roma', survivors, 'decreeSurvivors');
     emit(ctx, 'decreeResolved', { rule: '16.n', pub: { result: 'destroyed', senders: b.senders, survivors } });

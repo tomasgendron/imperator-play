@@ -93,7 +93,7 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
       items: { catapult: 0 }, out: false, gameRollsTaken: 0, startIncome: true })),
     turnOrder: [],
     turn: { number: 0, round: 0, activePlayerId: null, step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} },
-    provinces, roma: { goldPile: 0, holder: null, heldSinceTurn: null }, carthage: { defeated: false, neutral: false, decreeLegionsLost: 0 },
+    provinces, roma: { goldPile: 0, holder: null, heldSinceTurn: null }, carthage: { defeated: false, neutral: false, decreeLegionsLost: 0, destroyedForGood: false },
     cards, decks, discards: { game: [], resource: [], displeased: [] }, throwaway: { game: [], resource: [], displeased: [] }, withheld, ships: [], pending: [], winner: null, eventSeq: 0, frameSeq: 0, setup: null, log: [],
   };
 }

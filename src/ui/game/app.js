@@ -2038,7 +2038,7 @@ function renderTable() {
     if (p.status === 'starting') notes.push('Start province: minimum 1, always loyal.');
     if (p.status === 'allied') notes.push('Allied: Min garrison is natives + 1 for the reward and the bonus troop (19.r). No revolt. Moving troops out still keeps the global floor of 1.');
     if (under) notes.push('UNDER-GARRISONED: no bonus troop, no reward.');
-    if (id === 'carthage') notes.push(s.carthage?.neutral ? "Under Roma's control (16.n)." : s.carthage?.defeated ? 'Carthage defeated: Decree numbers count as Rome Rolls.' : 'Walls all sides; the Senate Decree target.');
+    if (id === 'carthage') notes.push(s.carthage?.neutral ? (s.carthage?.destroyedForGood ? "Under Roma's control (16.n). Destroyed for good: Game Rolls 2 and 9 do nothing until Roma falls (16.o)." : "Under Roma's control (16.n).") : s.carthage?.defeated ? 'Carthage defeated: Decree numbers count as Rome Rolls.' : 'Walls all sides; the Senate Decree target.');
     if (id === 'roma') notes.push('Walls all sides, Ingrained Loyalty; attack needs Battlefield Imperator.');
     return `<tr class="${p.owner ? col(p.owner) : 'none'}${selected === id ? ' sel' : ''}" data-id="${id}"><td>${esc(def.name)}</td><td>${p.number ?? '-'}</td><td>${p.reward ?? '-'}</td><td>${p.owner ? esc(pn(p.owner)) : '-'}</td><td>${p.status}</td>
       <td class="${p.owner ? '' : 'nat-cell'}">${p.native.count === null ? (id === 'roma' ? '-' : '?') : `${p.native.count} / ${p.native.present}`}</td><td>${p.owner || id === 'roma' ? p.troops : '-'}</td>

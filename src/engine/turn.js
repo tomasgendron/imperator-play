@@ -310,12 +310,16 @@ defineRoll('gameRoll', (ctx, f) => {
   pl.gameRollsTaken += 1;
   popFrame(ctx);
   // Rolls 2 and 9 follow who controls Carthage now. carthage.defeated is history and does not decide this.
-  // A player who controls it gets only the satisfied message. Neutral or unowned Carthage, including after a
-  // Senate Decree or a revolt, still raises a Senate Decree. Rolls 1 and 10 stay Rome Rolls.
+  // A player who controls it gets only the satisfied message. v31.36 (16.o, Vidi 2026-11-18): after a Senate Decree
+  // destroys Carthage (carthage.destroyedForGood, set in battle.js finishDecree, cleared only when Roma falls, 12.g)
+  // 2 and 9 are also only the satisfied message: no Decree, Rome Roll, tax, Rome Is Displeased card, reward or Game Card.
+  // Otherwise neutral or unowned Carthage (fresh, after a revolt, or back after Roma) raises a Senate Decree. 1 and 10 stay Rome Rolls.
   const playerControlsCarthage = state.players.some(p => S.controls(state, p.id, 'carthage'));
-  if (data.rules.decreeNumbers.includes(v) && playerControlsCarthage) {
-    emit(ctx, 'gameRollResolved', { actor: pid, rule: '16.n', pub: { value: v, kind: 'satisfied' } });
-    emit(ctx, 'senateSatisfied', { actor: pid, rule: '16.n', pub: { player: pid, value: v, message: 'The Senate is satisfied with Carthage’s destruction! No decrees for now.' } });
+  const closed = !!state.carthage.destroyedForGood;
+  if (data.rules.decreeNumbers.includes(v) && (playerControlsCarthage || closed)) {
+    const rule = closed && !playerControlsCarthage ? '16.o' : '16.n';
+    emit(ctx, 'gameRollResolved', { actor: pid, rule, pub: { value: v, kind: 'satisfied', destroyedForGood: closed } });
+    emit(ctx, 'senateSatisfied', { actor: pid, rule, pub: { player: pid, value: v, destroyedForGood: closed, message: 'The Senate is satisfied with Carthage’s destruction! No decrees for now.' } });
     return;
   }
   if (data.rules.romeRollNumbers.includes(v)) { emit(ctx, 'gameRollResolved', { actor: pid, rule: '16.d', pub: { value: v, kind: 'rome' } }); romeRoll(ctx, pid, v); return; }

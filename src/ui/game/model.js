@@ -357,7 +357,8 @@ export function readSave(input, data) {
   if (!state.throwaway) state.throwaway = { game: [], resource: [], displeased: [] };   // v31.11: saves from before the throwaway pile
   if (!state.withheld) state.withheld = { game: [] };   // v31.30: saves from before the withheld pile load as already released — the 5 cards are in the deck/discards/hands already, so nothing is held back mid-game
   for (const p of state.players) if (!['normal', 'easy'].includes(p.difficulty)) p.difficulty = 'normal';   // v31.12: saves from before AI difficulty
-  for (const p of state.players) if (p.pendingStealToRoma === undefined) p.pendingStealToRoma = null;   // v31.24 (18.r, 18.x): saves from before the deferred steal
+  for (const p of state.players) if (p.pendingStealToRoma === undefined) p.pendingStealToRoma = null;
+  if (state.carthage && state.carthage.destroyedForGood === undefined) state.carthage.destroyedForGood = false;   // v31.36 (16.o): saves from before the flag load as not destroyed for good   // v31.24 (18.r, 18.x): saves from before the deferred steal
   if (!state.turn.aiHumanAttacks) state.turn.aiHumanAttacks = {};   // v31.12: saves from before the Easy attack budget
   backfillNewCards(state, data);   // v31.9 (18.z): saves from before a card was added to a deck gain the new cards, shuffled into that deck (v31.11)
   normaliseWalls(state, data);   // v31.30 (19.k): one-sided Walls in old saves become Walls on all sides

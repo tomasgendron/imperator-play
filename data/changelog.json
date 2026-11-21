@@ -1,6 +1,19 @@
 [
  {
   "bullets": [
+   "Two new Game Cards, the Coin Masters (rules 18.aa and 18.ab). There is 1 of each, so the Game Card deck now has 35 cards, and both are in the deck from the first cycle. You keep a Coin Master in your hand as a lasting bonus; it is never played and does not use your one card play per turn.",
+   "Coin Master (Selling a Card): while you hold it, every card you sell (other than this one) pays 3 Gold instead of 2. Selling the Coin Master itself pays the normal 2 Gold and ends the bonus. Gold from Resource cards is unchanged.",
+   "Coin Master (Unused Actions): while you hold it at the end of your Actions, you get 1 extra Gold if you left any action unused — 3 Gold for taking no actions, 2 Gold for taking one, nothing for taking both.",
+   "The Coin Master is shown when you take its extra Gold, then goes back to your hand. You can hold both; each works on its own.",
+   "Emperor taxes you! now takes your cards at random: you lose 1 random saved card (2 random cards if you have 5 or more). You can no longer choose, and no card can be protected — Coin Masters, saved Roads and Walls and a Garrison Requirement -1! in play all count. Busy Little Bee! can still pass it on, and the new victim is taxed at random too.",
+   "Fixed: an Assassin! strike on natives already worn down in battle now kills troops that are actually there. A Carthage at 5 of 10 natives drops to 3 of 8 (not 5 of 8), and it can only heal back up to 8."
+  ],
+  "date": "2026-11-20",
+  "title": "Coin Master cards, a random Emperor's tax, and an Assassin fix",
+  "version": "31.37"
+ },
+ {
+  "bullets": [
    "New rule 16.o, Carthage is destroyed for good: once a Senate Decree battle destroys Carthage, Game Rolls 2 and 9 do nothing except show \"The Senate is satisfied with Carthage’s destruction! No decrees for now.\" — no Senate Decree, Rome Roll, tax, Rome Is Displeased card, reward or Game Card. Each player who sent a legion still gains +1 Prestige once, and Carthage still turns neutral with 5 troops. Only Roma's defeat resets this; if Carthage then comes back as a native province, Senate Decrees on 2 and 9 return. A Carthage a player conquers in a normal attack works as before."
   ],
   "date": "2026-11-19",

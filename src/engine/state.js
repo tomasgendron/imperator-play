@@ -59,7 +59,7 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
   }
   for (const deck of Object.keys(decks)) decks[deck] = shuffle(rng, decks[deck]);
   // v31.30 (18.a): 3 Elephants! and both Sneak Attack from the Sea! cards are withheld until the Game deck has gone through
-  // once — cycle 1 starts with 28 cards (2 Elephants, no Sneak Attack). They sit aside in `withheld.game`, not drawable,
+  // once — cycle 1 starts with 30 cards (2 Elephants, no Sneak Attack; both Coin Masters are in from the start, v31.37). They sit aside in `withheld.game`, not drawable,
   // and join the draw pile at the first reshuffle (core.js drawTop). Taken out AFTER the shuffle, so the remaining 28 keep
   // their shuffled order and no extra RNG is drawn: nothing else about setup changes.
   const withheld = { game: [] };

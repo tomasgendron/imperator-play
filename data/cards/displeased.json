@@ -103,7 +103,7 @@
    "rule": [
     "18.u"
    ],
-   "text": "Lose 1 saved card of your choice (2 of your choice with 5 or more saved cards).",
+   "text": "Lose 1 random saved card (2 random cards with 5 or more saved cards). Cards cannot be protected.",
    "art": {
     "front": "cards/displeased/taxes_you.png"
    },
@@ -113,7 +113,7 @@
      "lose": 1,
      "loseMoreAtOrAbove": 5,
      "loseMore": 2,
-     "chooser": "victim"
+     "random": true
     }
    }
   }

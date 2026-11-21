@@ -8,7 +8,7 @@
 import { loadGameData } from '../ui/loadData.js';
 import { resolveAsset } from '../ui/assets.js';
 import { setupChoices, checkSetup, current } from '../ui/consoleModel.js';
-import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces } from '../engine/index.js';
+import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces, sellGold } from '../engine/index.js';
 import * as G from '../ui/game/model.js';
 import { createSound } from '../ui/game/sound.js';
 import { createController } from '../ui/core/controller.js';
@@ -1114,7 +1114,7 @@ function openCards() {
     const plays = legal.filter(d => (d.type === 'PLAY_CARD' || d.type === 'USE_SAVED_RESOURCE') && d.action.cardUid === c.uid);
     const why = !plays.length ? (G.cardBlockReason(s, data, h.owner, c.uid) ?? (c.battle ? 'A Battle Card: commit it in a battle (18.i).' : pv.reason ?? 'Not playable now.')) : '';
     return `<div class="cardrow" data-uid="${c.uid}"><img src="${attr(img(c.art))}" alt=""><div class="t"><b>${tag}${esc(c.name)}</b>${esc(c.text)}${why ? `<div class="note" style="margin-top:4px">${esc(why)}</div>` : ''}
-      <div class="btns">${plays.length ? `<button class="btn gold" data-play="${c.uid}">${plays.length === 1 ? 'Play it' : `Play: choose (${plays.length})`}</button>` : ''}${sell ? `<button class="btn" data-sell="${c.uid}">Sell +${data.rules.sellCard?.gold ?? 2} Gold</button>` : ''}</div></div></div>`;
+      <div class="btns">${plays.length ? `<button class="btn gold" data-play="${c.uid}">${plays.length === 1 ? 'Play it' : `Play: choose (${plays.length})`}</button>` : ''}${sell ? `<button class="btn" data-sell="${c.uid}">Sell +${sellGold(s, data, whoActs(s), c.uid)} Gold</button>` : ''}</div></div></div>`;
   };
   openSheet('cards', `<div class="sh-head"><h2>${p ? `${esc(p.name)}'s hand` : 'Hands'}<small>${p ? `Only ${esc(p.name)} may look · ${h.cards.length} card(s)` : 'AI hands are always hidden'}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body">${h.cards.length ? h.cards.map(c => row(c)).join('') : '<p class="note">No cards in hand.</p>'}${h.saved.map(c => row(c, 'saved: ')).join('')}${h.inPlay.map(c => row(c, 'in play: ')).join('')}
@@ -1560,7 +1560,8 @@ function askBody(s, f, legal, g) {
     const note = [...new Set(ids)].map(id => G.garrisonStayText(s, data, id)).filter(Boolean).join(' ');
     return `${note ? `<p class="note garrison-note" id="garStay">${esc(note)}</p>` : ''}${f.kind === 'returnReinforcements' ? '<p class="note">Sending them home is optional: 0 leaves every survivor in the defended province (18.y).</p>' : ''}${rowsHtml(legal, !g.live)}`;
   }
-  if (f.kind === 'discardCards' || f.kind === 'chooseBattleCards' || legal.every(d => d.action.cardUid)) return threatBox + rowsHtml(legal, !g.live);
+  if (f.kind === 'discardCards') return `${threatBox}<p class="note">The Emperor takes the card(s) at random: you cannot choose or protect them (18.u).</p>${rowsHtml(legal, !g.live)}`;   // v31.37: legacy saves only
+  if (f.kind === 'chooseBattleCards' || legal.every(d => d.action.cardUid)) return threatBox + rowsHtml(legal, !g.live);
   return threatBox + rowsHtml(legal, !g.live);
 }
 /** The Ally confirm (natives, the troops they need, a stepper): opened from the Ally list rows. */
@@ -1903,7 +1904,7 @@ async function playEvents(events, before = null) {
         if (bv && data.cardDefsById[e.pub.def]?.type === 'battle') { const k = s.battle && s.battle.def.player === e.pub.player ? 'd' : 'a'; const nm = data.cardDefsById[e.pub.def].name; bv.cards[k].push(nm); const box = popKind === 'battle' && $(`#${k}Cards`); if (box) box.insertAdjacentHTML('beforeend', `<span class="pchip bc">${esc(nm)}</span>`); }
         showCardPlay(G.cardPlayPopup(events, i, s, data)); break;
       }
-      case 'resourceApplied': case 'resourceCardUsed': showCardPlay(G.cardPlayPopup(events, i, s, data)); break;
+      case 'resourceApplied': case 'resourceCardUsed': case 'coinMasterBonus': showCardPlay(G.cardPlayPopup(events, i, s, data)); break;   // v31.37: + the Coin Master shown (18.aa, 18.ab)
       case 'battleRoundRolled': await animRound(e); break;
       case 'battleDiceAdjusted': for (const x of e.pub.adjustments ?? []) addPerk(x.side === 'defender' ? 'd' : 'a', G.adjustmentLabel(x, data), x.source, true); break;
       case 'battleRoundResolved': await animResolved(e); refreshFightToDeath(); break;   // v31.13: the perk's live state may have changed this round

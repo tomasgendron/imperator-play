@@ -135,12 +135,9 @@ export function legalActions(state, data) {
         add({ type: 'BATTLE_RETREAT' }, `Retreat (survivors go home${keepsCards(state, data) ? '; the defender keeps its unused battle cards' : ''})`);
         maybeSummon(state, data, who, add);
         break;
-      case 'discardCards': {
-        const o = f.options; const lbl = u => data.cardDefsById[state.cards[u].def]?.name ?? state.cards[u].def;
-        if (f.count === 1) for (const u of o) add({ type: 'DISCARD_CARDS', cardUids: [u] }, `Emperor's tax: lose ${lbl(u)}`);
-        else for (let i = 0; i < o.length; i++) for (let j = i + 1; j < o.length; j++) add({ type: 'DISCARD_CARDS', cardUids: [o[i], o[j]] }, `Emperor's tax: lose ${lbl(o[i])} and ${lbl(o[j])}`);
+      case 'discardCards':   // v31.37 (18.u): random tax — only a legacy frame from an older save reaches here; no card choice is offered
+        add({ type: 'DISCARD_CARDS' }, `Emperor's tax: lose ${f.count} random card${f.count === 1 ? '' : 's'} (18.u)`);
         break;
-      }
       case 'returnReinforcements': {
         const note = `${stayNote(state, data, f.target)}. ${stayNote(state, data, f.from)}`;
         const rng = f.max >= 1 ? { field: 'back', min: 0, max: f.max } : undefined;
@@ -168,7 +165,8 @@ export function legalActions(state, data) {
   } else if (state.phase === 'turn' && state.turn.step === 'actions') {
     const mine = S.provincesOf(state, who);
     const unused = Math.max(0, data.rules.actionsPerTurn - state.turn.actionsUsed);
-    add({ type: 'END_TURN' }, unused ? `End Turn (+${unused * data.rules.unusedActionGold} Gold for ${unused} unused action${unused > 1 ? 's' : ''})` : 'End Turn');
+    const ug = S.unusedGold(state, data, who);   // v31.37 (18.ab): includes the Coin Master (Unused Actions) +1
+    add({ type: 'END_TURN' }, unused ? `End Turn (+${ug.gold} Gold for ${unused} unused action${unused > 1 ? 's' : ''}${ug.coinMaster ? ', Coin Master +1' : ''})` : 'End Turn');
     // cheap pruning before the dry runs (M3, for the M4 AI): every action below costs one of the 2 actions (17.e) and the buys have
     // fixed Gold prices (data.rules.costs), so candidates that must fail are not generated at all. The dry run still has the last word.
     const me = state.players.find(p => p.id === who); const gold = me.gold; const c = data.rules.costs;
@@ -228,7 +226,7 @@ export function legalActions(state, data) {
     }
     // free, not actions: the general's own move (15.j) and selling cards for 2 Gold (20.p)
     for (const to of generalMoveTargets(state, data, who)) add({ type: 'MOVE_GENERAL', to }, `Move the general to ${nm(data, to)} (free, as many times as you want)`);
-    for (const uid of sellableCards(state, data, who)) add({ type: 'SELL_CARD', cardUid: uid }, `Sell ${data.cardDefsById[state.cards[uid].def].name} for ${data.rules.sellCard.gold} Gold`);
+    for (const uid of sellableCards(state, data, who)) { const g = S.sellGold(state, data, who, uid); add({ type: 'SELL_CARD', cardUid: uid }, `Sell ${data.cardDefsById[state.cards[uid].def].name} for ${g} Gold${g > data.rules.sellCard.gold ? ' (Coin Master +1)' : ''}`); }
     for (const c of state.players.find(p => p.id === who).savedResources) {
       const piece = data.cardDefsById[state.cards[c.uid].def].effect.params.piece;
       for (const id of mine) {

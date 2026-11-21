@@ -253,14 +253,17 @@ export function sellableCards(state, data, pid) {
 define('SELL_CARD', {
   turn: true,
   run(ctx, a) {
-    const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid); const gold = data.rules.sellCard.gold;
+    const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid);
     check(sellableCards(state, data, pid).includes(a.cardUid), 'NO_SUCH_CARD', 'Pick a Game Card or Resource card from your hand to sell (20.p).', '20.p');
+    const gold = S.sellGold(state, data, pid, a.cardUid);   // v31.37 (18.aa): 3 while holding Coin Master (Selling a Card), for a different card
+    const bonus = gold - data.rules.sellCard.gold;
     const saved = pl.savedResources.some(c => c.uid === a.cardUid);
     const list = saved ? pl.savedResources : pl.hand;
     list.splice(list.findIndex(c => c.uid === a.cardUid), 1);
     toDiscard(state, a.cardUid);
     pl.gold += gold;   // from the bank, never Roma's Gold pile (12.k); not an action (17.e, 17.o)
-    emit(ctx, 'cardSold', { actor: pid, rule: '20.p', pub: { player: pid, card: state.cards[a.cardUid].def, deck: state.cards[a.cardUid].deck, gold, saved } });
+    emit(ctx, 'cardSold', { actor: pid, rule: '20.p', pub: { player: pid, card: state.cards[a.cardUid].def, deck: state.cards[a.cardUid].deck, gold, saved, ...(bonus ? { coinMaster: bonus } : {}) } });
+    if (bonus) emit(ctx, 'coinMasterBonus', { actor: pid, rule: '18.aa', pub: { player: pid, def: 'coin_master_selling', gold: bonus, reason: 'sale', sold: state.cards[a.cardUid].def } });   // shown, then back to the hand
   },
 });
 
@@ -684,8 +687,13 @@ define('END_TURN', {
   turn: true,
   run(ctx) {
     const { state, data } = ctx; const t = state.turn; const pid = t.activePlayerId; const pl = mustPlayer(state, pid);
-    const unused = Math.max(0, data.rules.actionsPerTurn - t.actionsUsed);   // +1 Gold per unused action (17.o, replaces the pass bonus)
-    if (unused) { const g = unused * data.rules.unusedActionGold; pl.gold += g; emit(ctx, 'unusedActionGold', { actor: pid, rule: '17.o', pub: { player: pid, unused, gold: g } }); }
+    // +1 Gold per unused action (17.o, replaces the pass bonus); v31.37 (18.ab): +1 once more while holding Coin Master (Unused Actions)
+    const { unused, gold: ug, coinMaster } = S.unusedGold(state, data, pid);
+    if (unused) {
+      pl.gold += ug;
+      emit(ctx, 'unusedActionGold', { actor: pid, rule: '17.o', pub: { player: pid, unused, gold: ug - coinMaster, ...(coinMaster ? { coinMaster } : {}) } });
+      if (coinMaster) emit(ctx, 'coinMasterBonus', { actor: pid, rule: '18.ab', pub: { player: pid, def: 'coin_master_unused', gold: coinMaster, reason: 'unusedActions', unused } });
+    }
     const gp = S.goldPrestige(pl.gold, data);                               // after the unused-action Gold (22.f); Gold is not spent
     const total = pl.prestige + gp;
     emit(ctx, 'goldPrestige', { actor: pid, rule: '22.f', pub: { player: pid, gold: pl.gold, goldPrestige: gp, board: pl.prestige, total, win: data.rules.winPrestige } });

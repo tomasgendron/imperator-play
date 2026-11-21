@@ -281,7 +281,7 @@ export function frameTitle(state, data) {
     placeTroops: 'Place troops', resourceBuild: 'Build now or save the card', chooseProvince: { bribeReinforce: 'Reinforce your new ally', fleeDestination: 'Flee to…' }[f.purpose] ?? 'Choose a province', chooseBorrow: 'Borrow natives?',
     chooseBattleCards: 'Battle cards', choosePerk: 'General perk', battleContinue: 'Continue the battle?', placeSurvivors: 'Place the survivors',
     returnReinforcements: 'Send the Horn troops home?',
-    discardCards: "The Emperor's tax", responseWindow: { revoltResponse: 'A province revolts!', displeasedResponse: 'Rome is displeased with you', defenceAnnounced: 'You are attacked!' }[f.window] ?? 'Your answer',
+    discardCards: "The Emperor's tax (random)", responseWindow: { revoltResponse: 'A province revolts!', displeasedResponse: 'Rome is displeased with you', defenceAnnounced: 'You are attacked!' }[f.window] ?? 'Your answer',
   };
   return T[f.kind] ?? f.kind;
 }
@@ -806,7 +806,7 @@ export function displeasedPopup(events, i, state, data) {
   }
   if (e.type === 'troopsStolen') lines.push(`${nm(pid)}, the Emperor takes ${p.total} bonus troop(s) to Roma: ${p.taken.map(x => `${x.n} from ${provName(data, x.province)}`).join(', ')} (18.r).`);
   if (e.type === 'displeasedDeferred') lines.push(`${nm(pid)}, the Emperor will take ALL your bonus troops to Roma at the start of your next turn (18.r).`);
-  if (e.type === 'cardsTaxed') lines.push(`${nm(pid)}, you lose ${p.n} saved card(s): ${p.defs.map(d => data.cardDefsById[d]?.name ?? d).join(', ')} (18.u).`);
+  if (e.type === 'cardsTaxed') lines.push(`${nm(pid)}, the Emperor takes ${p.n} saved card(s) at random: ${p.defs.map(d => data.cardDefsById[d]?.name ?? d).join(', ')}. Cards cannot be protected (18.u).`);
   if (e.type === 'displeasedNoEffect') lines.push(`No effect for ${nm(pid)}: ${p.reason}.`);
   return { kind: 'displeased', player: pid, title: `Rome Is Displeased: ${card?.name ?? def}`, lines, art: 'card.' + def, sticky: true, players: [pid] };
 }
@@ -1271,6 +1271,7 @@ export function aiTurnSummary(events, state, data, playerId) {
         else gained.push(`Drew a ${p.deck} card.`);
       } break;
       case 'unusedActionGold': if (p.player === playerId && p.gold) gained.push(`+${p.gold} Gold for ${plural(p.unused, 'unused action')}.`); break;
+      case 'coinMasterBonus': if (p.player === playerId) gained.push(`+${p.gold} Gold from ${card(p.def)}${p.reason === 'sale' ? ` (sold ${card(p.sold)})` : ''}.`); break;   // v31.37 (18.aa, 18.ab)
       case 'goldPrestige': if (p.player === playerId && p.goldPrestige) gained.push(`Gold Prestige +${p.goldPrestige} from ${p.gold} Gold (not spent).`); break;
       case 'prestigeChanged': if (p.player === playerId && p.to !== p.from) gained.push(`Prestige ${p.from} → ${p.to}.`); break;
       case 'gameRollResolved': if (mine(e)) rolls.push(p.kind === 'rome' ? `Game Roll ${p.value}: Rome Roll.` : p.kind === 'decree' ? `Game Roll ${p.value}: Senate Decree.` : `Game Roll ${p.value}.`); break;
@@ -1294,7 +1295,7 @@ export function aiTurnSummary(events, state, data, playerId) {
       case 'prestigeBought': if (p.player === playerId) actions.push(`Bought 1 Prestige for ${p.gold} Gold.`); break;
       case 'gameCardBought': if (p.player === playerId) actions.push('Bought a Game Card.'); break;
       case 'cardPlayed': if (p.player === playerId) actions.push(`Played ${card(p.def)}.`); break;
-      case 'cardSold': if (p.player === playerId) actions.push(`Sold ${card(p.card)}.`); break;
+      case 'cardSold': if (p.player === playerId) actions.push(`Sold ${card(p.card)} for ${p.gold} Gold.`); break;
       case 'generalMoved': if (p.player === playerId) actions.push(`Moved the general to ${prov(p.to)}.`); break;
       case 'nativesRolled': if (mine(e)) actions.push(`Scouted ${prov(p.province)}: ${p.count} natives.`); break;
       case 'resourceSaved': if (p.player === playerId) actions.push(`Saved a ${p.piece} card.`); break;
@@ -1350,7 +1351,7 @@ const PLAY_STOP = new Set(['cardPlayed', 'resourceApplied', 'resourceCardUsed', 
   'cardDrawn', 'displeasedDrawn', 'diceRolled', 'battleCardsSkipped', 'gameRollStarted', 'revoltRollStarted', 'battleRoundStarted', 'roundStarted']);
 const PLAY_QUIET = new Set(['actionSpent', 'garrisonStatusChanged', 'stepChanged', 'phaseChanged', 'framePushed', 'framePopped']);
 /** True for an event that shows the card-played popup: any game card played (hand, auto-play, battle, Horn, Roma, Busy Bee) or a Resource card used. */
-export const isCardPlay = e => e?.type === 'cardPlayed' || e?.type === 'resourceApplied' || e?.type === 'resourceCardUsed';
+export const isCardPlay = e => e?.type === 'cardPlayed' || e?.type === 'resourceApplied' || e?.type === 'resourceCardUsed' || e?.type === 'coinMasterBonus';   // v31.37: a Coin Master is SHOWN when its bonus is taken (18.aa, 18.ab)
 /**
  * v31.24 (Update 5): a Resource card's application right after its draw is the SAME reveal twice. The engine emits
  * cardDrawn and then, immediately, resourceApplied for a gainResources card (turn.js drawCard); the page shows the draw
@@ -1384,6 +1385,11 @@ export function cardPlayPopup(events, i, state, data) {
   if (e.type === 'cardPlayed' && p.source === 'attackRoma') outcome.push(`${nm(who)} may attack Roma.`);
   if (e.type === 'cardPlayed' && p.dest === 'throwaway') outcome.push('Gone for good — it goes to the throwaway pile, never the discard pile (18.z).');
   if (e.type === 'cardPlayed' && p.inPlay) outcome.push('Stays in play in front of the player.', ...(def?.text ? [def.text] : []));
+  if (e.type === 'coinMasterBonus') {   // v31.37 (18.aa, 18.ab): shown, then back to the hand — never played
+    const sold = p.sold ? (data.cardDefsById[p.sold]?.name ?? p.sold) : null;
+    outcome.push(p.reason === 'sale' ? `+${p.gold} Gold on top of the sale price for selling ${sold} (3 Gold in all).` : `+${p.gold} Gold for leaving ${p.unused} action${p.unused === 1 ? '' : 's'} unused.`, 'The card goes back to the hand: it keeps working while held.');
+    return { kind: 'cardPlayed', player: who, playerName: nm(who), human: isHuman(state, who), def: defId, uid: null, deck: 'game', name: def?.name ?? defId, type: def?.type ?? null, verb: 'shows', outcome, battle: false };
+  }
   for (let k = i + 1; k < events.length && outcome.length < 7; k++) {
     const x = events[k]; if (PLAY_STOP.has(x.type)) break; if (PLAY_QUIET.has(x.type)) continue;
     const t = formatEvent(x, state, data).text; if (t && !/^[a-zA-Z]+ \{/.test(t)) outcome.push(t.replace(/\b[a-z]+(?:_[a-z]+)+\b/g, id => data.cardDefsById[id]?.name ?? id));

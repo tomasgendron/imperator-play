@@ -199,6 +199,14 @@
    "path": "cards/game/sneak_attack_sea.png",
    "kind": "card"
   },
+  "card.coin_master_selling": {
+   "path": "cards/game/coin_master_selling.png",
+   "kind": "card"
+  },
+  "card.coin_master_unused": {
+   "path": "cards/game/coin_master_unused.png",
+   "kind": "card"
+  },
   "card.gold_2": {
    "path": "cards/resource/gold_2.png",
    "kind": "card"

@@ -37,6 +37,21 @@ export function generalMoveRoute(state, data, pid, from, to) {
   if (!controls(state, pid, to) || to === 'roma') return null;
   return { cost: 0, path: ['roma', to] };
 }
+/** v31.37 (18.aa, 18.ab): does the player hold this Coin Master in hand (a lasting bonus, never played)? */
+export const holdsInHand = (state, pid, def) => state.players.find(x => x.id === pid)?.hand.some(c => state.cards[c.uid].def === def) ?? false;
+/** v31.37 (20.p, 18.aa): the Gold a sale of `uid` pays now — 2, or 3 while holding Coin Master (Selling a Card) and selling a different card. */
+export function sellGold(state, data, pid, uid) {
+  const base = data.rules.sellCard.gold;
+  return base + (state.cards[uid]?.def !== 'coin_master_selling' && holdsInHand(state, pid, 'coin_master_selling') ? 1 : 0);
+}
+/** v31.37 (17.o, 18.ab): the unused-action Gold for ending the Actions step with `used` actions taken — +1 per unused action, and
+ * +1 once more while holding Coin Master (Unused Actions) if any action is unused (0 taken = 3, 1 = 2, 2 = 0). */
+export function unusedGold(state, data, pid, used = state.turn.actionsUsed) {
+  const unused = Math.max(0, data.rules.actionsPerTurn - used);
+  if (!unused) return { unused, gold: 0, coinMaster: 0 };
+  const cm = holdsInHand(state, pid, 'coin_master_unused') ? 1 : 0;
+  return { unused, gold: unused * data.rules.unusedActionGold + cm, coinMaster: cm };
+}
 export const hasGarrisonCard = (state, pid) => state.players.find(x => x.id === pid)?.inPlay.some(c => state.cards[c.uid].def === 'garrison_requirement') ?? false;
 export const pompeyLowers = (state, pid) => state.players.find(x => x.id === pid)?.general?.id === 'pompey' && generalPerksActive(state, pid);
 

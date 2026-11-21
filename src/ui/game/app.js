@@ -4,7 +4,7 @@
 import { loadGameData } from '../loadData.js';
 import { resolveAsset } from '../assets.js';
 import { setupChoices, checkSetup, current } from '../consoleModel.js';
-import { topFrame, whoActs, minGarrison, totalTroops, provincesOf as ownedBy, viewFor, eventsFor, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces } from '../../engine/index.js';
+import { topFrame, whoActs, minGarrison, totalTroops, provincesOf as ownedBy, viewFor, eventsFor, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces, sellGold } from '../../engine/index.js';
 import * as G from './model.js';
 import { createSound } from './sound.js';
 import { HostRoom, PING_MS } from '../../net/host.js';
@@ -906,7 +906,7 @@ async function playEvents(events, before = null) {
       case 'generalPerkTriggered': if (bv) addPerk(e.actor === bv.defId && bv.defId ? 'd' : 'a', `${data.generalsById[e.pub.general]?.name ?? e.pub.general}: ${e.pub.reason ?? e.pub.effect} (${e.rule})`); break;
       case 'lossCapped': if (bv) addPerk(e.pub.side === 'defender' ? 'd' : 'a', `Germanicus, Fight to the Death: last stand — at 2 troops, at most 1 troop lost this round (${e.pub.saved} saved) (15.h)`); break;
       case 'cardPlayed': if (bv && data.cardDefsById[e.pub.def]?.type === 'battle') addBattleCard(e); showCardPlay(G.cardPlayPopup(events, i, s, data)); break;
-      case 'resourceApplied': case 'resourceCardUsed': showCardPlay(G.cardPlayPopup(events, i, s, data)); break;
+      case 'resourceApplied': case 'resourceCardUsed': case 'coinMasterBonus': showCardPlay(G.cardPlayPopup(events, i, s, data)); break;   // v31.37: + the Coin Master shown (18.aa, 18.ab)
       case 'battleRoundRolled': await animRoundRolled(e); break;
       case 'battleDiceAdjusted': for (const x of e.pub.adjustments ?? []) addPerk(x.side === 'defender' ? 'd' : 'a', G.adjustmentLabel(x, data), x.source, true); break;
       case 'battleRoundResolved': await animRoundResolved(e); refreshFightToDeath(); break;   // v31.13: the perk's live state may have changed this round
@@ -1468,8 +1468,8 @@ function openSell() {
   const list = mineNow().filter(d => d.type === 'SELL_CARD');
   const g = data.rules.sellCard?.gold ?? 2;
   const rows = list.map(d => { const c = st().cards[d.action.cardUid]; const def = data.cardDefsById[c.def]; const saved = G.playerById(st(), whoActs(st()))?.savedResources.some(x => x.uid === d.action.cardUid);
-    return `<button class="btn sellrow" data-key="${attr(G.descKey(d))}" data-uid="${d.action.cardUid}"><img src="${img('card.' + c.def)}" alt="">${esc(def?.name ?? c.def)}${saved ? ' <span class="small">(saved)</span>' : ''} <span class="spacer"></span><b>+${g} Gold</b></button>`; }).join('');
-  openModal(`<div class="ask menu" id="sellScreen" style="display:flex;flex-direction:column;gap:8px;min-width:400px"><h2>Sell a card · +${g} Gold each</h2><p class="small">Selling is free (not an action). The card goes to its discard pile (20.p).</p><div class="opts bs-list">${rows || '<span class="small">Nothing to sell.</span>'}</div><div class="foot"><span class="spacer"></span><button class="btn" data-close>Close</button></div></div>`);
+    return `<button class="btn sellrow" data-key="${attr(G.descKey(d))}" data-uid="${d.action.cardUid}"><img src="${img('card.' + c.def)}" alt="">${esc(def?.name ?? c.def)}${saved ? ' <span class="small">(saved)</span>' : ''} <span class="spacer"></span><b>+${sellGold(st(), data, whoActs(st()), d.action.cardUid)} Gold</b></button>`; }).join('');
+  openModal(`<div class="ask menu" id="sellScreen" style="display:flex;flex-direction:column;gap:8px;min-width:400px"><h2>Sell a card · +${g} Gold each</h2><p class="small">Selling is free (not an action). The card goes to its discard pile (20.p).${list.some(d => sellGold(st(), data, whoActs(st()), d.action.cardUid) > g) ? ' Your Coin Master (Selling a Card) adds 1 Gold to each sale of a different card (18.aa).' : ''}</p><div class="opts bs-list">${rows || '<span class="small">Nothing to sell.</span>'}</div><div class="foot"><span class="spacer"></span><button class="btn" data-close>Close</button></div></div>`);
   $$('#sellScreen [data-key]').forEach(b => b.onclick = () => { const d = list.find(x => G.descKey(x) === b.dataset.key); if (!d) return; closeModal(); SND.play('gold_gain'); human(d); });
 }
 // ------------------------------------------------------------------ M7 item 8: free general move (15.j): as many times as you want, along your own chain (v31.17)
@@ -2108,7 +2108,7 @@ function openCardView(uid) {
     : pv.mode === 'build' ? `<button class="btn gold" id="playThis" data-mode="build" data-piece="${pv.piece}">Use this ${esc(c.name)} card now (free): choose where…</button>`
     : `<p class="small whynot" id="cardWhy">${esc((owner && G.cardBlockReason(s, data, owner, uid)) ?? (c.battle ? "Can't play now: commit it in a battle (18.i)." : pv.reason ?? "Can't play now."))}</p>`;
   let left = CARD_VIEW_MS / 1000;
-  const p = openModal(`${whoBar(owner ?? C.viewer, 'holds this card in hand')}<div class="cardbig"><img src="${img(c.art)}" alt=""></div><div class="txt" id="cardView" data-uid="${uid}"><h2>${esc(c.name)}</h2>${c.battle ? `<span class="bclabel">${G.BATTLE_LABEL}</span>` : ''}<p>${esc(c.text)}</p>${play}${sell ? `<button class="btn" id="sellThis" data-key="${attr(G.descKey(sell))}">Sell it for ${data.rules.sellCard?.gold ?? 2} Gold (free)</button>` : ''}<button class="btn" data-close id="cvClose">Close</button><p class="small cvtimer" id="cvTimer">Closes by itself in ${left} s, or click anywhere outside the card.</p></div>`, { autoMs: CARD_VIEW_MS, cls: 'cardview' });
+  const p = openModal(`${whoBar(owner ?? C.viewer, 'holds this card in hand')}<div class="cardbig"><img src="${img(c.art)}" alt=""></div><div class="txt" id="cardView" data-uid="${uid}"><h2>${esc(c.name)}</h2>${c.battle ? `<span class="bclabel">${G.BATTLE_LABEL}</span>` : ''}<p>${esc(c.text)}</p>${play}${sell ? `<button class="btn" id="sellThis" data-key="${attr(G.descKey(sell))}">Sell it for ${sellGold(st(), data, whoActs(st()), uid)} Gold (free)</button>` : ''}<button class="btn" data-close id="cvClose">Close</button><p class="small cvtimer" id="cvTimer">Closes by itself in ${left} s, or click anywhere outside the card.</p></div>`, { autoMs: CARD_VIEW_MS, cls: 'cardview' });
   const tick = setInterval(() => { left -= 1; const t = $('#cvTimer'); if (!t || left < 0) { clearInterval(tick); return; } t.textContent = `Closes by itself in ${left} s, or click anywhere outside the card.`; }, 1000);
   p.then(() => clearInterval(tick));
   const pt = $('#playThis');

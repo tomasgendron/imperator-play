@@ -57,7 +57,8 @@ export function battleOdds(a, d, maxA = 3, maxD = 2, bonus = 0) {
 
 // ------------------------------------------------------------------ evaluation
 const W = { prestige: 60, province: 10, bonusTroop: 4, reward: 3, troop: 2.5, troopOver10: 0.8, gold: 1.2, card: 6, saved: 4, catapult: 4, road: 3, revolt: 6, threat: 0.35, under: 6 };
-const CARD_VALUE = { revolt: 5, assassin: 4, bribe_the_ally: 5, kill_revolt_leader: 5, busy_little_bee: 5, battlefield_imperator: 4, elephants: 6, moral_boost: 5, horn_of_titus_pullus: 5 };
+const CARD_VALUE = { revolt: 5, assassin: 4, bribe_the_ally: 5, kill_revolt_leader: 5, busy_little_bee: 5, battlefield_imperator: 4, elephants: 6, moral_boost: 5, horn_of_titus_pullus: 5,
+  coin_master_selling: 8, coin_master_unused: 8 };   // v31.37 (18.aa, 18.ab): a lasting Gold bonus while held — keep it, never sell it (selling ends the bonus)
 const handValue = (state, p) => p.hand.reduce((t, c) => t + (CARD_VALUE[state.cards[c.uid].def] ?? W.card), 0);
 
 function playerScore(state, data, pid, cache) {
@@ -374,7 +375,8 @@ export function chooseAction(state, data, opts = {}) {
   const scored = [];
   for (const d of legal) {
     let a = d.action; let v;
-    const cost = ACTION_COST.has(d.type) ? -data.rules.unusedActionGold * W.gold : 0;
+    // the Gold an action gives up from the unused-action bonus (17.o); v31.37 (18.ab): with Coin Master (Unused Actions) the last unused action is worth 2
+    const cost = ACTION_COST.has(d.type) && inActions ? -(S.unusedGold(state, data, me).gold - S.unusedGold(state, data, me, state.turn.actionsUsed + 1).gold) * W.gold : ACTION_COST.has(d.type) ? -data.rules.unusedActionGold * W.gold : 0;
     switch (d.type) {
       case 'END_TURN': v = 0.5; break;
       case 'PREVIEW_TARGET': v = 3; break;
@@ -388,11 +390,12 @@ export function chooseAction(state, data, opts = {}) {
         const pl = playerOf(state, me); const all = [...pl.hand, ...pl.savedResources];
         const val = uid => (pl.savedResources.some(c => c.uid === uid) ? W.saved : CARD_VALUE[state.cards[uid].def] ?? W.card);
         const worst = all.reduce((m, c) => (val(c.uid) < val(m.uid) ? c : m), all[0]);
-        v = all.length >= 5 && a.cardUid === worst.uid ? 0.6 : -Infinity;
+        const passive = data.cardDefsById[state.cards[a.cardUid].def]?.kind === 'passive';   // v31.37: never sell a Coin Master (the bonus ends)
+        v = !passive && all.length >= 5 && a.cardUid === worst.uid ? 0.6 : -Infinity;
         break;
       }
       case 'BUY_GAME_CARD': {    // never peek at the card it draws: pay the price, gain an average card
-        v = -data.rules.costs.gameCardGold * W.gold - data.rules.costs.gameCardTroops * W.troop + W.card * 0.75 + (2 / 33) * W.prestige + cost;   // 2 of 33 are Prestige! (18.a)
+        v = -data.rules.costs.gameCardGold * W.gold - data.rules.costs.gameCardTroops * W.troop + W.card * 0.75 + (2 / data.rules.deckSizes.game) * W.prestige + cost;   // 2 of 35 are Prestige! (18.a)
         break;
       }
       case 'BUILD_ROAD':

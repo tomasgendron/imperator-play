@@ -78,7 +78,7 @@ export function describePrompt(state, data) {
     resourceBuild: `builds the ${f.piece} or saves the card`, chooseProvince: { taxTroop: 'chooses the province that pays the tax troop', decreeLegion: 'chooses the province that sends the Decree legion', removedProvince: 'chooses the province the Emperor restores (18.q)', removedTroops: 'chooses where the removed troops go', fleeDestination: 'chooses where the fleeing troops retreat to (17.aa)', bribeReinforce: 'moves troops into the newly-bribed ally from one of their own provinces (0 = move none, up to the move limit, no route needed — 18.v)' }[f.purpose] ?? 'chooses where the survivors go',
     chooseBorrow: `chooses how many natives to borrow (0-${f.max})`, chooseBattleCards: 'chooses battle cards', choosePerk: 'chooses a general perk',
     responseWindow: { revoltResponse: `may play Kill Revolt leader! to stop the revolt in ${f.province}`, displeasedResponse: `may play Busy Little Bee! to redirect ${f.def}`, defenceAnnounced: (() => { const parts = []; const fl = fleeOptions(state, data); if (fl) parts.push(`flee the battle (lose ${fl.losses} of ${fl.troops}, ${fl.survivors} retreat)`); if (f.card) parts.push('sound the Horn of Titus Pullus'); if (summonGeneralTarget(state, data, f.player)) parts.push('summon the general to the battle'); return parts.length ? `may ${parts.join(', ')} or pass` : 'is attacked, and can only pass'; })() }[f.window] ?? 'answers the response window',
-    discardCards: `loses ${f.count} saved card(s) to the Emperor's tax`, battleContinue: 'continues the battle or retreats', placeSurvivors: `places the survivors (up to ${f.maxBack} back)`,
+    discardCards: `loses ${f.count} random saved card(s) to the Emperor's tax`, battleContinue: 'continues the battle or retreats', placeSurvivors: `places the survivors (up to ${f.maxBack} back)`,
     returnReinforcements: `chooses whether the Horn troops go back to ${prov(data, f.from)} (0-${f.max}, optional)`,
   }[f.kind] ?? f.kind;
   return `${head}: ${who} ${what}.`;
@@ -211,7 +211,8 @@ const T = {
   goldConfiscated: (e, st) => `The Emperor confiscates ${G(e.pub.lost)} from ${pn(st, e.pub.player)} (${e.pub.left} left)${e.pub.poverty ? '; poverty costs 1 Prestige' : ''}.`,
   provinceRemoved: (e, st, d) => `The Emperor removes ${pn(st, e.pub.player)} from ${prov(d, e.pub.province)}: it is unconquered again (no Prestige lost)${e.pub.carthageRegainedSpirit ? '; Carthage regains its spirit' : ''}.`,
   troopsStolen: (e, st) => `The Emperor steals ${e.pub.total} bonus troop(s) from ${pn(st, e.pub.player)}: ${e.pub.toRoma} go to Roma.`,
-  cardsTaxed: (e, st) => `The Emperor taxes ${pn(st, e.pub.player)}: ${e.pub.n} card(s) lost (${e.pub.defs.join(', ')}).`,
+  cardsTaxed: (e, st, d) => `The Emperor taxes ${pn(st, e.pub.player)}: ${e.pub.n} card(s) taken at random (${e.pub.defs.map(x => d?.cardDefsById[x]?.name ?? x).join(', ')}).`,
+  coinMasterBonus: (e, st, d) => `${pn(st, e.pub.player)} shows ${d?.cardDefsById[e.pub.def]?.name ?? e.pub.def}: +${G(e.pub.gold)} ${e.pub.reason === 'sale' ? `for selling ${d?.cardDefsById[e.pub.sold]?.name ?? e.pub.sold}` : 'for unused actions'}, and keeps the card (${e.rule}).`,
   turnEnded: (e, st) => `${pn(st, e.pub.player)} ends turn ${e.pub.number}.`,
   gameWon: (e, st) => e.pub.lastStanding ? `*** ${pn(st, e.pub.player)} WINS as the last player standing ***` : e.pub.goldPrestige ? `*** ${pn(st, e.pub.player)} WINS with ${e.pub.prestige} Prestige + ${e.pub.goldPrestige} Gold Prestige (${e.pub.gold} Gold) = ${e.pub.total} ***` : `*** ${pn(st, e.pub.player)} WINS with ${e.pub.prestige} Prestige ***`,
   merchantBonus: (e, st) => `${pn(st, e.pub.player)}: Merchant Bonus, ${e.pub.roads} Roads reaching Roma, +${e.pub.gold} Gold (22.b).`,

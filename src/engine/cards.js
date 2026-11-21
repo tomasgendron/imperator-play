@@ -150,6 +150,7 @@ export function cardBlock(state, data, pid, uid) {
   if (def === 'kill_revolt_leader') return B('ONLY_AGAINST_REVOLT', 'played only when a revolt is aimed at you', '18.f', 'Kill Revolt leader! is played when a revolt is aimed at you (18.f).');
   if (def === 'horn_of_titus_pullus') return B('ONLY_WHEN_ATTACKED', 'played only when one of your provinces is attacked', '18.y', 'Horn of Titus Pullus! is played when one of your provinces is attacked (18.y).');
   if (def === 'busy_little_bee') return B('ONLY_AGAINST_DISPLEASED', 'played only when you draw a Rome Is Displeased card', '18.x', 'Busy Little Bee! is played when you draw a Rome Is Displeased card (18.x).');
+  if (d.kind === 'passive') return B('PASSIVE_BONUS', 'a lasting bonus while you hold it: never played', d.rule?.[0] ?? '18.h', `${name} is never played: it works while you hold it (${d.rule?.[0] ?? '18.h'}).`);   // v31.37 Coin Master (18.aa, 18.ab)
   const play = TURN_PLAYS[def];
   if (!play) return B('NOT_PLAYABLE', 'never played by hand: it acts when drawn', '18.h', `${name} is never played by hand.`);
   if (state.phase !== 'turn') return B('NOT_IN_TURN', 'only during a turn', '18.h');
@@ -274,7 +275,8 @@ TURN_PLAYS.assassin = {
         if (p.native.count !== null) {
           const from = p.native.count;
           p.native.count = Math.max(0, from - k.n);
-          if (p.native.present !== null) p.native.present = Math.min(p.native.present, p.native.count);
+          // v31.37 (18.e/17.v bug): the troops present die too — a depleted 5/10 struck for 2 is 3/8, not 5/8; then clamp to the new count
+          if (p.native.present !== null) p.native.present = Math.min(Math.max(0, p.native.present - k.n), p.native.count);
           if (p.native.rolled !== null) p.native.rolled = Math.min(p.native.rolled, p.native.count);
           emit(ctx, 'nativesReduced', { rule: '18.e', pub: { province: k.province, from, to: p.native.count, reason: 'assassin' } });
         } else {

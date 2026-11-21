@@ -4,13 +4,14 @@
 // Defaults (PLAN 11): Q42 recall = all perks off through the victim's next own turn; Q45 poverty tested before halving;
 // Q40 removed = conquered or allied (never a start province, never Roma), owner picks it and where its troops go, no Prestige;
 // Q41 stolen = this turn's bonus troops + Resource Card troops, each province keeps 1; Q44 taxed = hand + saved Resources + the
-// Garrison card in play, 5 or more lose 2, the victim chooses. New defaults (Q89-Q92): the Bee is played by the drawer only, a
+// Garrison card in play, 5 or more lose 2 (v31.37: taken at random, no longer the victim's choice). New defaults (Q89-Q92): the Bee is played by the drawer only, a
 // redirected card cannot be redirected again, the Bee's Gold follows the Rome Roll tax route (holder of Roma, else the pile).
 import { fail, check, emit, pushFrame, popFrame, topFrame, mustPlayer, playerOf, toDiscard, awardPrestige } from './core.js';
 import { define } from './actions.js';
 import { registerEffect } from './registry.js';
 import { changeTroops, moveSurvivors, provinceChoiceHandlers, responseWindows, turnHooks, romaConvert } from './turn.js';
 import { heldLongEnough, rivals } from './cards.js';
+import { int } from './rng.js';
 import * as S from './selectors.js';
 
 const nm = (data, id) => data.provincesById[id]?.name ?? id;
@@ -181,12 +182,19 @@ turnHooks.pendingStealToRoma = (ctx, pid) => {
   if (pl.out || state.phase !== 'turn') return;
   if (pending.def === 'steals_troops') stealBonusTroops(ctx, pid, true);
 };
-// 18.u Emperor taxes you! (Q44: the victim chooses)
+// 18.u Emperor taxes you! (v31.37, Vidi 2026-11-20: taken at RANDOM, Q212-Q216; replaces Q44 "the victim chooses").
+// The count is unchanged (1; 2 with 5 or more saved cards). No die: the cards are drawn sight unseen from every taxable card
+// (hand Game Cards incl. a Coin Master, saved Resource cards, the Garrison card in play) with the game RNG. Nothing can be protected.
+// A Busy Little Bee! redirect (18.x) lands here for the new victim, who is taxed at random the same way.
+export function randomTaxPick(state, uids, n) {
+  const pool = uids.slice(); const out = [];
+  for (let k = 0; k < n && pool.length; k++) out.push(pool.splice(int(state.rng, pool.length) - 1, 1)[0]);
+  return out;
+}
 EFFECTS.taxes_you = (ctx, pid) => {
   const { state, data } = ctx; const all = taxableCards(state, pid); const n = taxCount(state, data, pid);
   if (!n) return none(ctx, pid, 'taxes_you', 'no saved cards', '18.u');
-  if (n === all.length) return loseCards(ctx, pid, all);
-  pushFrame(ctx, { kind: 'discardCards', purpose: 'taxes', player: pid, count: n, options: all });
+  loseCards(ctx, pid, n === all.length ? all : randomTaxPick(state, all, n));
 };
 function loseCards(ctx, pid, uids) {
   const { state } = ctx; const pl = mustPlayer(state, pid);
@@ -194,16 +202,18 @@ function loseCards(ctx, pid, uids) {
     for (const k of ['hand', 'savedResources', 'inPlay']) { const i = pl[k].findIndex(c => c.uid === uid); if (i >= 0) pl[k].splice(i, 1); }
     toDiscard(state, uid);
   }
-  emit(ctx, 'cardsTaxed', { actor: pid, rule: '18.u', pub: { player: pid, defs: uids.map(u => defOf(state, u)), n: uids.length } });
+  emit(ctx, 'cardsTaxed', { actor: pid, rule: '18.u', pub: { player: pid, defs: uids.map(u => defOf(state, u)), n: uids.length, random: true } });   // v31.37: always taken at random (18.u)
 }
+// v31.37: no new game opens a discardCards frame any more (the tax is random). DISCARD_CARDS is kept ONLY so a save made mid-tax by
+// an older build can still finish: the legacy frame offers a single "lose N random card(s)" answer with no card choice (legal.js).
 define('DISCARD_CARDS', {
   frame: ['discardCards'],
   run(ctx, a) {
-    const f = topFrame(ctx.state);
-    check(Array.isArray(a.cardUids) && a.cardUids.length === f.count && new Set(a.cardUids).size === f.count, 'WRONG_COUNT', `Choose exactly ${f.count} different card(s) to lose (18.u).`, '18.u');
-    for (const u of a.cardUids) check(f.options.includes(u), 'NOT_AN_OPTION', `${u} is not one of your saved cards.`, '18.u');
+    const { state } = ctx; const f = topFrame(state);
+    check(a.cardUids === undefined, 'NO_CHOICE', 'The Emperor takes the cards at random: you cannot choose them (18.u).', '18.u');
     popFrame(ctx);
-    loseCards(ctx, f.player, a.cardUids);
+    const live = f.options.filter(u => taxableCards(state, f.player).includes(u));
+    loseCards(ctx, f.player, randomTaxPick(state, live, Math.min(f.count, live.length)));
   },
 });
 

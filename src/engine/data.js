@@ -5,7 +5,7 @@ import { isDeclared, PERK_HOOKS } from './registry.js';
 export const DECKS = ['game', 'resource', 'displeased', 'decree'];
 export const CARD_TYPES = ['battle', 'other'];
 export const KINDS = {
-  game: ['battle', 'action', 'reaction', 'enabler', 'auto'],
+  game: ['battle', 'action', 'reaction', 'enabler', 'auto', 'passive'],   // v31.37: passive = held in hand as a lasting bonus, never played (Coin Master, 18.aa, 18.ab)
   resource: ['auto', 'buildOrSave'],
   displeased: ['auto'],
   decree: ['decree'],

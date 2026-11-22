@@ -1,5 +1,13 @@
 [
  {
+  "version": "31.42",
+  "date": "2026-11-22",
+  "title": "The Generals box on the start screen no longer jumps around",
+  "bullets": [
+   "The Generals box on the start screen now stays the same width no matter which general you hover: the description text wraps inside the box instead of stretching it (Germanicus's long description used to make the whole box wider than Augustus's short one)."
+  ]
+ },
+ {
   "version": "31.41",
   "date": "2026-11-22",
   "title": "Spy in the Tent! now says what it stole",

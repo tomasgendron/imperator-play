@@ -649,7 +649,8 @@ table.seats .pickbtn.on{outline:2px solid var(--gold);background:#fff4cf}
 .modal.genview [data-close]{align-self:flex-start}
 .player .gcard{cursor:zoom-in}
 .setleft{flex:1 1 600px;min-width:0;max-width:800px}
-.genrow .genhint{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;min-height:2.4em;font-size:11.5px}
+.genrow .genhint{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;min-height:2.4em;font-size:11.5px;contain:inline-size}
+/* v31.42: the hint's text is long for some generals (Germanicus) and short for others (Augustus); without contain:inline-size its intrinsic width stretches the shrink-to-fit setup card, so the whole Generals box jumps as the mouse moves between cards. Containing the inline size keeps the text wrapping inside whatever width the layout gives it. */
 .setupcard.wide .gthumb .gpick img{height:84px}
 .modal.genview .artnote{margin:0;color:#7a6a4a;font-style:italic}
 

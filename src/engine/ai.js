@@ -386,6 +386,12 @@ export function chooseAction(state, data, opts = {}) {
         v = front(a.to) >= Math.max(1, front(at) + 2) ? 1 + front(a.to) * 0.01 : -Infinity;
         break;
       }
+      case 'RECALL_MOVE_GENERAL': {   // v31.38 (18.o): the recall-end placement before the Game Roll — the same bar as the free move (15.j)
+        const front = id => (attackTargets(state, data, me, id).length ? S.maxLeaving(state, data, id) : -1);
+        const at = playerOf(state, me).general.at;
+        v = front(a.to) >= Math.max(1, front(at) + 2) ? 1 + front(a.to) * 0.01 : -Infinity;
+        break;
+      }
       case 'SELL_CARD': {      // conservative (20.p): only trims a big hand (the Emperor's tax, 18.u) by its least useful card
         const pl = playerOf(state, me); const all = [...pl.hand, ...pl.savedResources];
         const val = uid => (pl.savedResources.some(c => c.uid === uid) ? W.saved : CARD_VALUE[state.cards[uid].def] ?? W.card);

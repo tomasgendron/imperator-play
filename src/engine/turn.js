@@ -223,6 +223,15 @@ export function generalMoveTargets(state, data, pid) {
   if (!o.free || !at || S.generalRecalled(state, pid) || (o.oncePerTurn && state.turn.generalMoved)) return [];
   return S.provincesOf(state, pid).filter(id => id !== at && (!o.chainOnly || S.generalMoveRoute(state, data, pid, at, id))).sort();
 }
+/** v31.38 (18.o): where the general may be PLACED on the turn his recall ends — any owned province, before the Game Roll is
+ * rolled. [] outside that window: the recall must have just ended (turn.sub.recallMove, set in nextTurn), the turn must be
+ * at the Game Roll frame, and the general must still be in Roma. Leaving Roma he may go to any owned province (generalMoveRoute). */
+export function recallMoveTargets(state, data, pid) {
+  if (state.phase !== 'turn' || state.turn.step !== 'gameRoll' || !state.turn.sub?.recallMove) return [];
+  const pl = state.players.find(p => p.id === pid);
+  if (pl?.general?.at !== 'roma') return [];
+  return generalMoveTargets(state, data, pid);
+}
 define('MOVE_GENERAL', {
   turn: true,
   run(ctx, a) {
@@ -237,6 +246,23 @@ define('MOVE_GENERAL', {
     if (o.chainOnly) check(route, 'NO_ROUTE', `No chain of your own provinces connects ${nm(data, pl.general.at)} and ${nm(data, a.to)} (15.j, 17.z).`, '15.j');
     const from = pl.general.at; pl.general.at = a.to; state.turn.generalMoved = true;   // free: no action, no Gold, no troops (15.j); as many times as you want per turn (v31.17)
     emit(ctx, 'generalMoved', { actor: pid, rule: '15.j', pub: { player: pid, from, to: a.to, path: route?.path ?? [from, a.to] } });
+  },
+});
+// ------------------------------------------------------------------ the recall-end placement (18.o, v31.38): on the turn a recall ends, the general
+// may be placed in any owned province BEFORE the Game Roll is rolled — free, not an action, and it does not use the
+// Actions step. The gate (apply.js `preRoll`) allows it only at the Game Roll frame; the run also needs the flag
+// nextTurn set when the recall ended, and the general still in Roma. Placing him spends the offer for this turn.
+define('RECALL_MOVE_GENERAL', {
+  preRoll: true,
+  run(ctx, a) {
+    const { state, data } = ctx; const pid = active(ctx); const pl = mustPlayer(state, pid);
+    const g = data.generalsById[pl.general?.id]?.name ?? 'Your general';
+    check(pl.general?.at === 'roma', 'NOT_IN_ROMA', `${g} is not in Roma.`, '18.o');
+    check(state.turn.sub?.recallMove, 'NO_RECALL_MOVE', 'The recall placement is only offered on the turn a recall ends, before the Game Roll (18.o).', '18.o');
+    check(!S.generalRecalled(state, pid), 'GENERAL_RECALLED', `${g} is recalled to Rome until the end of turn ${pl.generalRecalledThroughTurn}: he cannot leave Rome (18.o).`, '18.o');
+    check(recallMoveTargets(state, data, pid).includes(a.to), 'NO_RECALL_TARGET', `${g} cannot be placed in ${nm(data, a.to)} now (18.o).`, '18.o');
+    pl.general.at = a.to; state.turn.generalMoved = true; state.turn.sub.recallMove = false;   // free: no action, no Gold, no troops (15.j, 18.o)
+    emit(ctx, 'generalMoved', { actor: pid, rule: '18.o', pub: { player: pid, from: 'roma', to: a.to, path: ['roma', a.to] } });
   },
 });
 
@@ -302,6 +328,7 @@ function romeRoll(ctx, pid, number) {
 
 defineRoll('gameRoll', (ctx, f) => {
   const { state, data } = ctx; const pid = f.player;
+  state.turn.sub.recallMove = false;   // v31.38 (18.o): the roll is made — the recall placement offer is spent, placed or not
   let v = roll(ctx, data.rules.dice.gameRoll, 'gameRoll', pid);
   const pl = mustPlayer(state, pid); const eg = data.rules.earlyGameRerolls;
   if (pl.gameRollsTaken < eg.gameRollsPerPlayer) {                   // early-game protection: re-roll 1, 2, 9, 10 in a player's first 2 Game Rolls (16.d, 17.b)
@@ -680,6 +707,7 @@ export function nextTurn(ctx) {
   if (pl?.generalRecalledThroughTurn !== null && pl?.generalRecalledThroughTurn !== undefined && state.turn.number > pl.generalRecalledThroughTurn && pl.general?.at === 'roma') {
     const through = pl.generalRecalledThroughTurn;
     pl.generalRecalledThroughTurn = null;
+    state.turn.sub.recallMove = true;   // v31.38 (18.o): the placement offer — any owned province, before the Game Roll is rolled
     emit(ctx, 'recallEnded', { actor: next, rule: '18.o', pub: { player: next, throughTurn: through } });
   }
 }

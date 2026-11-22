@@ -1,7 +1,8 @@
 # Imperator
 
 Imperator is a strategy board game set in the Roman world, for 2 or 3 players, played in the browser. Each player is a general:
-conquer provinces, make alliances, play cards and build, and be the first to reach 8 Prestige.
+conquer provinces, make alliances, play cards and build, and be the first to reach the Prestige target — 8 on the small map,
+11 on the large map (adjustable on the setup screen, 8–20).
 
 ## Play
 Open **https://tomasgendron.github.io/imperator-play/** in a desktop browser (Chrome, Edge, Firefox or Safari). Nothing to install.
@@ -14,6 +15,6 @@ If the page looks broken right after an update, reload it with Ctrl+Shift+R (Cmd
 ## Credits
 The art and sounds were made by Vidi and Grok Bot (the sounds are synthesised, no samples).
 
-Build: v31.37 · Nov 20 2026 7:03 PM MT (M19.37).
+Build: v31.39 · Nov 21 2026 6:11 PM MT (M19.39).
 
 See LICENSE: free to play and to share the link; all other rights reserved.

@@ -8,7 +8,7 @@ import { sideLabel } from './setup.js';
 import { topFrame } from './core.js';
 import * as S from './selectors.js';
 import { attackTargets, summonGeneralTarget, fleeOptions } from './battle.js';
-import { generalMoveTargets, sellableCards } from './turn.js';
+import { generalMoveTargets, recallMoveTargets, sellableCards } from './turn.js';
 import { TURN_PLAYS, heldLongEnough, revoltTargets, bribeTargets, bribeOwnTargets, maxBribeReinforce, assassinTargets, assassinKills, strikeTroops, sneakAttacks } from './cards.js';
 
 const nm = (data, id) => data.provincesById[id]?.name ?? id;
@@ -54,6 +54,9 @@ export function legalActions(state, data) {
     switch (f.kind) {
       case 'roll':
         add({ type: 'ROLL' }, `Roll the ${f.die}${ROLL_LABEL[f.purpose] ? ' (' + ROLL_LABEL[f.purpose](f) + ')' : ''}`);
+        // v31.38 (18.o): on the turn a recall ends, the general may be placed in any owned province before the Game Roll
+        // is rolled — free, not an action. The descriptors sit beside the Roll, so the move is offered while it is legal.
+        if (f.purpose === 'gameRoll') for (const to of recallMoveTargets(state, data, who)) add({ type: 'RECALL_MOVE_GENERAL', to }, `Place the general in ${nm(data, to)} before the Game Roll (free, not an action, 18.o)`);
         // Q142: the attacker may retreat once the cards are committed, before round 1 is rolled (the defender takes its cards back, 18.i)
         if (f.purpose === 'battleRound' && f.round === 1 && state.battle?.mode === 'attack' && !state.battle.rounds?.length && data.rules.earlyRetreatCardsBack?.retreatBeforeRound1 !== false)
           add({ type: 'BATTLE_RETREAT' }, `Retreat before rolling (survivors go home${keepsCards(state, data) ? '; the defender keeps its battle cards' : ''})`);

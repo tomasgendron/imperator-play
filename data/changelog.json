@@ -1,6 +1,25 @@
 [
  {
   "bullets": [
+   "The start screen now lets you choose how much Prestige wins the game — anything from 8 to 20 (the usual 8 on the small map, 11 on the large map, is still the default).",
+   "The chosen target applies to everyone — human, AI and online seats — and a saved game keeps the target it was started with, so old saves play exactly as before."
+  ],
+  "date": "2026-11-21",
+  "title": "Choose how much Prestige wins",
+  "version": "31.39"
+ },
+ {
+  "version": "31.38",
+  "date": "2026-11-20",
+  "title": "What's New during play & placing your general after a recall",
+  "bullets": [
+   "The What's New button is now in the top bar during a game on desktop, so you can read the changelog mid-game. On your phone it's under Menu — Game.",
+   "When a recall ends, you can now place your general in any of your provinces before the Game Roll — free, and it does not use an action. If you roll first, or leave him in Roma, he moves the usual way in your Actions step.",
+   "Rule 18.o now says so: the placement is free, not an action, and it does not use the Actions step."
+  ]
+ },
+ {
+  "bullets": [
    "Two new Game Cards, the Coin Masters (rules 18.aa and 18.ab). There is 1 of each, so the Game Card deck now has 35 cards, and both are in the deck from the first cycle. You keep a Coin Master in your hand as a lasting bonus; it is never played and does not use your one card play per turn.",
    "Coin Master (Selling a Card): while you hold it, every card you sell (other than this one) pays 3 Gold instead of 2. Selling the Coin Master itself pays the normal 2 Gold and ends the bonus. Gold from Resource cards is unchanged.",
    "Coin Master (Unused Actions): while you hold it at the end of your Actions, you get 1 extra Gold if you left any action unused — 3 Gold for taking no actions, 2 Gold for taking one, nothing for taking both.",

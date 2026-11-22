@@ -1,7 +1,7 @@
 // Imperator game page (M5): the approved mockup v12 look wired to the engine. State lives in a console session (pure, src/ui/consoleModel.js);
 // every click is a legal descriptor from legalActions (so the page can never send an illegal move); AI seats move after a short,
 // speed-scaled delay; events drive the dice, battle and card animations, sounds and the log. Hot-seat privacy: model.js viewerFor/handFor.
-import { loadGameData } from '../loadData.js';
+import { loadGameData, datasetFor } from '../loadData.js';
 import { resolveAsset } from '../assets.js';
 import { setupChoices, checkSetup, current } from '../consoleModel.js';
 import { topFrame, whoActs, minGarrison, totalTroops, provincesOf as ownedBy, viewFor, eventsFor, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces, sellGold } from '../../engine/index.js';
@@ -49,11 +49,22 @@ const mapImg = () => img(data.mapId && data.mapId !== 'small1' ? 'map.' + data.m
 let mapPick = null;   // the setup screen's manual choice; null = the default for the player count
 const autoMap = n => (n === 3 ? 'large1' : 'small1');   // v31.3: hosting online too (Large Map 1 is online now)
 const mapWanted = () => mapPick ?? autoMap(seats.length);
-/** Plays/draws on map `id` (no setup reset). Returns true when the map changed. */
-function setMap(id) {
-  if (!datasets?.[id] || data === datasets[id]) return false;
-  data = datasets[id]; $('#links').innerHTML = ''; $('#arrows').innerHTML = ''; $('#mapImg').src = mapImg(); if ($('#spImg')) $('#spImg').src = mapImg();
+// v31.39: the start screen's Prestige-to-win pick (8–20); null = the map default (8 on Small Map 1, 11 on Large Map 1).
+// A custom pick is kept when the map changes — only the *default* follows the map — and it is the host's choice for an
+// online game; a loaded save plays at its own recorded target instead (G.saveWinPrestige).
+let winPick = null;
+const mapDefaultWin = id => datasets[id]?.rules.winPrestige ?? 8;
+const winTarget = () => winPick ?? mapDefaultWin(data.mapId);
+const winTargetFor = id => winPick ?? mapDefaultWin(id);
+/** Plays/draws on dataset `d` (no setup reset). Returns true when the dataset changed. */
+function setData(d) {
+  if (!d || data === d) return false;
+  data = d; $('#links').innerHTML = ''; $('#arrows').innerHTML = ''; $('#mapImg').src = mapImg(); if ($('#spImg')) $('#spImg').src = mapImg();
   document.body.dataset.map = data.mapId; return true;
+}
+/** Plays/draws on map `id` (no setup reset). `win` is the v31.39 win target (8–20; null = the map default). Returns true when the map changed. */
+function setMap(id, win) {
+  return setData(datasetFor(id, win));
 }
 /** The map has fixed start provinces for this many players (21.f: Large Map 1, 3 players): picked in the game, highest roll first. */
 const fixedStartsNow = () => !!data.rules.fixedStarts?.[String(seats.length)];
@@ -348,7 +359,7 @@ function renderStartPick() {
   $('#spRandom').onclick = () => setStart(i, '');
 }
 function renderMapChoice() {
-  if ($('#winPrest')) $('#winPrest').textContent = data.rules.winPrestige;   // v31.1: Large Map 1 is won with 11, Small Map 1 with 8
+  const ws = $('#winPickSel'); if (ws) ws.value = String(winTarget());   // v31.39: the win target (map default 8/11, or the start-screen pick)
   $$('#mapPick .segb').forEach(b => { const on = b.dataset.map === data.mapId; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
   const fx = data.rules.fixedStarts?.[String(seats.length)];
   const sm = $('#startMode');
@@ -372,6 +383,7 @@ const engineSeats = () => seats.map((x, i) => ({ name: x.controller === 'remote'
 function startGame() {
   if (!validate()) return;
   const mode = $('#startMode').value;
+  setMap(data.mapId, winTarget());   // v31.39: the session is built on the dataset with the chosen win target, so config.winPrestige records it
   try {
     C.S = G.newSession(data, { seed: seedNow(), mode, seats: engineSeats().map(x => ({ ...x, startProvince: mode === 'selected' ? x.startProvince : undefined })) });
     if (mode === 'selected' && pickOrder().length) C.S = G.playRollOff(C.S);   // Q110: already rolled on the setup screen (same seed, same dice): not asked again
@@ -382,13 +394,13 @@ function startGame() {
 
 // ------------------------------------------------------------------ v31.33 Test Mode (local only: never an online game)
 const testHost = () => ({
-  dataForMap: id => datasets[id] ?? data,
+  dataForMap: id => datasetFor(id, winTargetFor(id)) ?? data,   // v31.39: a test game plays at the start screen's win target (or the map default)
   mapIds: Object.keys(datasets ?? {}),
   mapId: data.mapId,
   img: id => img(id),
   toast: m => toast(m),
   sound: id => SND.play(id),
-  onStartTest: session => { setMap(session.data.mapId); C.S = session; closeTestSetup(true); SND.play('deck_shuffle'); enterGame(); },
+  onStartTest: session => { setData(session.data); C.S = session; closeTestSetup(true); SND.play('deck_shuffle'); enterGame(); },   // v31.39: the session's own dataset carries the win target — setMap(mapId) would drop it back to the map default
   onCancel: () => closeTestSetup(),
   getSession: () => C.S,
   applyTweak: fn => { const r = fn(C.S); if (!r.error) { C.S = r.session; render(); } return r; },
@@ -525,7 +537,7 @@ function onlineSave(text) { try { const o = typeof text === 'string' ? JSON.pars
 async function resumeOnline(obj) {
   const show = m => { const el = $('#ldErr') ?? $('#setupErrors'); if (el) el.textContent = m; else toast(m); };
   const mid = G.saveMapId(obj); if (!datasets[mid]) { show(`This save is for a map this build does not have (${mid}).`); return false; }
-  setMap(mid);   // v31.3: Large Map 1 online too
+  setMap(mid, G.saveWinPrestige(obj));   // v31.3: Large Map 1 online too — v31.39: at the save's own win target
   let ns; try { ns = G.readSave(obj, data); } catch (e) { show(e.message); return false; }
   const on = obj.online; netLeave(); clearTimeout(C.aiTimer);
   playWhere = 'host'; show('Reopening the room…');
@@ -732,8 +744,8 @@ function netLost(msg) {
   n.lost = msg; document.body.dataset.netLost = '1'; render();
   openModal(`<div class="ask" id="netLostBox"><h2>Disconnected</h2><p>${esc(msg)}</p><button class="btn gold" data-close>OK</button></div>`);
 }
-/** v31.3: a guest plays on the host's map (state.config.map; none = Small Map 1). */
-function guestMap(s) { const id = s?.config?.map ?? 'small1'; if (datasets?.[id] && setMap(id) && C.S) C.S = { ...C.S, data }; }
+/** v31.3: a guest plays on the host's map (state.config.map; none = Small Map 1) — v31.39: and at the host's win target. */
+function guestMap(s) { const id = s?.config?.map ?? 'small1'; if (datasets?.[id] && setMap(id, s?.config?.winPrestige) && C.S) C.S = { ...C.S, data }; }
 function guestEnter() {
   const u = C.NET.q.shift(); if (!u) return;
   guestMap(u.state);
@@ -942,18 +954,19 @@ async function playEvents(events, before = null) {
       case 'provinceAllied': toast(`${pn(e.pub.player)} allies with ${prov(e.pub.province)}`); break;
       case 'turnStarted': toast(`Turn ${e.pub.number}: ${pn(e.pub.player)}`); $('#arrows').innerHTML = ''; if (!s.battle) clearBattle(); break;
       case 'recallEnded': {   // v31.34 (Update 3, 18.o): the recall is over — only the recalled player's own screen says so
+        // v31.38 (18.o): "Move general" now places him before the Game Roll. The choice is only remembered here
+        // (recallMovePending); the picker opens from render(), once this apply has finished — playEvents runs inside
+        // apply(), while the controller is busy and C.viewer is still the previous player, so no move can be sent from
+        // here (human() would refuse it and mineNow() is empty). Later leaves him in Roma for the Actions step, as before.
         const me = C.NET ? C.NET.me : G.viewerFor(s, C.viewer);   // playEvents runs before render(), so C.viewer is still the previous player in hot-seat
         if (e.pub.player === me && G.isHuman(s, e.pub.player)) {
           const pl = s.players.find(p => p.id === e.pub.player);
           const gen = pl?.general ? data.generalsById[pl.general.id]?.name ?? 'Your general' : 'Your general';
           let move = false;
-          const p = openModal(`<div class="ask" id="recallOver"><h2>Your recall is over!</h2><p><b>${esc(gen)}</b> is free to move again — the Emperor's recall has ended (18.o).</p><p class="small">Leaving Roma he may go to any owned province, not just a neighbouring one. Move him from the ⚑ General button or by tapping his token on the map.</p><div class="foot"><button class="btn" data-close>Later</button><span class="spacer"></span><button class="btn gold" id="recallMove">Move general</button></div></div>`);
+          const p = openModal(`<div class="ask" id="recallOver"><h2>Your recall is over!</h2><p><b>${esc(gen)}</b> is free to move again — the Emperor's recall has ended (18.o).</p><p class="small">Leaving Roma he may go to any owned province, not just a neighbouring one. Move him now, before the Game Roll — free, and not an action — or leave him in Roma and move him in the Actions step.</p><div class="foot"><button class="btn" data-close>Later</button><span class="spacer"></span><button class="btn gold" id="recallMove">Move general</button></div></div>`);
           const btn = $('#recallMove'); if (btn) btn.onclick = () => { move = true; closeModal(); };
           await p;
-          if (move) {   // the free move is only offered in the Actions step (legal.js): at turn start it is not legal yet
-            if (mineNow().some(d => d.type === 'MOVE_GENERAL')) { SND.play('button_click'); openGenMove(); }
-            else toast('Your general is free — move him from the ⚑ General button once the Actions step starts.');
-          }
+          if (move) recallMovePending = e.pub.player;
         }
         break;
       }
@@ -1249,6 +1262,25 @@ function render() {
   if (C.viewer && news[C.viewer]?.length && !C.busy) setTimeout(showNews, 0);
   deadEndFlag();
   sneakResumeCheck(legal);
+  recallMoveCheck(legal);
+}
+/** v31.38 (18.o): the recall-end placement, opened from render() once the apply that carried the recallEnded event
+ * has finished (see the recallEnded case). The window is the Game Roll frame: if it has passed (the roll was made,
+ * or the seat changed) the pending choice is dropped silently — Later, in effect. If another modal is up (an AI
+ * summary online), the check waits and retries: the picker is time-sensitive, the summary is not. */
+let recallMovePending = null, recallMoveRetry = null;
+function recallMoveCheck(legal) {
+  if (!recallMovePending || C.busy) return;
+  const s = st(); const f = topFrame(s);
+  const list = (legal ?? []).filter(d => d.type === 'RECALL_MOVE_GENERAL');
+  const windowOpen = s.phase === 'turn' && s.turn.step === 'gameRoll' && f?.kind === 'roll' && f.purpose === 'gameRoll' && C.viewer === recallMovePending;
+  if (!windowOpen || !list.length) { recallMovePending = null; return; }   // rolled, another seat, or nowhere to go (owns nothing but Roma): Later, silently
+  if (document.querySelector('#ovModal.on')) {   // another modal is up (an AI summary online): wait for it, then look again
+    if (!recallMoveRetry) recallMoveRetry = setTimeout(() => { recallMoveRetry = null; if (recallMovePending) render(); }, 600);
+    return;
+  }
+  recallMovePending = null;
+  SND.play('button_click'); openRecallMove(list);
 }
 /** v31.10: a Sneak Attack target whose natives were rolled on selection (18.z): once the roll has landed, reopen the flow at the troops step. */
 function sneakResumeCheck(legal) {
@@ -1480,6 +1512,16 @@ function openGenMove() {
   openModal(`<div class="ask menu" id="genTargets" style="display:flex;flex-direction:column;gap:8px;min-width:420px"><h2>Move ${esc(gen?.name ?? 'your general')} (free)</h2><p class="small">Now in <b>${esc(g?.at ? prov(g.at) : '?')}</b>. As many times as you want, any time after the Revolt Roll, along a chain of your own provinces. It is not an action (15.j).</p><div class="opts bs-list">${rows}</div><div class="foot"><span class="spacer"></span><button class="btn" data-close>Cancel</button></div></div>`);
   $$('#genTargets [data-prov]').forEach(b => { b.onmouseenter = () => flashToken(b.dataset.prov); });
   $$('#genTargets [data-key]').forEach(b => b.onclick = () => { const d = list.find(x => G.descKey(x) === b.dataset.key); if (!d) return; closeModal(); human(d); });
+}
+// ------------------------------------------------------------------ v31.38 (18.o): the recall-end destination picker — the Actions-step openGenMove,
+// for the pre-roll placement. Cancel leaves the general in Roma (the Later path: he moves in the Actions step).
+function openRecallMove(list) {
+  const s = st(); const pid = whoActs(s);
+  const g = G.playerById(s, pid)?.general; const gen = g ? data.generalsById[g.id] : null;
+  const rows = list.filter(d => d.type === 'RECALL_MOVE_GENERAL').map(d => { const p = s.provinces[d.action.to]; return `<button class="btn tgt" data-key="${attr(G.descKey(d))}" data-prov="${d.action.to}"><b>${esc(prov(d.action.to))}</b> <span class="small">${p.troops} troop${p.troops === 1 ? '' : 's'}${p.status === 'allied' ? ' · allied' : ''}</span></button>`; }).join('');
+  openModal(`<div class="ask menu" id="recallGenTargets" style="display:flex;flex-direction:column;gap:8px;min-width:420px"><h2>Place ${esc(gen?.name ?? 'your general')} before the Game Roll (free)</h2><p class="small">Now in <b>Roma</b>. Your recall is over — place him in any owned province before the Game Roll. It is not an action (18.o).</p><div class="opts bs-list">${rows}</div><div class="foot"><span class="spacer"></span><button class="btn" data-close>Cancel</button></div></div>`);
+  $$('#recallGenTargets [data-prov]').forEach(b => { b.onmouseenter = () => flashToken(b.dataset.prov); });
+  $$('#recallGenTargets [data-key]').forEach(b => b.onclick = () => { const d = list.find(x => G.descKey(x) === b.dataset.key); if (!d) return; closeModal(); human(d); });
 }
 /** Buy a Merchant ship (5 Gold, 1 action) in two steps, or move one you own. */
 function openShips() {
@@ -1911,7 +1953,7 @@ function renderMap(legal) {
     if (showMin) { const m = G.shownMin(s, data, id); if (m?.min) mk('lbl', 'min ' + m.min, x, y + 5.7, 'Minimum garrison'); }
     if (!p.owner && id !== 'roma' && p.native.present !== null && p.native.count !== null && p.native.present < p.native.count) mk('lbl', p.native.present + '/' + p.native.count, x, y + 5.7, 'natives present / count (depleted)');
   }
-  const canMoveGen = legal.some(x => x.type === 'MOVE_GENERAL');   // v31.13: the viewer's own token is clickable when the free move is available
+  const canMoveGen = legal.some(x => x.type === 'MOVE_GENERAL' || x.type === 'RECALL_MOVE_GENERAL');   // v31.13: the viewer's own token is clickable when the free move is available; v31.38: the recall placement too
   // v31.34 (Bug 2): generals sharing a province (Roma after a recall, or any other stack) fan out — G.generalTokenFan
   // keeps one general on the exact old spot and spreads a stack in a row, so every letter is visible and clickable
   const genHere = new Map();
@@ -1948,6 +1990,7 @@ function genTokenClick(pid) {
   if (pid !== C.viewer) { SND.play('error_denied'); toast('That is not your general.'); return; }
   if (s.phase !== 'turn' || whoActs(s) !== pid) { SND.play('error_denied'); toast("It's not your turn."); return; }
   if (mineNow().some(d => d.type === 'MOVE_GENERAL')) { SND.play('button_click'); openGenMove(); return; }
+  if (mineNow().some(d => d.type === 'RECALL_MOVE_GENERAL')) { SND.play('button_click'); openRecallMove(mineNow().filter(d => d.type === 'RECALL_MOVE_GENERAL')); return; }   // v31.38 (18.o): the pre-roll placement, while the Game Roll frame is up
   SND.play('error_denied');
   toast(G.generalMoveWhy(s, data, pid) ?? 'Your general cannot move now.');
 }
@@ -2385,11 +2428,11 @@ function loadFrom(obj, { local = false } = {}) {
     return true;
   }
   const show = m => { const el = $('#ldErr') ?? (document.body.dataset.screen === 'setup' ? $('#setupErrors') : null); if (el) el.textContent = m; else toast(m); };
-  const before = data; setMap(G.saveMapId(obj));   // v31.1: a save plays on its own map
-  let ns; try { ns = G.readSave(obj, data); } catch (e) { if (data !== before) { setMap(before.mapId); } show(e.message); return false; }
+  const before = data; setMap(G.saveMapId(obj), G.saveWinPrestige(obj));   // v31.1: a save plays on its own map — v31.39: and at its own win target
+  let ns; try { ns = G.readSave(obj, data); } catch (e) { if (data !== before) { setData(before); } show(e.message); return false; }
   if (C.NET) { netLeave(); playWhere = 'local'; }   // M11: a loaded save is played on this computer
   const prev = C.S; clearTimeout(C.aiTimer); C.S = ns; closeModal();
-  try { enterGame(); } catch (e) { console.warn('load', e); C.S = prev; if (data !== before) setMap(before.mapId); if (prev) { render(); schedule(); } else renderSetup(); show('This save could not be shown by this build: ' + e.message + ' (the file itself is not changed).'); return false; }
+  try { enterGame(); } catch (e) { console.warn('load', e); C.S = prev; if (data !== before) setData(before); if (prev) { render(); schedule(); } else renderSetup(); show('This save could not be shown by this build: ' + e.message + ' (the file itself is not changed).'); return false; }
   toast('Game loaded'); SND.play('deck_shuffle'); return true;
 }
 function showGameOver() {
@@ -2436,12 +2479,14 @@ function wireStatic() {
   $$('#pCount .segb').forEach(b => b.onclick = () => setSeatCount(+b.dataset.n));
   $('#spImg').src = mapImg();
   $$('#mapPick .segb').forEach(b => b.onclick = () => { mapPick = b.dataset.map; SND.play('button_click'); renderSetup(); });
+  const ws = $('#winPickSel'); if (ws) ws.onchange = () => { winPick = +ws.value; SND.play('button_click'); renderSetup(); };   // v31.39: adjustable Prestige to win (8–20)
   $('#startMode').onchange = renderSetup;
   $('#seed').addEventListener('input', () => { if (rollOff) { resetRollOff(); renderSetup(); } });
   $('#seedDice').addEventListener('click', () => { SND.play('button_click'); $('#seed').value = freshSeed(); if (rollOff) resetRollOff(); renderSetup(); });   // v31.11: roll a fresh seed on demand   // Q110: a new seed means a new roll-off
   $('#startGame').onclick = startGame;
   const hw = $('#howToWin'); if (hw) hw.onclick = () => showHowToWin();
   const wn = $('#whatsNew'); if (wn) wn.onclick = () => showChangelog();
+  $('#bWhatsNew').onclick = () => showChangelog();   // v31.38 (Update 1): the same changelog, in the top bar during gameplay
   const ex = $('#bExportLog'); if (ex) ex.onclick = () => exportFullLog();
   $('#resumeOnline').onclick = () => { const o = onlineSave(localStorage.getItem('imperator.autosave')); if (o) resumeOnline(o); };
   $('#resumeAuto').onclick = () => { try { loadFrom(JSON.parse(localStorage.getItem('imperator.autosave'))); } catch (e) { $('#setupErrors').textContent = 'The autosave could not be read: ' + e.message; } };

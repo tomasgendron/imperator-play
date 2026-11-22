@@ -25,6 +25,6 @@ export function readRuleLabels(root = ROOT) {
   return labels;
 }
 
-export function loadData(root = ROOT, { checkRules = true, map = DEFAULT_MAP } = {}) {
-  return buildData(readRawData(root, { map }), checkRules ? { ruleLabels: readRuleLabels(root) } : {});
+export function loadData(root = ROOT, { checkRules = true, map = DEFAULT_MAP, winPrestige = null } = {}) {
+  return buildData(readRawData(root, { map }), { ...(checkRules ? { ruleLabels: readRuleLabels(root) } : {}), ...(winPrestige === null ? {} : { winPrestige }) });
 }

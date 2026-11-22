@@ -189,11 +189,23 @@ export function validateData(raw, opts = {}) {
 }
 
 /** Validates and returns an immutable, indexed data bundle. Throws one Error listing every problem. */
+// v31.39: the Prestige needed to win is adjustable on the start screen (8–20; the map default is 8 on Small Map 1,
+// 11 on Large Map 1). `buildData` takes it as an override so every `data.rules.winPrestige` reader — the victory check,
+// the AI threat line, the pips, the win popup — follows the chosen value with no other code change.
+export const WIN_PRESTIGE_MIN = 8;
+export const WIN_PRESTIGE_MAX = 20;
+/** A start-screen / save win target, or null when it is not a usable integer in range (callers then use the map default). */
+export const validWinPrestige = v => (Number.isInteger(v) && v >= WIN_PRESTIGE_MIN && v <= WIN_PRESTIGE_MAX ? v : null);
+
 export function buildData(raw, opts = {}) {
   const errs = validateData(raw, opts);
   if (errs.length) throw new Error('Invalid game data:\n  ' + errs.join('\n  '));
   const rules = {};
   for (const [k, e] of Object.entries(mergedRuleValues(raw))) rules[k] = e.value;
+  if (opts.winPrestige !== undefined && opts.winPrestige !== null) {
+    if (validWinPrestige(opts.winPrestige) === null) throw new Error(`Invalid game data:\n  winPrestige override must be an integer ${WIN_PRESTIGE_MIN}–${WIN_PRESTIGE_MAX}, got ${opts.winPrestige}`);
+    rules.winPrestige = opts.winPrestige;
+  }
   const provinces = raw.map.provinces;
   const cardDefs = DECKS.flatMap(d => raw.cards[d].cards);
   const mapId = mapIdOf(raw.map);

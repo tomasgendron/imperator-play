@@ -1,4 +1,6 @@
-// Action table (PLAN 4). Each entry: { frame: [kinds] | undefined, turn: true | undefined, setup: true | undefined, run(ctx, action) }.
+// Action table (PLAN 4). Each entry: { frame: [kinds] | undefined, turn: true | undefined, preRoll: true | undefined, setup: true | undefined, run(ctx, action) }.
+// `preRoll` (v31.38, 18.o): the action is legal only before the Game Roll is rolled — the turn's active player, step 'gameRoll',
+// the Game Roll frame on top (apply.js gate).
 // Milestone M1.1 declares every action type of PLAN 4 so unknown types and not-yet-built ones answer with a clear error code;
 // M1.2 (setup), M1.3 (turn) and M2/M3 (battle, cards) replace the placeholders through `define`.
 import { fail } from './core.js';
@@ -10,6 +12,7 @@ export const ACTION_TYPES = Object.freeze([
   'CHOOSE_START_PROVINCE', 'CHOOSE_SIDE', 'CHOOSE_GENERAL', 'BUY_CATAPULT', 'CALL_REINFORCEMENTS', 'PLACE_SURVIVORS',
   'DISCARD_CARDS',   // M3: Emperor taxes you! (18.u, Q44)
   'MOVE_GENERAL', 'SELL_CARD',   // M7: free general move (15.j), selling cards (20.p)
+  'RECALL_MOVE_GENERAL',   // v31.38 (18.o): place the general after a recall ends, before the Game Roll is rolled
   'BUY_MERCHANT_SHIP', 'MOVE_MERCHANT_SHIP',   // v31.5 ship on a sea link; v31.8 move it for free (22.c)
   'BUY_PRESTIGE',   // v31.14: buy 1 Prestige for 20 Gold (22.g)
   'SUMMON_GENERAL', 'RETURN_REINFORCEMENTS',   // v31.4: bring a general into a battle he can reach; Horn troops may go home (18.y)

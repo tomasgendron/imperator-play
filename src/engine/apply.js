@@ -19,6 +19,14 @@ function gate(ctx, spec, action) {
     if (s.turn.activePlayerId !== action.playerId) err('NOT_YOUR_TURN', `It is ${s.turn.activePlayerId}'s turn.`);
     if (s.turn.step !== 'actions') err('WRONG_STEP', `This is only legal in the Actions step (now: ${s.turn.step}).`, '17.a');
   }
+  if (spec.preRoll) {
+    // v31.38 (18.o): the recall-end placement — the active player's turn, step 'gameRoll', the Game Roll frame on top
+    // and not yet rolled. The frame IS pending (that is the window), so there is no PENDING_FRAME check here.
+    if (s.phase !== 'turn') err('NOT_IN_TURN', 'The game is not in a turn.');
+    if (s.turn.activePlayerId !== action.playerId) err('NOT_YOUR_TURN', `It is ${s.turn.activePlayerId}'s turn.`);
+    const f = topFrame(s);
+    if (s.turn.step !== 'gameRoll' || !f || f.kind !== 'roll' || f.purpose !== 'gameRoll') err('WRONG_STEP', `The general can only be placed before the Game Roll is rolled (now: ${s.turn.step}).`, '18.o');
+  }
 }
 
 /**

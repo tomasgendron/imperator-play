@@ -1,11 +1,11 @@
 // Pure model of the M5 game page: no DOM, so `node --test` drives exactly what the page shows and clicks.
 // The page keeps a console session (src/ui/consoleModel.js) and asks this module who looks at the screen, what a human may do
 // now (grouped for the phase bar, the map and the builder), what a card looks like, which sounds an event plays, and how a save file reads.
-import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, fleeOptions } from '../../engine/index.js';
+import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, recallMoveTargets, fleeOptions } from '../../engine/index.js';
 import { newSession, play, aiToMove, aiMove, stateOf, current, formatEvent, describePrompt } from '../consoleModel.js';
 
 export { newSession, play, aiToMove, aiMove, stateOf, describePrompt };
-export { roadNetwork, shipSegments, goldPrestige };
+export { roadNetwork, shipSegments, goldPrestige, recallMoveTargets };
 export const HOW_TO_WIN = {
   title: 'How to Win',
   paragraphs: [
@@ -128,7 +128,7 @@ const CATS = {
   ATTACK: 'move', ALLY: 'move', MOVE: 'move', BUY_TROOP: 'buy', BUY_GAME_CARD: 'buy', BUY_PRESTIGE: 'buy', BUY_CATAPULT: 'build',   // M6: the Catapult is built on the Build screen (item 9)
  
   BUILD_ROAD: 'build', BUILD_WALL: 'build', BUY_MERCHANT_SHIP: 'build', MOVE_MERCHANT_SHIP: 'build', USE_SAVED_RESOURCE: 'build', PLAY_CARD: 'card', PREVIEW_TARGET: 'scout', END_TURN: 'end',
-  SELL_CARD: 'sell', MOVE_GENERAL: 'general',   // M7: free moves with their own buttons (20.p, 15.j)
+  SELL_CARD: 'sell', MOVE_GENERAL: 'general', RECALL_MOVE_GENERAL: 'general',   // M7: free moves with their own buttons (20.p, 15.j); v31.38: the recall placement (18.o)
 };
 /** Free-step legal moves grouped for the phase-bar buttons: {move, buy, build, card, scout, end, other}. */
 export function categorize(legal) {
@@ -295,6 +295,13 @@ export function makeSave(session, meta = {}) {
 export function saveMapId(input) {
   let o = input; if (typeof input === 'string') { try { o = JSON.parse(input); } catch { return 'small1'; } }
   return o?.snapshot?.config?.map ?? 'small1';
+}
+/** v31.39: the win target a save was made with (`state.config.winPrestige`), or null when the save has none or it is not
+ * a usable integer 8–20 — the caller then uses the map default, so old saves load unchanged. */
+export function saveWinPrestige(input) {
+  let o = input; if (typeof input === 'string') { try { o = JSON.parse(input); } catch { return null; } }
+  const w = o?.snapshot?.config?.winPrestige;
+  return Number.isInteger(w) && w >= 8 && w <= 20 ? w : null;
 }
 /** Reads a save (object or JSON text); throws an Error that says what is wrong. Returns a fresh session at the saved state. */
 /** Cards added to a deck after a save was made (18.z, v31.9): mint the missing copies with fresh uids (per-deck prefix + next number,
@@ -759,10 +766,13 @@ export function dieBadges(raw, final) {
  * is spent. generalMoveTargets covers "not on the map / no reachable province"; the step is checked here because
  * the engine only offers MOVE_GENERAL in the Actions step. v31.17: the move is no longer once per turn (as many times as you
  * want), so there is no "already moved" reason any more; a recalled general is stuck in Rome instead (18.o).
+ * v31.38 (18.o): on the turn a recall ends, the general may be placed in any owned province before the Game Roll is rolled —
+ * that placement is a move too, so there is no reason to give while the offer stands.
  */
 export function generalMoveWhy(state, data, pid) {
   const pl = state.players.find(p => p.id === pid);
   if (!pl?.general?.at) return 'Your general is not on the map.';
+  if (state.phase === 'turn' && recallMoveTargets(state, data, pid).length) return null;
   if (state.phase !== 'turn' || state.turn.step !== 'actions') return 'Move your general during the Actions step, after the Revolt Roll (15.j).';
   if (generalRecalled(state, pid)) return `Your general is recalled to Rome until the end of turn ${pl.generalRecalledThroughTurn}: he cannot leave Rome (18.o).`;
   if (!generalMoveTargets(state, data, pid).length) return 'Your general has no reachable province along your chain (15.j).';

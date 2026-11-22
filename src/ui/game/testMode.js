@@ -11,7 +11,7 @@ import { clone, validateState, playerOf, romaHolder, recallThrough, topFrame } f
 export const TEST_SEAT_NAMES = ['Vidi', 'Marcus', 'Livia'];
 
 /** Clamps the setup page applies to every tweak (Tomas, 2026-11-16: auto top-up + prevent illegal stats). */
-export const TEST_LIMITS = { prestige: { min: 0, max: 15 }, gold: { min: 0, max: 60 }, troops: { min: 0, max: 30 } };
+export const TEST_LIMITS = { prestige: { min: 0, max: 20 }, gold: { min: 0, max: 60 }, troops: { min: 0, max: 30 } };   // v31.39: prestige to 20, so a tester can set up one short of any win target (8–20)
 
 /** Speed-run conditions (the sentence builder on the Test Setup Page). */
 export const TEST_CONDITIONS = [
@@ -264,7 +264,7 @@ export function tweakFlipProvince(s, { province, owner, troops }) {
   return { session: pushTweak(s, ns, ev), notes, error: null };
 }
 
-/** Sets a player's prestige (0–15) or gold (0–60). Gold Prestige is derived, so no other field changes. */
+/** Sets a player's prestige (0–20) or gold (0–60). Gold Prestige is derived, so no other field changes. */
 export function tweakPlayerStat(s, { player, prestige, gold }) {
   const st = stateOf(s);
   const pl = playerOf(st, player);

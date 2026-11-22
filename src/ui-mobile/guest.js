@@ -123,7 +123,7 @@ export function createGuest(page) {
   }
   function enter() {
     const u = C.NET.q.shift(); if (!u) return;
-    page.setMap?.(u.state?.config?.map ?? 'small1');   // v31.3: the host's map
+    page.setMap?.(u.state?.config?.map ?? 'small1', u.state?.config?.winPrestige);   // v31.3: the host's map — v31.39: and the host's win target
     C.S = { data: page.data(), seed: 'room ' + C.NET.code, steps: [{ state: u.state, events: [], action: null, error: null, legal: u.legal, seq: u.seq }] }; C.NET.shown = u.seq;
     page.busyJoin(false); page.sound('deck_shuffle');
     try { page.enter(); } catch (e) { console.error('enter', e); page.say(`Joined, but the game screen did not open (${e.message}). Tap Join to try again.`, true); return; }
@@ -138,7 +138,7 @@ export function createGuest(page) {
     try {
       while (n.q.length) {
         u = n.q.shift(); before = st();
-        if (page.setMap?.(u.state?.config?.map ?? 'small1')) C.S = { ...C.S, data: page.data() };
+        if (page.setMap?.(u.state?.config?.map ?? 'small1', u.state?.config?.winPrestige)) C.S = { ...C.S, data: page.data() };
         if (n.throwOnce) { n.throwOnce = false; throw new Error('test: the page could not apply this update'); }
         C.S = { ...C.S, steps: [...C.S.steps.slice(-2), { state: u.state, events: u.anim ?? [], action: null, error: null, legal: u.legal, seq: u.seq }] };
         n.shown = u.seq;

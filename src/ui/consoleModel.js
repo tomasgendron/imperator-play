@@ -219,7 +219,7 @@ const T = {
   merchantBonusBlocked: (e, st) => `${pn(st, e.pub.player)} gets no Merchant Bonus this turn: Bandits on the Road! (18.ae).`,
   forcedMarchPlayed: (e, st) => `${pn(st, e.pub.player)} plays Forced March!: 3 actions this turn instead of 2 (18.ad).`,
   banditsPlayed: (e, st) => `${pn(st, e.pub.player)} plays Bandits on the Road! on ${pn(st, e.pub.victim)}: steals their ${G(e.pub.gold)} Merchant Bonus, and ${pn(st, e.pub.victim)} gets none on their next turn (18.ae).`,
-  spyPlayed: (e, st, d) => `${pn(st, e.pub.player)} plays Spy in the Tent! on ${pn(st, e.pub.victim)} and steals a card, unseen${e.priv ? ' (' + (d?.cardDefsById[e.priv.def]?.name ?? e.priv.def) + ')' : ''} (18.af).`,
+  spyPlayed: (e, st, d) => { const def = e.pub.def ?? e.priv?.def; return `${pn(st, e.pub.player)} plays Spy in the Tent! on ${pn(st, e.pub.victim)} and steals ${def ? (d?.cardDefsById[def]?.name ?? def) : 'a card, unseen'} (18.af).`; },
   elephantPanicked: (e, st) => `${pn(st, e.pub.player)} plays Elephant Panic!: one of ${e.pub.opponent ? pn(st, e.pub.opponent) + "'s" : "the natives'"} Elephants! is thrown away and doesn't help in this fight (18.ac).`,
   merchantShipBought: (e, st, d) => `${pn(st, e.pub.player)} buys a Merchant ship on ${prov(d, e.pub.a)}–${prov(d, e.pub.b)} for ${e.pub.gold} Gold (22.c).`,
   merchantShipMoved: (e, st, d) => `${pn(st, e.pub.player)} moves a Merchant ship from ${prov(d, e.pub.fromA)}–${prov(d, e.pub.fromB)} to ${prov(d, e.pub.a)}–${prov(d, e.pub.b)} (free, 1 action).`,

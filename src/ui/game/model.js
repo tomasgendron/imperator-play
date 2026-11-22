@@ -1307,6 +1307,7 @@ export function aiTurnSummary(events, state, data, playerId) {
       case 'prestigeBought': if (p.player === playerId) actions.push(`Bought 1 Prestige for ${p.gold} Gold.`); break;
       case 'gameCardBought': if (p.player === playerId) actions.push('Bought a Game Card.'); break;
       case 'cardPlayed': if (p.player === playerId) actions.push(`Played ${card(p.def)}.`); break;
+      case 'spyPlayed': if (p.player === playerId) actions.push(`Stole ${card(p.def)} from ${state.players?.find(x => x.id === p.victim)?.name ?? p.victim}.`); break;   // v31.41 (18.af): the stolen card is public, so the AI's summary names it too
       case 'cardSold': if (p.player === playerId) actions.push(`Sold ${card(p.card)} for ${p.gold} Gold.`); break;
       case 'generalMoved': if (p.player === playerId) actions.push(`Moved the general to ${prov(p.to)}.`); break;
       case 'nativesRolled': if (mine(e)) actions.push(`Scouted ${prov(p.province)}: ${p.count} natives.`); break;
@@ -1404,8 +1405,9 @@ export function cardPlayPopup(events, i, state, data) {
   }
   for (let k = i + 1; k < events.length && outcome.length < 7; k++) {
     const x = events[k]; if (PLAY_STOP.has(x.type)) break; if (PLAY_QUIET.has(x.type)) continue;
-    // v31.40 (18.af): the popup is public — the same popup for every viewer (v27) — so its outcome lines are formatted
-    // without priv. A stolen card stays "a card, unseen" here; the thief learns it from their hand and their private log line.
+    // v31.41 (18.af): the stolen card is public now — the popup is the same for every viewer (v27), and its outcome lines
+    // are formatted without priv, so the spyPlayed line below names the stolen card for everyone (the thief learns nothing
+    // extra here; the victim's remaining hand stays hidden).
     const t = formatEvent({ ...x, priv: undefined }, state, data).text; if (t && !/^[a-zA-Z]+ \{/.test(t)) outcome.push(t.replace(/\b[a-z]+(?:_[a-z]+)+\b/g, id => data.cardDefsById[id]?.name ?? id));
   }
   if (!outcome.length && def?.text) outcome.push(def.text);

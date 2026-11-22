@@ -444,7 +444,8 @@ TURN_PLAYS.bandits_on_the_road = {
     emit(ctx, 'banditsPlayed', { actor: pid, rule: '18.ae', pub: { player: pid, victim: plan.victim, gold: plan.gold } });
   },
 };
-// ---- Spy in the Tent! (18.af): steal 1 random Game Card from a rival's hand, unseen (seeded RNG, so all clients agree)
+// ---- Spy in the Tent! (18.af): steal 1 random Game Card from a rival's hand — the pick is blind (seeded RNG, so all clients
+// agree), but the stolen card is then revealed to everyone (v31.41: the popup and the game log name it, decided by Vidi 2026-11-22)
 TURN_PLAYS.spy_in_the_tent = {
   validate(ctx, pid, a) {
     const { state, data } = ctx;
@@ -460,7 +461,7 @@ TURN_PLAYS.spy_in_the_tent = {
     const [stolen] = pool.splice(int(state.rng, pool.length) - 1, 1);
     victim.hand.splice(victim.hand.findIndex(c => c.uid === stolen.uid), 1);
     thief.hand.push(stolen);
-    emit(ctx, 'spyPlayed', { actor: pid, rule: '18.af', pub: { player: pid, victim: plan.victim }, priv: { def: state.cards[stolen.uid].def }, privTo: [pid] });
+    emit(ctx, 'spyPlayed', { actor: pid, rule: '18.af', pub: { player: pid, victim: plan.victim, def: state.cards[stolen.uid].def } });
   },
 };
 

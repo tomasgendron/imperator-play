@@ -1,5 +1,14 @@
 [
  {
+  "version": "31.41",
+  "date": "2026-11-22",
+  "title": "Spy in the Tent! now says what it stole",
+  "bullets": [
+   "Spy in the Tent! (18.af): when the card is played, the popup and the game log now name the card that was stolen — and who lost it. All players see it.",
+   "The steal itself is unchanged: the card is still picked at random without looking, and the victim's other cards stay hidden."
+  ]
+ },
+ {
   "version": "31.40",
   "date": "2026-11-21",
   "title": "Four new Game Cards: Elephant Panic!, Forced March!, Bandits on the Road! and Spy in the Tent!",

@@ -1,5 +1,6 @@
 // Pure derived facts about a state (PLAN 3.2 "derived, never stored", 3.6). No mutation, no randomness. Provinces iterate by sorted id.
-import { OWNED_STATUSES } from './state.js';
+import { OWNED_STATUSES, effectiveActionsPerTurn } from './state.js';   // v31.40 (18.ad): re-exported so the turn/battle/legal code reads the cap as S.effectiveActionsPerTurn
+export { effectiveActionsPerTurn };
 
 export const neighbours = (data, id) => [...data.provincesById[id].land, ...data.provincesById[id].sea];
 export const isNeighbour = (data, a, b) => neighbours(data, a).includes(b);
@@ -45,9 +46,10 @@ export function sellGold(state, data, pid, uid) {
   return base + (state.cards[uid]?.def !== 'coin_master_selling' && holdsInHand(state, pid, 'coin_master_selling') ? 1 : 0);
 }
 /** v31.37 (17.o, 18.ab): the unused-action Gold for ending the Actions step with `used` actions taken — +1 per unused action, and
- * +1 once more while holding Coin Master (Unused Actions) if any action is unused (0 taken = 3, 1 = 2, 2 = 0). */
+ * +1 once more while holding Coin Master (Unused Actions) if any action is unused (0 taken = 3, 1 = 2, 2 = 0; v31.40 (18.ad):
+ * with a played Forced March! the cap is 3, so 2 taken leaves 1 unused and pays +1, +1 more with the Coin Master). */
 export function unusedGold(state, data, pid, used = state.turn.actionsUsed) {
-  const unused = Math.max(0, data.rules.actionsPerTurn - used);
+  const unused = Math.max(0, effectiveActionsPerTurn(state, data) - used);
   if (!unused) return { unused, gold: 0, coinMaster: 0 };
   const cm = holdsInHand(state, pid, 'coin_master_unused') ? 1 : 0;
   return { unused, gold: unused * data.rules.unusedActionGold + cm, coinMaster: cm };

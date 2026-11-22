@@ -10,7 +10,7 @@ export const KINDS = {
   displeased: ['auto'],
   decree: ['decree'],
 };
-export const PLAY_WINDOWS = ['battleCards', 'ownActionsStep', 'revoltResponse', 'attackRoma', 'displeasedResponse', 'defenceAnnounced'];
+export const PLAY_WINDOWS = ['battleCards', 'ownActionsStep', 'revoltResponse', 'attackRoma', 'displeasedResponse', 'defenceAnnounced', 'elephantPanic'];
 export const ON_DRAW = ['keep', 'autoPlay', 'autoPlayInPlay', 'applyNow', 'buildOrSave'];
 const PROVINCE_STATUS_REWARD = ['troop', 'gold'];
 

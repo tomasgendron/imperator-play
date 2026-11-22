@@ -207,6 +207,22 @@
    "path": "cards/game/coin_master_unused.png",
    "kind": "card"
   },
+  "card.elephant_panic": {
+   "path": "cards/game/elephant_panic.png",
+   "kind": "card"
+  },
+  "card.forced_march": {
+   "path": "cards/game/forced_march.png",
+   "kind": "card"
+  },
+  "card.bandits_on_the_road": {
+   "path": "cards/game/bandits_on_the_road.png",
+   "kind": "card"
+  },
+  "card.spy_in_the_tent": {
+   "path": "cards/game/spy_in_the_tent.png",
+   "kind": "card"
+  },
   "card.gold_2": {
    "path": "cards/resource/gold_2.png",
    "kind": "card"

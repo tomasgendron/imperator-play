@@ -58,7 +58,7 @@ export function battleOdds(a, d, maxA = 3, maxD = 2, bonus = 0) {
 // ------------------------------------------------------------------ evaluation
 const W = { prestige: 60, province: 10, bonusTroop: 4, reward: 3, troop: 2.5, troopOver10: 0.8, gold: 1.2, card: 6, saved: 4, catapult: 4, road: 3, revolt: 6, threat: 0.35, under: 6 };
 const CARD_VALUE = { revolt: 5, assassin: 4, bribe_the_ally: 5, kill_revolt_leader: 5, busy_little_bee: 5, battlefield_imperator: 4, elephants: 6, moral_boost: 5, horn_of_titus_pullus: 5,
-  coin_master_selling: 8, coin_master_unused: 8 };   // v31.37 (18.aa, 18.ab): a lasting Gold bonus while held — keep it, never sell it (selling ends the bonus)
+  coin_master_selling: 8, coin_master_unused: 8, elephant_panic: 6, forced_march: 6, bandits_on_the_road: 5, spy_in_the_tent: 6 };   // v31.37 (18.aa, 18.ab): a lasting Gold bonus while held — keep it, never sell it (selling ends the bonus); v31.40 (18.ac–18.af): Panic ≈ an Elephant, March ≈ an extra action, Bandits ≈ a small bonus, Spy ≈ a random card
 const handValue = (state, p) => p.hand.reduce((t, c) => t + (CARD_VALUE[state.cards[c.uid].def] ?? W.card), 0);
 
 function playerScore(state, data, pid, cache) {
@@ -328,6 +328,11 @@ export function chooseAction(state, data, opts = {}) {
       return byType(o.p >= bar ? 'BATTLE_CONTINUE' : 'BATTLE_RETREAT')[0]?.action ?? legal[0].action;
     }
     case 'responseWindow':
+      if (f.window === 'elephantPanic') {
+        // v31.40 (18.ac): a free reaction, pure value — always panic the elephant when offered.
+        const panic = byType('PLAY_CARD')[0];
+        return panic?.action ?? byType('PASS')[0]?.action ?? legal[0].action;
+      }
       if (f.window === 'defenceAnnounced') {
         const b = state.battle;
         // v31.30 (17.aa): flee when holding is hopeless. The summon check above has already run, so a summoned
@@ -370,7 +375,7 @@ export function chooseAction(state, data, opts = {}) {
 
   // ---- generic: 1-ply look-ahead over the legal list (frames and the Actions step)
   const inActions = !f && state.phase === 'turn' && state.turn.step === 'actions';
-  const unused = inActions ? data.rules.actionsPerTurn - state.turn.actionsUsed : 0;
+  const unused = inActions ? S.effectiveActionsPerTurn(state, data) - state.turn.actionsUsed : 0;
   const ACTION_COST = new Set(['MOVE', 'ATTACK', 'ALLY', 'BUY_TROOP', 'BUY_GAME_CARD', 'BUILD_ROAD', 'BUILD_WALL', 'BUY_CATAPULT', 'BUY_MERCHANT_SHIP', 'MOVE_MERCHANT_SHIP', 'BUY_PRESTIGE']);
   const scored = [];
   for (const d of legal) {
@@ -401,7 +406,7 @@ export function chooseAction(state, data, opts = {}) {
         break;
       }
       case 'BUY_GAME_CARD': {    // never peek at the card it draws: pay the price, gain an average card
-        v = -data.rules.costs.gameCardGold * W.gold - data.rules.costs.gameCardTroops * W.troop + W.card * 0.75 + (2 / data.rules.deckSizes.game) * W.prestige + cost;   // 2 of 35 are Prestige! (18.a)
+        v = -data.rules.costs.gameCardGold * W.gold - data.rules.costs.gameCardTroops * W.troop + W.card * 0.75 + (2 / data.rules.deckSizes.game) * W.prestige + cost;   // 2 of 43 are Prestige! (18.a)
         break;
       }
       case 'BUILD_ROAD':
@@ -493,6 +498,52 @@ export function chooseAction(state, data, opts = {}) {
           break;
         }
         if (level === 'easy' && (def === 'revolt' || def === 'assassin') && cardTargetsHuman(state, def, a) && easyCardRestrained(state, seed, cfg, a.cardUid)) { v = -Infinity; break; }
+        if (def === 'forced_march') {
+          // v31.40 (18.ad): the card's value is the third action it unlocks — judge it by 1-ply from the post-play state,
+          // over action-costing moves only. The +1 Gold for ending with an unused action does NOT count, so the card is
+          // never burned just for that; only a third action with positive value earns the play. (ACTION_COST is declared
+          // below the switch, so the set is spelled out here.) An ATTACK only opens the battle, so a plain 1-ply sees
+          // ~no gain: judge it by the same odds x gain the main ATTACK case uses. base is the pre-play evaluate, so
+          // the spent card is charged, as elsewhere.
+          const s = after(st, data, a);
+          if (!s) { v = -Infinity; break; }
+          const COSTLY = new Set(['MOVE', 'ATTACK', 'ALLY', 'BUY_TROOP', 'BUY_GAME_CARD', 'BUILD_ROAD', 'BUILD_WALL', 'BUY_CATAPULT', 'BUY_MERCHANT_SHIP', 'MOVE_MERCHANT_SHIP', 'BUY_PRESTIGE']);
+          const st2 = lite(s);
+          let best = -Infinity;
+          for (const d2 of legalActions(s, data, me)) {
+            if (!COSTLY.has(d2.type)) continue;
+            if (d2.type === 'ATTACK') {
+              const max = d2.range?.max ?? d2.action.troops;
+              const keep = Math.max(0, S.minGarrison(s, data, d2.action.from).min - 1);
+              for (const n of [...new Set([max, Math.max(1, max - keep), Math.max(1, Math.ceil(max * 0.75))])]) {
+                best = Math.max(best, attackValue(st2, data, me, { ...d2.action, troops: n }, base, cfg));
+              }
+              continue;
+            }
+            const s2 = after(s, data, d2.action);
+            if (s2) best = Math.max(best, evaluate(s2, data, me) - base);
+          }
+          v = best;
+          break;
+        }
+        if (def === 'bandits_on_the_road') {
+          // v31.40 (18.ae): the generic 1-ply only sees the Gold gained, minus the card, and misses the denial —
+          // the victim gets no Merchant Bonus on their next turn. Value the whole swing: the Gold gained now plus
+          // the victim's lost bonus next turn (a rival's Gold is weighted 0.7 in evaluate). The largest bonus wins,
+          // since legal.js offers one descriptor per rival.
+          const bonus = S.merchantBonusFor(state, data, a.targetPlayer, S.roadNetwork(state, data, a.targetPlayer).roads);
+          v = bonus * W.gold * 1.7;
+          break;
+        }
+        if (def === 'spy_in_the_tent') {
+          // v31.40 (18.af): fixed value, not the 1-ply outcome — the look-ahead would peek at the victim's hidden hand (the
+          // seeded steal shows exactly which card is taken). A random Game Card is worth ~W.card to the thief and ~0.7 * W.card
+          // / rivals to deny the victim (evaluate weights rivals at 0.7); +4 against the prestige leader.
+          const rivals = state.players.filter(p => p.id !== me && !p.out);
+          const leader = rivals.length ? Math.max(...rivals.map(p => p.prestige)) : 0;
+          v = W.card + (0.7 * W.card) / Math.max(1, rivals.length) + (playerOf(state, a.targetPlayer)?.prestige === leader && leader > playerOf(state, me).prestige ? 4 : 0);
+          break;
+        }
         const s = after(st, data, a);
         if (!s) { v = -Infinity; break; }
         let s2 = s; const tf = topFrame(s);

@@ -1,5 +1,17 @@
 [
  {
+  "version": "31.40",
+  "date": "2026-11-21",
+  "title": "Four new Game Cards: Elephant Panic!, Forced March!, Bandits on the Road! and Spy in the Tent!",
+  "bullets": [
+   "Four new Game Cards, 2 of each, so the Game Card deck now has 43 cards (the first cycle still starts with 38: 3 Elephants! and both Sneak Attacks are held back as before).",
+   "Elephant Panic! (18.ac): when another player uses Elephants! in a battle, play it before the first die is rolled and one of their Elephants! is thrown away into the discard pile and doesn't help them in that fight. Either side in the battle may play it, attacker first, then defender.",
+   "Forced March! (18.ad): play it on your turn, at any point in the turn, to take 3 actions instead of the usual 2. Playing the card itself is not an action. With 3 actions, taking 2 still leaves 1 unused and pays +1 Gold at the end of the turn.",
+   "Bandits on the Road! (18.ae): pick another player and take Gold equal to their Merchant Bonus right away — and they get no Merchant Bonus on their next turn. It can't be played on a player whose bonus is 0.",
+   "Spy in the Tent! (18.af): pick another player and take 1 card from their hand without looking. It's now yours. Any Game card can be taken, including a held Coin Master; Resource cards are never taken."
+  ]
+ },
+ {
   "bullets": [
    "The start screen now lets you choose how much Prestige wins the game — anything from 8 to 20 (the usual 8 on the small map, 11 on the large map, is still the default).",
    "The chosen target applies to everyone — human, AI and online seats — and a saved game keeps the target it was started with, so old saves play exactly as before."

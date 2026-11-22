@@ -7,6 +7,11 @@ export const OWNED_STATUSES = ['allied', 'conquered', 'starting', 'held'];
 export const PHASES = ['setup', 'turn', 'finished'];
 export const STEPS = ['resources', 'gameRoll', 'revoltRoll', 'actions', 'ended'];
 
+/** v31.40 (18.ad): the actions a player may take this turn — 2, or 3 while holding a played Forced March!. Old saves have no
+ * `turn.forcedMarch` (undefined = falsy = 2), so the cap never changes under an old save. Every read of the static
+ * `data.rules.actionsPerTurn` that gates or counts actions must go through here. */
+export const effectiveActionsPerTurn = (state, data) => data.rules.actionsPerTurn + (state.turn?.forcedMarch ? 1 : 0);
+
 export const clone = o => structuredClone(o);
 
 export function deepFreeze(o) {
@@ -38,7 +43,7 @@ export function stateHash(state) {
 /**
  * Blank game state before setup (PLAN 3.1 to 3.3): the map's unowned provinces (13 on Small Map 1, 19 on Large Map 1) with random Game Roll
  * numbers 3..8 (each used twice on Small Map 1, 16.h; three times on Large Map 1, 21.c),
- * rewards from the map defaults (Q5), Roma at 10 troops, Carthage natives 10, the static 54-card registry and shuffled decks.
+ * rewards from the map defaults (Q5), Roma at 10 troops, Carthage natives 10, the static 74-card registry and shuffled decks.
  * Setup (roll-off, generals, start provinces) is M1 and fills players/turnOrder/startProvince.
  */
 /** v31 (21.a): the map a state is on; states and saves from before v31 have none and are Small Map 1. */
@@ -59,8 +64,8 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
   }
   for (const deck of Object.keys(decks)) decks[deck] = shuffle(rng, decks[deck]);
   // v31.30 (18.a): 3 Elephants! and both Sneak Attack from the Sea! cards are withheld until the Game deck has gone through
-  // once — cycle 1 starts with 30 cards (2 Elephants, no Sneak Attack; both Coin Masters are in from the start, v31.37). They sit aside in `withheld.game`, not drawable,
-  // and join the draw pile at the first reshuffle (core.js drawTop). Taken out AFTER the shuffle, so the remaining 28 keep
+  // once — cycle 1 starts with 38 cards (2 Elephants, no Sneak Attack; both Coin Masters are in from the start, v31.37). They sit aside in `withheld.game`, not drawable,
+  // and join the draw pile at the first reshuffle (core.js drawTop). Taken out AFTER the shuffle, so the remaining 36 keep
   // their shuffled order and no extra RNG is drawn: nothing else about setup changes.
   const withheld = { game: [] };
   for (const def of ['elephants', 'elephants', 'elephants', 'sneak_attack_sea', 'sneak_attack_sea']) {
@@ -90,9 +95,10 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
     players: players.map(p => ({ id: p.id, name: p.name, color: p.color ?? null, controller: p.controller ?? 'human', difficulty: p.difficulty ?? 'normal', general: p.general ? { id: p.general, at: null } : null, startProvince: null,
       gold: data.rules.startingGold, prestige: 0, hand: [], inPlay: [], savedResources: [], generalRecalledThroughTurn: null,
       pendingStealToRoma: null,   // v31.24 (18.r, 18.x): a Bee-redirected steal waiting for this player's next turn: { def: 'steals_troops', redirectedBy } or null
+      noMerchantBonus: false,   // v31.40 (18.ae): Bandits on the Road! — this player gets no Merchant Bonus on their next turn
       items: { catapult: 0 }, out: false, gameRollsTaken: 0, startIncome: true })),
     turnOrder: [],
-    turn: { number: 0, round: 0, activePlayerId: null, step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} },
+    turn: { number: 0, round: 0, activePlayerId: null, step: 'resources', actionsUsed: 0, forcedMarch: false, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} },
     provinces, roma: { goldPile: 0, holder: null, heldSinceTurn: null }, carthage: { defeated: false, neutral: false, decreeLegionsLost: 0, destroyedForGood: false },
     cards, decks, discards: { game: [], resource: [], displeased: [] }, throwaway: { game: [], resource: [], displeased: [] }, withheld, ships: [], pending: [], winner: null, eventSeq: 0, frameSeq: 0, setup: null, log: [],
   };
@@ -229,7 +235,7 @@ export function validateState(state, data, opts = {}) {
     if (f.kind === 'chooseProvince' && Array.isArray(f.options)) for (const o of f.options) if (typeof o === 'string' && !data.provincesById[o]) err(`frame ${f.id}: unknown option ${o}`);
   }
   // turn / winner
-  if (state.turn.actionsUsed > data.rules.actionsPerTurn) err(`actionsUsed ${state.turn.actionsUsed} > ${data.rules.actionsPerTurn}`);
+  if (state.turn.actionsUsed > effectiveActionsPerTurn(state, data)) err(`actionsUsed ${state.turn.actionsUsed} > ${effectiveActionsPerTurn(state, data)}`);
   if (state.turn.step !== undefined && !STEPS.includes(state.turn.step)) err('bad turn.step ' + state.turn.step);
   const ships = state.ships ?? [];
   if (!Array.isArray(ships)) err('ships must be a list (22.c)');

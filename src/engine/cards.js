@@ -4,6 +4,7 @@
 // Battle cards, the Horn and the Battlefield Imperator are played through the battle (battle.js); Prestige! and Garrison Requirement -1!
 // act on draw (turn.js). Every target check lives in a pure selector below, so legalActions and the M4 AI use the same rules.
 import { fail, check, emit, roll, pushFrame, popFrame, topFrame, mustPlayer, playerOf, toDiscard, toThrowaway, onSettle, awardPrestige } from './core.js';
+import { int } from './rng.js';
 import { define, defineRoll } from './actions.js';
 import { registerEffect } from './registry.js';
 import { changeTroops, processRevolts, resolveRevolt, moveSurvivors, provinceChoiceHandlers, responseWindows } from './turn.js';
@@ -58,6 +59,12 @@ export const assassinTargets = (state, pid, data = null) => Object.keys(state.pr
 });
 /** How many troops the Assassin must kill: as many as legally possible, up to 2 (18.e). */
 export const assassinKills = (state, data, pid) => Math.min(data.rules.assassin?.kills ?? 2, assassinTargets(state, pid, data).reduce((t, id) => t + strikeTroops(state, id) - 1, 0));
+/** Bandits on the Road! targets (18.ae): rivals whose current Merchant Bonus is above 0 — the same road-network formula the
+ * Resources step pays (22.b), Augustus +1 included. A rival with no bonus cannot be robbed. */
+export const banditTargets = (state, data, pid) => rivals(state, pid).map(id => ({ player: id, bonus: S.merchantBonusFor(state, data, id, S.roadNetwork(state, data, id).roads) })).filter(t => t.bonus > 0);
+/** Spy in the Tent! targets (18.af): rivals holding at least 1 Game Card in hand. Resource cards live in savedResources and
+ * Displeased cards never sit in a hand, so the hand IS the Game Cards; the deck filter in apply is a safety net. */
+export const spyTargets = (state, data, pid) => rivals(state, pid).filter(id => playerOf(state, id).hand.some(c => state.cards[c.uid].deck === 'game'));
 /** Bribe the Ally! targets (18.v, Q32): a province allied to a rival (never Carthage), with the Gold cost = its native count,
  * and never a province of a player with 2 or fewer provinces (small-empire protection, 18.v, v31.23). */
 export const bribeTargets = (state, data, pid) => Object.keys(state.provinces).sort().filter(id => {
@@ -150,6 +157,7 @@ export function cardBlock(state, data, pid, uid) {
   if (def === 'kill_revolt_leader') return B('ONLY_AGAINST_REVOLT', 'played only when a revolt is aimed at you', '18.f', 'Kill Revolt leader! is played when a revolt is aimed at you (18.f).');
   if (def === 'horn_of_titus_pullus') return B('ONLY_WHEN_ATTACKED', 'played only when one of your provinces is attacked', '18.y', 'Horn of Titus Pullus! is played when one of your provinces is attacked (18.y).');
   if (def === 'busy_little_bee') return B('ONLY_AGAINST_DISPLEASED', 'played only when you draw a Rome Is Displeased card', '18.x', 'Busy Little Bee! is played when you draw a Rome Is Displeased card (18.x).');
+  if (def === 'elephant_panic') return B('ONLY_AGAINST_ELEPHANTS', 'played only when another player uses Elephants! in a battle', '18.ac', 'Elephant Panic! is played when another player uses Elephants! in a battle, before the first die is rolled (18.ac).');
   if (d.kind === 'passive') return B('PASSIVE_BONUS', 'a lasting bonus while you hold it: never played', d.rule?.[0] ?? '18.h', `${name} is never played: it works while you hold it (${d.rule?.[0] ?? '18.h'}).`);   // v31.37 Coin Master (18.aa, 18.ab)
   const play = TURN_PLAYS[def];
   if (!play) return B('NOT_PLAYABLE', 'never played by hand: it acts when drawn', '18.h', `${name} is never played by hand.`);
@@ -167,6 +175,8 @@ export function cardBlock(state, data, pid, uid) {
     const cheap = Math.min(...ts.map(t => t.cost));
     if (pl.gold < cheap) return B('NEED_GOLD', `the cheapest use costs ${cheap} Gold; you have ${pl.gold}`, '18.v');
   }
+  if (def === 'bandits_on_the_road' && !banditTargets(state, data, pid).length) return B('NO_LEGAL_TARGET', 'no other player has a Merchant Bonus to steal right now', '18.ae', 'No other player has a Merchant Bonus right now: Bandits on the Road! cannot be played and stays in your hand (18.ae).');
+  if (def === 'spy_in_the_tent' && !spyTargets(state, data, pid).length) return B('NO_LEGAL_TARGET', 'no other player holds a Game Card to steal', '18.af', 'No other player holds a Game Card: Spy in the Tent! cannot be played and stays in your hand (18.af).');
   if (def === 'sneak_attack_sea' && !sneakAttacks(state, data, pid).length) return B('NO_LEGAL_TARGET', 'no coastal province of yours with a Road can sail to a coastal province (Germanica and Swiss have no sea link)', '18.z', 'No coastal province of yours with a Road can sail to a coastal province (Pompey with the army needs no Road): Sneak Attack from the Sea! cannot be played and stays in your hand (18.z).');
   return null;
 }
@@ -242,6 +252,25 @@ responseWindows.revoltResponse = {
   pass(ctx, f) {
     if (resolveRevolt(ctx, f.player, f.province, f.rest, f.source, f.by ?? null)) processRevolts(ctx, f.player, f.rest, { source: f.source, by: f.by ?? null });
   },
+};
+
+// ---- Elephant Panic! answers the elephantPanic window (18.ac): one committed Elephants! of the opponent is thrown away
+responseWindows.elephantPanic = {
+  rule: '18.ac',
+  play(ctx, f, a) {
+    const { state } = ctx; const b = state.battle;
+    const entry = findCard(ctx, f.player, a);
+    check(defOf(state, entry.uid) === 'elephant_panic', 'WRONG_CARD', 'Only Elephant Panic! answers this window (18.ac).', '18.ac');
+    const oppSide = f.side === 'att' ? 'def' : 'att';
+    const i = (b[oppSide].played ?? []).findIndex(c => c.def === 'elephants');
+    check(i >= 0, 'NO_ELEPHANT', 'There is no Elephants! left to panic in this fight (18.ac).', '18.ac');
+    popFrame(ctx);
+    spend(ctx, f.player, entry.uid, { source: 'elephantPanic', battleId: b.id });
+    const [gone] = b[oppSide].played.splice(i, 1);
+    b[oppSide].elephants -= 1;   // the card is already in the discard pile (committed cards leave the hand at play time, 18.i); Panic only takes it out of the fight, and keeps it from being refunded on an early retreat (17.k)
+    emit(ctx, 'elephantPanicked', { actor: f.player, rule: '18.ac', pub: { battleId: b.id, player: f.player, opponent: b[oppSide].player ?? null, side: f.side, uid: gone.uid } });
+  },
+  pass(ctx, f) { /* the window closes; advance() asks the other side, then the first die is rolled */ },
 };
 
 // ---- Assassin! (18.e, 18.i, Q39): kills = min(2, legal); split 1 + 1 allowed; each province once per occupation
@@ -368,7 +397,7 @@ TURN_PLAYS.sneak_attack_sea = {
     // v31.14 fix: the attack itself costs 1 action (declared in apply, or after the native roll in the sneakNativeRoll
     // handler), so the play must be refused up front when no action is left — otherwise the card is spent, the roll frame
     // is pushed, and ROLL can never resolve it (NO_ACTIONS_LEFT on a frame with no way out). Found by the AI-vs-random test.
-    check(state.turn.actionsUsed < data.rules.actionsPerTurn, 'NO_ACTIONS_LEFT', `You have already used your ${data.rules.actionsPerTurn} actions this turn (17.e).`, '17.e');
+    check(state.turn.actionsUsed < S.effectiveActionsPerTurn(state, data), 'NO_ACTIONS_LEFT', `You have already used your ${S.effectiveActionsPerTurn(state, data)} actions this turn (17.e).`, '17.e');
     const block = attackBlock(state, data, pid, a.from, a.target, { withGeneral: a.withGeneral, troops: a.troops ?? null, sneak: true });
     check(!block || block.code === 'NATIVES_NOT_ROLLED', block?.code ?? 'ILLEGAL', block?.reason ?? '', block?.rule);
     const t = state.provinces[a.target];
@@ -382,6 +411,56 @@ TURN_PLAYS.sneak_attack_sea = {
       return;
     }
     declareAttack(ctx, pid, { from: plan.from, target: plan.target, troops: plan.troops, withGeneral: plan.withGeneral, borrow: 0 }, { sneak: true });
+  },
+};
+
+// ---- Forced March! (18.ad): 3 actions this turn instead of 2; playing the card costs no action, uses the one-card slot
+TURN_PLAYS.forced_march = {
+  validate(ctx, pid) {
+    const { state } = ctx;
+    check(!state.turn.forcedMarch, 'ALREADY_MARCHING', 'You already played Forced March! this turn (18.ad).', '18.ad');
+    return {};
+  },
+  apply(ctx, pid) {
+    const { state } = ctx;
+    state.turn.forcedMarch = true;
+    emit(ctx, 'forcedMarchPlayed', { actor: pid, rule: '18.ad', pub: { player: pid } });
+  },
+};
+// ---- Bandits on the Road! (18.ae): steal the victim's current Merchant Bonus in Gold now; they get none next turn
+TURN_PLAYS.bandits_on_the_road = {
+  validate(ctx, pid, a) {
+    const { state, data } = ctx;
+    const ok = banditTargets(state, data, pid);
+    check(ok.length, 'NO_LEGAL_TARGET', 'No other player has a Merchant Bonus right now: Bandits on the Road! cannot be played and stays in your hand (18.ae).', '18.ae');
+    const t = ok.find(x => x.player === a.targetPlayer);
+    check(t, 'ILLEGAL_TARGET', `${playerOf(state, a.targetPlayer)?.name ?? a.targetPlayer} has no Merchant Bonus to steal (18.ae).`, '18.ae');
+    return { victim: a.targetPlayer, gold: t.bonus };
+  },
+  apply(ctx, pid, plan) {
+    const { state } = ctx; const pl = mustPlayer(state, pid); const victim = mustPlayer(state, plan.victim);
+    pl.gold += plan.gold;
+    victim.noMerchantBonus = true;
+    emit(ctx, 'banditsPlayed', { actor: pid, rule: '18.ae', pub: { player: pid, victim: plan.victim, gold: plan.gold } });
+  },
+};
+// ---- Spy in the Tent! (18.af): steal 1 random Game Card from a rival's hand, unseen (seeded RNG, so all clients agree)
+TURN_PLAYS.spy_in_the_tent = {
+  validate(ctx, pid, a) {
+    const { state, data } = ctx;
+    const ok = spyTargets(state, data, pid);
+    check(ok.length, 'NO_LEGAL_TARGET', 'No other player holds a Game Card: Spy in the Tent! cannot be played and stays in your hand (18.af).', '18.af');
+    check(ok.includes(a.targetPlayer), 'ILLEGAL_TARGET', `${playerOf(state, a.targetPlayer)?.name ?? a.targetPlayer} holds no Game Card to steal (18.af).`, '18.af');
+    return { victim: a.targetPlayer };
+  },
+  apply(ctx, pid, plan) {
+    const { state } = ctx; const thief = mustPlayer(state, pid); const victim = mustPlayer(state, plan.victim);
+    const pool = victim.hand.filter(c => state.cards[c.uid].deck === 'game');
+    check(pool.length, 'NO_GAME_CARD', 'The victim holds no Game Card to steal (18.af).', '18.af');
+    const [stolen] = pool.splice(int(state.rng, pool.length) - 1, 1);
+    victim.hand.splice(victim.hand.findIndex(c => c.uid === stolen.uid), 1);
+    thief.hand.push(stolen);
+    emit(ctx, 'spyPlayed', { actor: pid, rule: '18.af', pub: { player: pid, victim: plan.victim }, priv: { def: state.cards[stolen.uid].def }, privTo: [pid] });
   },
 };
 
@@ -401,6 +480,10 @@ registerEffect('inspireRevolt', TURN_PLAYS.revolt);
 registerEffect('killTroops', TURN_PLAYS.assassin);
 registerEffect('bribeAlly', TURN_PLAYS.bribe_the_ally);
 registerEffect('sneakAttack', TURN_PLAYS.sneak_attack_sea);
+registerEffect('forcedMarch', TURN_PLAYS.forced_march);
+registerEffect('banditsOnTheRoad', TURN_PLAYS.bandits_on_the_road);
+registerEffect('spyInTheTent', TURN_PLAYS.spy_in_the_tent);
+registerEffect('elephantPanic', responseWindows.elephantPanic);
 registerEffect('blockRevolt', responseWindows.revoltResponse);
 registerEffect('gainPrestige', { onDraw: 'turn.js drawCard (18.k)' });
 registerEffect('gainResources', { onDraw: 'turn.js drawCard (20.g)' });

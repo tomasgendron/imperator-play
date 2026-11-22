@@ -86,7 +86,7 @@ export function attackBlock(state, data, pid, from, target, opts = {}) {
     if (c.drawnOnTurn + data.rules.holdCardTurns > state.turn.number) return B('HOLD_A_TURN', 'The Battlefield Imperator must be held until the turn after it was drawn (18.w).', '18.w');
     if (state.turn.nonBattleCardPlayed && !opts.sneak) return B('CARD_SLOT_USED', 'You already played your one non-battle card this turn (18.h).', '18.h');
   }
-  if (state.turn.actionsUsed >= data.rules.actionsPerTurn) return B('NO_ACTIONS_LEFT', `You have already used your ${data.rules.actionsPerTurn} actions this turn (17.e).`, '17.e');
+  if (state.turn.actionsUsed >= S.effectiveActionsPerTurn(state, data)) return B('NO_ACTIONS_LEFT', `You have already used your ${S.effectiveActionsPerTurn(state, data)} actions this turn (17.e).`, '17.e');
   return null;
 }
 /** Why `from` cannot be the origin of any attack (builder, M8 item 4): null when some target can be attacked from it, else {code, reason, rule}. */
@@ -95,7 +95,7 @@ export function attackOriginBlock(state, data, pid, from) {
   if (!S.controls(state, pid, from)) return { code: 'NOT_YOURS', reason: `${nm(data, from)} is not one of your provinces: an attack starts from one of yours.`, rule: '17.e' };
   const fp = state.provinces[from]; const max = S.maxLeaving(state, data, from); const held = fp.status === 'held';
   if (max < 1) return { code: held ? 'ROMA_FLOOR' : 'PROVINCE_FLOOR', reason: `${nm(data, from)} has no troop to send: it must keep ${held ? data.rules.romaFloorOnHold : 1} (17.g${held ? ', 12.l' : ''}).`, rule: '17.g' };
-  if (state.turn.actionsUsed >= data.rules.actionsPerTurn) return { code: 'NO_ACTIONS_LEFT', reason: `You have already used your ${data.rules.actionsPerTurn} actions this turn (17.e).`, rule: '17.e' };
+  if (state.turn.actionsUsed >= S.effectiveActionsPerTurn(state, data)) return { code: 'NO_ACTIONS_LEFT', reason: `You have already used your ${S.effectiveActionsPerTurn(state, data)} actions this turn (17.e).`, rule: '17.e' };
   let first = null;
   for (const t of data.provinceIds) {
     if (t === from || !attackRoute(state, data, pid, from, t).ok) continue;
@@ -514,6 +514,26 @@ function advance(ctx) {
           emit(ctx, 'battleCardsSkipped', { rule: '18.i', pub: { battleId: b.id, role: 'defender', reason: b.def.player ? 'none' : 'natives' } });
         }
         playSide(ctx, b, 'def');
+        if (b.round === 1) {
+          // v31.40 (18.ac): Elephant Panic! — after both sides committed their battle cards, before the first die is rolled,
+          // each side holding Panic while the opponent committed an elephant may play it, attacker first, then defender.
+          // The window offers ONLY Panic + Pass (no summon, no other battle cards). Decree battles never commit battle cards,
+          // so the window never triggers there. `b.panic` records which side has been asked, so the sequence survives across
+          // advance() calls (a resolved frame re-enters here and the other side is asked next).
+          if (!b.panic) b.panic = { att: false, def: false };
+          for (const side of ['att', 'def']) {
+            if (b.panic[side]) continue;
+            b.panic[side] = true;
+            const opp = side === 'att' ? 'def' : 'att';
+            if (!b[opp].elephants) continue;
+            const pid = b[side].player;
+            if (!pid) continue;
+            const card = playerOf(state, pid)?.hand.find(c => state.cards[c.uid].def === 'elephant_panic');
+            if (!card) continue;
+            pushFrame(ctx, { kind: 'responseWindow', window: 'elephantPanic', player: pid, side, battleId: b.id, card: card.uid, options: ['PLAY_CARD', 'PASS'] });
+            return;
+          }
+        }
       }
       b.stage = 'roll'; return;
     case 'roll':

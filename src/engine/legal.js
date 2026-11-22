@@ -9,7 +9,7 @@ import { topFrame } from './core.js';
 import * as S from './selectors.js';
 import { attackTargets, summonGeneralTarget, fleeOptions } from './battle.js';
 import { generalMoveTargets, recallMoveTargets, sellableCards } from './turn.js';
-import { TURN_PLAYS, heldLongEnough, revoltTargets, bribeTargets, bribeOwnTargets, maxBribeReinforce, assassinTargets, assassinKills, strikeTroops, sneakAttacks } from './cards.js';
+import { TURN_PLAYS, heldLongEnough, revoltTargets, bribeTargets, bribeOwnTargets, maxBribeReinforce, assassinTargets, assassinKills, strikeTroops, sneakAttacks, banditTargets, spyTargets } from './cards.js';
 
 const nm = (data, id) => data.provincesById[id]?.name ?? id;
 /** How many troops must stay so the province remains at its minimum (and the global floor). Shown wherever troops are asked to move. */
@@ -108,6 +108,15 @@ export function legalActions(state, data) {
       }
       case 'choosePerk': for (const o of f.options.filter(x => x === 'extraDie')) add({ type: 'CHOOSE_PERK', perk: o }, 'Scipio: an extra attack die'); break;   // only an old save can still hold this frame (15.c, 2026-10-24)
       case 'responseWindow':
+        // v31.40 (18.ac): the Panic window offers ONLY Panic + Pass — no summon, no other battle card. It is handled before
+        // maybeSummon, because the summon is already decided by the time battle cards are committed.
+        if (f.window === 'elephantPanic') {
+          const b = state.battle; const opp = f.side === 'att' ? 'def' : 'att';
+          const oppName = b?.[opp].player ? state.players.find(p => p.id === b[opp].player)?.name ?? b[opp].player : 'the natives';
+          add({ type: 'PLAY_CARD', cardUid: f.card }, `Play Elephant Panic!: one of ${oppName}'s ${b?.[opp].elephants ?? 0} Elephants! is thrown away and doesn't help in this fight`);
+          add({ type: 'PASS' }, 'Let the elephants fight (keep the card)');
+          break;
+        }
         maybeSummon(state, data, who, add);
         if (f.window === 'revoltResponse') {
           add({ type: 'PLAY_CARD', cardUid: f.card }, `Kill Revolt leader!: ${nm(data, f.province)} does not revolt`);
@@ -167,10 +176,10 @@ export function legalActions(state, data) {
     }
   } else if (state.phase === 'turn' && state.turn.step === 'actions') {
     const mine = S.provincesOf(state, who);
-    const unused = Math.max(0, data.rules.actionsPerTurn - state.turn.actionsUsed);
+    const unused = Math.max(0, S.effectiveActionsPerTurn(state, data) - state.turn.actionsUsed);
     const ug = S.unusedGold(state, data, who);   // v31.37 (18.ab): includes the Coin Master (Unused Actions) +1
     add({ type: 'END_TURN' }, unused ? `End Turn (+${ug.gold} Gold for ${unused} unused action${unused > 1 ? 's' : ''}${ug.coinMaster ? ', Coin Master +1' : ''})` : 'End Turn');
-    // cheap pruning before the dry runs (M3, for the M4 AI): every action below costs one of the 2 actions (17.e) and the buys have
+    // cheap pruning before the dry runs (M3, for the M4 AI): every action below costs one of the actions (17.e; 3 with a played Forced March!, 18.ad) and the buys have
     // fixed Gold prices (data.rules.costs), so candidates that must fail are not generated at all. The dry run still has the last word.
     const me = state.players.find(p => p.id === who); const gold = me.gold; const c = data.rules.costs;
     const act = unused > 0;
@@ -212,6 +221,9 @@ export function legalActions(state, data) {
           if (k === 2) for (let i = 0; i < ts.length; i++) for (let j = i + 1; j < ts.length; j++)
             add({ type: 'PLAY_CARD', cardUid: e.uid, kills: [{ province: ts[i], n: 1 }, { province: ts[j], n: 1 }] }, `Play Assassin! on ${nm(data, ts[i])} and ${nm(data, ts[j])} (1 each)`);
         }
+        if (def === 'forced_march') add({ type: 'PLAY_CARD', cardUid: e.uid }, 'Play Forced March!: take 3 actions this turn instead of 2 (playing the card is not an action)');
+        if (def === 'bandits_on_the_road') for (const t of banditTargets(state, data, who)) add({ type: 'PLAY_CARD', cardUid: e.uid, targetPlayer: t.player }, `Play Bandits on the Road! on ${state.players.find(p => p.id === t.player)?.name ?? t.player}: steal their ${t.bonus} Gold Merchant Bonus right away, and they get none on their next turn`);
+        if (def === 'spy_in_the_tent') for (const t of spyTargets(state, data, who)) add({ type: 'PLAY_CARD', cardUid: e.uid, targetPlayer: t }, `Play Spy in the Tent! on ${state.players.find(p => p.id === t)?.name ?? t}: steal 1 random Game Card from their hand, unseen`);
         if (def === 'sneak_attack_sea') for (const s of sneakAttacks(state, data, who)) {
           add({ type: 'PLAY_CARD', cardUid: e.uid, from: s.from, target: s.target, troops: s.max }, `Play Sneak Attack from the Sea! — attack ${nm(data, s.target)} from ${nm(data, s.from)} (sea attack)`, { field: 'troops', min: 1, max: s.max });
           if (me.general?.at === s.from && !S.generalRecalled(state, who)) add({ type: 'PLAY_CARD', cardUid: e.uid, from: s.from, target: s.target, troops: s.max, withGeneral: true }, `Play Sneak Attack from the Sea! — attack ${nm(data, s.target)} from ${nm(data, s.from)} with the general (sea attack)`, { field: 'troops', min: 1, max: s.max });

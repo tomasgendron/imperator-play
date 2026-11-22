@@ -6,7 +6,7 @@ export const DECLARED = Object.freeze({
   effect: Object.freeze([
     'battleModifier', 'inspireRevolt', 'killTroops', 'blockRevolt', 'gainPrestige', 'bribeAlly', 'enableRomaAttack',
     'gainResources', 'freeBuild', 'recallGeneral', 'confiscateGold', 'removeFromProvince', 'stealTroopsToRoma', 'taxSavedCards',
-    'redirectDispleased', 'callReinforcements', 'sneakAttack',
+    'redirectDispleased', 'callReinforcements', 'sneakAttack', 'elephantPanic', 'forcedMarch', 'banditsOnTheRoad', 'spyInTheTent',
   ]),
   perk: Object.freeze(['caesarFlee', 'scipioExtraDie', 'seaMaster', 'fightToTheDeath', 'dieFloor', 'disciplinedAdvance']),
   decree: Object.freeze(['carthageDecree']),

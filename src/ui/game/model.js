@@ -1,7 +1,7 @@
 // Pure model of the M5 game page: no DOM, so `node --test` drives exactly what the page shows and clicks.
 // The page keeps a console session (src/ui/consoleModel.js) and asks this module who looks at the screen, what a human may do
 // now (grouped for the phase bar, the map and the builder), what a card looks like, which sounds an event plays, and how a save file reads.
-import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, recallMoveTargets, fleeOptions } from '../../engine/index.js';
+import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, recallMoveTargets, fleeOptions, effectiveActionsPerTurn } from '../../engine/index.js';
 import { newSession, play, aiToMove, aiMove, stateOf, current, formatEvent, describePrompt } from '../consoleModel.js';
 
 export { newSession, play, aiToMove, aiMove, stateOf, describePrompt };
@@ -281,7 +281,7 @@ export function frameTitle(state, data) {
     placeTroops: 'Place troops', resourceBuild: 'Build now or save the card', chooseProvince: { bribeReinforce: 'Reinforce your new ally', fleeDestination: 'Flee to…' }[f.purpose] ?? 'Choose a province', chooseBorrow: 'Borrow natives?',
     chooseBattleCards: 'Battle cards', choosePerk: 'General perk', battleContinue: 'Continue the battle?', placeSurvivors: 'Place the survivors',
     returnReinforcements: 'Send the Horn troops home?',
-    discardCards: "The Emperor's tax (random)", responseWindow: { revoltResponse: 'A province revolts!', displeasedResponse: 'Rome is displeased with you', defenceAnnounced: 'You are attacked!' }[f.window] ?? 'Your answer',
+    discardCards: "The Emperor's tax (random)", responseWindow: { revoltResponse: 'A province revolts!', displeasedResponse: 'Rome is displeased with you', defenceAnnounced: 'You are attacked!', elephantPanic: 'Elephants! in the fight — panic one?' }[f.window] ?? 'Your answer',
   };
   return T[f.kind] ?? f.kind;
 }
@@ -855,7 +855,8 @@ export function buildSteps(state, data, legal) {
     }
     return { frame: true, pieces: [{ piece, name: piece === 'road' ? 'Road' : 'Wall', cost: 0, enabled: true, reason: '', free: true, provinces: Object.values(provs) }], save: legal.find(x => x.type === 'RESOURCE_BUILD' && x.action.mode === 'save') ?? null };
   }
-  const left = state.phase === 'turn' ? data.rules.actionsPerTurn - state.turn.actionsUsed : 0;
+  const cap = state.phase === 'turn' ? effectiveActionsPerTurn(state, data) : 0;   // v31.40 (18.ad): 3 with a played Forced March!
+  const left = state.phase === 'turn' ? cap - state.turn.actionsUsed : 0;
   const mine = Object.keys(state.provinces).sort().filter(id => state.provinces[id].owner === pid);
   const saved = piece => (pl?.savedResources ?? []).filter(x => data.cardDefsById[state.cards[x.uid].def]?.effect?.params?.piece === piece).length;
   const mk = (piece, name, cost) => {
@@ -872,12 +873,12 @@ export function buildSteps(state, data, legal) {
     if (!list.length) {
       const room = piece === 'road' ? mine.some(id => !state.provinces[id].road) : mine.some(id => !(state.provinces[id].walls?.length));
       reason = !room ? (piece === 'road' ? 'every one of your provinces already has a Road' : 'every one of your provinces already has a Wall')
-        : left <= 0 ? `no actions left this turn (${data.rules.actionsPerTurn}/${data.rules.actionsPerTurn} used)` : (pl?.gold ?? 0) < cost ? `needs ${cost} Gold, you have ${pl?.gold ?? 0}` : 'not possible right now';
-    } else if (!anyPaid) reason = left <= 0 ? `paying needs an action: none left (${data.rules.actionsPerTurn}/${data.rules.actionsPerTurn} used)` : (pl?.gold ?? 0) < cost ? `paying needs ${cost} Gold, you have ${pl?.gold ?? 0}` : '';
+        : left <= 0 ? `no actions left this turn (${cap}/${cap} used)` : (pl?.gold ?? 0) < cost ? `needs ${cost} Gold, you have ${pl?.gold ?? 0}` : 'not possible right now';
+    } else if (!anyPaid) reason = left <= 0 ? `paying needs an action: none left (${cap}/${cap} used)` : (pl?.gold ?? 0) < cost ? `paying needs ${cost} Gold, you have ${pl?.gold ?? 0}` : '';
     return { piece, name, cost, enabled: list.length > 0, reason, saved: nSaved, provinces: list };
   };
   const cat = legal.find(x => x.type === 'BUY_CATAPULT') ?? null; const catCost = data.itemsById.catapult.cost.gold;
-  const catalog = { piece: 'catapult', name: 'Catapult', cost: catCost, enabled: !!cat, reason: cat ? '' : left <= 0 ? `no actions left this turn (${data.rules.actionsPerTurn}/${data.rules.actionsPerTurn} used)` : (pl?.gold ?? 0) < catCost ? `needs ${catCost} Gold, you have ${pl?.gold ?? 0}` : 'not possible right now', saved: 0, provinces: [], paid: cat, owned: pl?.items?.catapult ?? 0 };
+  const catalog = { piece: 'catapult', name: 'Catapult', cost: catCost, enabled: !!cat, reason: cat ? '' : left <= 0 ? `no actions left this turn (${cap}/${cap} used)` : (pl?.gold ?? 0) < catCost ? `needs ${catCost} Gold, you have ${pl?.gold ?? 0}` : 'not possible right now', saved: 0, provinces: [], paid: cat, owned: pl?.items?.catapult ?? 0 };
   return { frame: false, gold: pl?.gold ?? 0, actionsLeft: left, pieces: [mk('road', 'Road', roadCost(state, data, pid)), mk('wall', 'Wall', c.wall), catalog] };
 }
 
@@ -888,9 +889,10 @@ export function buildSteps(state, data, legal) {
  */
 export function buySteps(state, data, legal) {
   const pid = whoActs(state); const pl = playerById(state, pid); const c = data.rules.costs; const gold = pl?.gold ?? 0;
-  const left = state.phase === 'turn' ? data.rules.actionsPerTurn - state.turn.actionsUsed : 0;
+  const cap = state.phase === 'turn' ? effectiveActionsPerTurn(state, data) : 0;   // v31.40 (18.ad): 3 with a played Forced March!
+  const left = state.phase === 'turn' ? cap - state.turn.actionsUsed : 0;
   const mine = Object.keys(state.provinces).sort().filter(id => state.provinces[id].owner === pid);
-  const noAct = `no actions left this turn (${data.rules.actionsPerTurn}/${data.rules.actionsPerTurn} used)`;
+  const noAct = `no actions left this turn (${cap}/${cap} used)`;
   const sellable = legal.filter(d => d.type === 'SELL_CARD').length;
   const short = cost => `needs ${cost} Gold, you have ${gold}${sellable ? ` (selling a card gives ${data.rules.sellCard?.gold ?? 2} Gold)` : ''}`;
   const why = (list, cost, extra) => (list.some(x => x.enabled) ? '' : left <= 0 ? noAct : gold < cost ? short(cost) : extra() || 'not possible right now');
@@ -924,10 +926,10 @@ export function buySteps(state, data, legal) {
   return { gold, actionsLeft: left, sellable, items: [troop, troops2, troops3, card, prestige] };
 }
 
-/** Actions used this turn, as "0/2". Null before the first turn. */
+/** Actions used this turn, as "0/2" (or "0/3" with a played Forced March!, 18.ad). Null before the first turn. */
 export function actionsUsedLabel(state, data) {
   if (state.phase !== 'turn' || !state.turn) return null;
-  return `${state.turn.actionsUsed}/${data.rules.actionsPerTurn}`;
+  return `${state.turn.actionsUsed}/${effectiveActionsPerTurn(state, data)}`;
 }
 /**
  * The minimum the MAP shows for `id` (shownMin), falling back to the engine minGarrison when the map shows none
@@ -1183,7 +1185,7 @@ export function skipBattleUi(state, attacker, defender, on = hideAiBattlesOn()) 
   };
   return !human(attacker) && !human(defender);
 }
-const BATTLE_FACE = new Set(['attackDeclared', 'battleStarted', 'battleRoundRolled', 'battleRoundResolved', 'battleDiceAdjusted', 'battleEnded', 'defenderFled', 'enemyFled', 'generalSummoned', 'generalPerkTriggered', 'casualtiesApplied', 'lossCapped', 'decreeBattle', 'decreeResolved']);
+const BATTLE_FACE = new Set(['attackDeclared', 'battleStarted', 'battleRoundRolled', 'battleRoundResolved', 'battleDiceAdjusted', 'battleEnded', 'defenderFled', 'enemyFled', 'generalSummoned', 'generalPerkTriggered', 'casualtiesApplied', 'lossCapped', 'decreeBattle', 'decreeResolved', 'elephantPanicked']);
 /** Who is in this battle event, even after the action has cleared state.battle. */
 export function battleParticipants(state, event) {
   const p = event?.pub ?? {};
@@ -1402,7 +1404,9 @@ export function cardPlayPopup(events, i, state, data) {
   }
   for (let k = i + 1; k < events.length && outcome.length < 7; k++) {
     const x = events[k]; if (PLAY_STOP.has(x.type)) break; if (PLAY_QUIET.has(x.type)) continue;
-    const t = formatEvent(x, state, data).text; if (t && !/^[a-zA-Z]+ \{/.test(t)) outcome.push(t.replace(/\b[a-z]+(?:_[a-z]+)+\b/g, id => data.cardDefsById[id]?.name ?? id));
+    // v31.40 (18.af): the popup is public — the same popup for every viewer (v27) — so its outcome lines are formatted
+    // without priv. A stolen card stays "a card, unseen" here; the thief learns it from their hand and their private log line.
+    const t = formatEvent({ ...x, priv: undefined }, state, data).text; if (t && !/^[a-zA-Z]+ \{/.test(t)) outcome.push(t.replace(/\b[a-z]+(?:_[a-z]+)+\b/g, id => data.cardDefsById[id]?.name ?? id));
   }
   if (!outcome.length && def?.text) outcome.push(def.text);
   const deck = def?.deck ?? (e.type === 'cardPlayed' ? 'game' : 'resource');

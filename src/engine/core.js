@@ -84,7 +84,7 @@ export function toThrowaway(state, uid) { (state.throwaway ??= { game: [], resou
  * both are empty (every card is held: drawing does nothing, Q46).
  * v31.30 (18.a): the FIRST such rebuild of the Game deck also releases the withheld cards — 3 Elephants! + 2 Sneak Attack from
  * the Sea! held back for cycle 1 — shuffled into the new draw pile with the discards (cards still in players' hands stay in
- * hands). Cycle 2+ is the full 35-card deck again (33 before the Coin Masters, v31.37). If the game ends before the first reshuffle, the withheld cards never appear.
+ * hands). Cycle 2+ is the full 43-card deck again (33 before the Coin Masters, v31.37; 43 since v31.40). If the game ends before the first reshuffle, the withheld cards never appear.
  * The Q78 path in turn.js (discards shuffled UNDER a non-empty pile) is not a rebuild, so it never releases them.
  */
 export function drawTop(ctx, deck) {

@@ -45,10 +45,10 @@ function buildPiece(ctx, pid, piece, province, { free }) {
 }
 
 export function spendAction(ctx, what) {
-  const { state, data } = ctx; const t = state.turn;
-  check(t.actionsUsed < data.rules.actionsPerTurn, 'NO_ACTIONS_LEFT', `You have already used your ${data.rules.actionsPerTurn} actions this turn.`, '17.e');
+  const { state, data } = ctx; const t = state.turn; const cap = S.effectiveActionsPerTurn(state, data);
+  check(t.actionsUsed < cap, 'NO_ACTIONS_LEFT', `You have already used your ${cap} actions this turn.`, '17.e');
   t.actionsUsed += 1;
-  emit(ctx, 'actionSpent', { rule: '17.e', pub: { player: t.activePlayerId, action: what, used: t.actionsUsed, of: data.rules.actionsPerTurn } });
+  emit(ctx, 'actionSpent', { rule: '17.e', pub: { player: t.activePlayerId, action: what, used: t.actionsUsed, of: cap } });
 }
 
 // ------------------------------------------------------------------ start of a turn: Resources step (17.d, 20.b, 20.c)
@@ -79,7 +79,10 @@ function beginResources(ctx) {
   }
   const net = S.roadNetwork(state, data, pid);                         // Merchant Bonus: longest Roma-reaching Road network only (22.b)
   const bonus = S.merchantBonusFor(state, data, pid, net.roads);
-  if (bonus) {
+  if (pl.noMerchantBonus) {                                            // v31.40 (18.ae): Bandits on the Road! — no Merchant Bonus this turn; the flag is consumed
+    pl.noMerchantBonus = false;
+    emit(ctx, 'merchantBonusBlocked', { actor: pid, rule: '18.ae', pub: { player: pid, roads: net.roads, gold: bonus } });
+  } else if (bonus) {
     pl.gold += bonus;
     emit(ctx, 'merchantBonus', { actor: pid, rule: '22.b', pub: { player: pid, roads: net.roads, gold: bonus, provinces: net.provinces } });
   }
@@ -696,7 +699,7 @@ export function nextTurn(ctx) {
   let i = order.indexOf(prev);
   do i = (i + 1) % order.length; while (playerOf(state, order[i]).out && order[i] !== prev);   // eliminated players are skipped (12.m)
   const next = order[i];
-  state.turn = { number: t.number + 1, round: Math.ceil((t.number + 1) / order.length), activePlayerId: next, step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} };
+  state.turn = { number: t.number + 1, round: Math.ceil((t.number + 1) / order.length), activePlayerId: next, step: 'resources', actionsUsed: 0, forcedMarch: false, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} };
   emit(ctx, 'turnStarted', { actor: next, rule: '17.a', pub: { number: state.turn.number, round: state.turn.round, player: next } });
   // v31.34 (Update 3, 18.o): the recall is over on the recalled player's first turn after its through-turn — tell them, once,
   // so they know the general is free to move again. Clearing here is safe: the recalled label (app.js) and the move lock

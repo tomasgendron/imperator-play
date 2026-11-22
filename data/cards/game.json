@@ -452,6 +452,116 @@
      "oncePerTurn": true
     }
    ]
+  },
+  {
+   "id": "elephant_panic",
+   "deck": "game",
+   "copies": 2,
+   "name": "Elephant Panic!",
+   "kind": "action",
+   "type": "other",
+   "rule": [
+    "18.ac",
+    "18.h",
+    "18.a"
+   ],
+   "play": {
+    "windows": [
+     "elephantPanic"
+    ],
+    "delayTurns": 0,
+    "usesTurnCardSlot": false
+   },
+   "text": "Play it when another player uses Elephants! in a battle. One of their Elephants! cards is thrown away into the discard pile and doesn't help them in that fight.",
+   "art": {
+    "front": "cards/game/elephant_panic.png"
+   },
+   "effect": {
+    "handler": "elephantPanic"
+   }
+  },
+  {
+   "id": "forced_march",
+   "deck": "game",
+   "copies": 2,
+   "name": "Forced March!",
+   "kind": "action",
+   "type": "other",
+   "rule": [
+    "18.ad",
+    "18.h",
+    "17.o",
+    "18.a"
+   ],
+   "play": {
+    "windows": [
+     "ownActionsStep"
+    ],
+    "delayTurns": 1,
+    "usesTurnCardSlot": true
+   },
+   "text": "Play it on your turn to take 3 actions instead of the usual 2. Playing the card itself is not an action.",
+   "art": {
+    "front": "cards/game/forced_march.png"
+   },
+   "effect": {
+    "handler": "forcedMarch"
+   }
+  },
+  {
+   "id": "bandits_on_the_road",
+   "deck": "game",
+   "copies": 2,
+   "name": "Bandits on the Road!",
+   "kind": "action",
+   "type": "other",
+   "rule": [
+    "18.ae",
+    "18.h",
+    "22.b",
+    "18.a"
+   ],
+   "play": {
+    "windows": [
+     "ownActionsStep"
+    ],
+    "delayTurns": 1,
+    "usesTurnCardSlot": true
+   },
+   "text": "Play it on your turn and pick another player. You take Gold equal to their Merchant Bonus right away, and you can spend it this turn if you have actions left. That player gets no Merchant Bonus on their next turn.",
+   "art": {
+    "front": "cards/game/bandits_on_the_road.png"
+   },
+   "effect": {
+    "handler": "banditsOnTheRoad"
+   }
+  },
+  {
+   "id": "spy_in_the_tent",
+   "deck": "game",
+   "copies": 2,
+   "name": "Spy in the Tent!",
+   "kind": "action",
+   "type": "other",
+   "rule": [
+    "18.af",
+    "18.h",
+    "18.a"
+   ],
+   "play": {
+    "windows": [
+     "ownActionsStep"
+    ],
+    "delayTurns": 1,
+    "usesTurnCardSlot": true
+   },
+   "text": "Pick another player and take 1 card from their hand without looking. It's now yours.",
+   "art": {
+    "front": "cards/game/spy_in_the_tent.png"
+   },
+   "effect": {
+    "handler": "spyInTheTent"
+   }
   }
  ]
 }

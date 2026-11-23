@@ -78,7 +78,7 @@ export function createGuest(page) {
       onChat: (c, m) => { if (mineNet()) page.onChat?.(m); },   // v31.27 (Update 2): a chat line relayed by the host (including our own)
       onPick: (c, seats) => { if (!mineNet()) return; page.busyJoin(false); page.say('This game is already running. Which player are you?');
         page.pick?.(seats, i => { if (!mineNet()) return; page.pick?.(null); page.busyJoin(true); page.say(`Joining as ${seats.find(x => x.i === i)?.name ?? 'that player'}…`); c.pick(i); }); },
-      // v31.3: a long full sync (a Large Map 1 game: ~50-60 pieces) shows how far it is
+      // v31.3: a long full sync (a Large Map 2 game: ~50-60 pieces) shows how far it is
       onProgress: (c, got, of) => { if (!mineNet()) return; document.body.dataset.receiving = `${got}/${of}`; const t = `Receiving game… ${got}/${of}`;
         if (!page.inGame()) page.say(t); else if (of >= 8) page.toast(t); },   // in a game only a long sync, not every move's 2-3 pieces
       onLobby: (c, m) => { if (mineNet()) page.lobby(m); if (C.S && mineNet() && page.inGame()) page.render(); },

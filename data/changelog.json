@@ -1,5 +1,16 @@
 [
  {
+  "version": "32.0",
+  "date": "2026-11-22",
+  "title": "The large map is now Large Map 2: Illyrium and a Caledonia–Mauretania sea link",
+  "bullets": [
+   "Large Map 2 (21.a): the large map has a 20th province, Illyrium, land-bordered with Germanica, Dalmacia and Parthia — and the same back the other way. The map id stays large1, so saves from Large Map 1 keep loading (Illyrium starts native and unowned in them).",
+   "Caledonia and Mauretania are now joined by sea, so the far northwest and the far southwest connect — Caledonia is coastal now, not landlocked, which changes Sneak Attack targets and sea attacks there.",
+   "Province numbers (21.c): the numbers 3 to 8 still cover the provinces besides Roma, but with 19 of them now, one number — chosen at random each game — covers four provinces instead of three.",
+   "The large map art is the new LargeMap2_approved.jpg."
+  ]
+ },
+ {
   "version": "31.43",
   "date": "2026-11-22",
   "title": "Elephants! now cover only half the battle rounds",

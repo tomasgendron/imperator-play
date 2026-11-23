@@ -43,13 +43,13 @@ const img = (id, o = {}) => { const r = resolveAsset(assets, id, o); return r.pa
 const prov = id => data.provincesById[id]?.name ?? id;
 const pn = id => G.nameOf(st(), id);
 const col = id => G.colorClass(st(), id);
-// v31.1 (21.a): the map. Q5: Large Map 1 is the default for 3 players, Small Map 1 for 2; Q11: a map the player chose is kept when the
+// v31.1 (21.a): the map. Q5: Large Map 2 is the default for 3 players, Small Map 1 for 2; Q11: a map the player chose is kept when the
 // player count changes. A save plays on its own map (G.saveMapId: no map id = Small Map 1).
 const mapImg = () => img(data.mapId && data.mapId !== 'small1' ? 'map.' + data.mapId : 'map');
 let mapPick = null;   // the setup screen's manual choice; null = the default for the player count
-const autoMap = n => (n === 3 ? 'large1' : 'small1');   // v31.3: hosting online too (Large Map 1 is online now)
+const autoMap = n => (n === 3 ? 'large1' : 'small1');   // v31.3: hosting online too (Large Map 2 is online now)
 const mapWanted = () => mapPick ?? autoMap(seats.length);
-// v31.39: the start screen's Prestige-to-win pick (8–20); null = the map default (8 on Small Map 1, 11 on Large Map 1).
+// v31.39: the start screen's Prestige-to-win pick (8–20); null = the map default (8 on Small Map 1, 11 on Large Map 2).
 // A custom pick is kept when the map changes — only the *default* follows the map — and it is the host's choice for an
 // online game; a loaded save plays at its own recorded target instead (G.saveWinPrestige).
 let winPick = null;
@@ -66,7 +66,7 @@ function setData(d) {
 function setMap(id, win) {
   return setData(datasetFor(id, win));
 }
-/** The map has fixed start provinces for this many players (21.f: Large Map 1, 3 players): picked in the game, highest roll first. */
+/** The map has fixed start provinces for this many players (21.f: Large Map 2, 3 players): picked in the game, highest roll first. */
 const fixedStartsNow = () => !!data.rules.fixedStarts?.[String(seats.length)];
 const genLetter = gid => (data.generalsById[gid]?.name ?? gid ?? '?')[0];
 
@@ -537,7 +537,7 @@ function onlineSave(text) { try { const o = typeof text === 'string' ? JSON.pars
 async function resumeOnline(obj) {
   const show = m => { const el = $('#ldErr') ?? $('#setupErrors'); if (el) el.textContent = m; else toast(m); };
   const mid = G.saveMapId(obj); if (!datasets[mid]) { show(`This save is for a map this build does not have (${mid}).`); return false; }
-  setMap(mid, G.saveWinPrestige(obj));   // v31.3: Large Map 1 online too — v31.39: at the save's own win target
+  setMap(mid, G.saveWinPrestige(obj));   // v31.3: Large Map 2 online too — v31.39: at the save's own win target
   let ns; try { ns = G.readSave(obj, data); } catch (e) { show(e.message); return false; }
   const on = obj.online; netLeave(); clearTimeout(C.aiTimer);
   playWhere = 'host'; show('Reopening the room…');
@@ -658,7 +658,7 @@ async function joinGame() {
       el.innerHTML = seats.map(x => `<button type="button" class="btn" data-pick="${x.i}">${esc(x.name)} <span class="small">(${x.ai ? 'AI now' : 'offline'})</span></button>`).join(' ');
       joinPickClear(); $('#joinStatus').after(el);
       el.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { if (C.NET !== n) return; const i = +b.dataset.pick; joinPickClear(); say(`Joining as ${seats.find(x => x.i === i)?.name ?? 'that player'}…`); c.pick(i); }); },
-    // v31.3: a long full sync (a Large Map 1 game: ~50-60 pieces) shows how far it is
+    // v31.3: a long full sync (a Large Map 2 game: ~50-60 pieces) shows how far it is
     onProgress: (c, got, of) => { if (C.NET !== n) return; document.body.dataset.receiving = `${got}/${of}`; const t = `Receiving game… ${got}/${of}`;
       if (!inGame()) say(t); else if (of >= 8) toast(t); },   // in a game only a long sync (a rejoin / resync), not every move's 2-3 pieces
     onLobby: (c, m) => { if (C.NET === n) renderGuestLobby(m); if (C.S && C.NET === n) render(); },
@@ -1914,7 +1914,7 @@ function pickTargets(legal) {
   if (['chooseProvince', 'setupStartProvince', 'placeTroops', 'resourceBuild'].includes(f.kind) || (f.kind === 'responseWindow' && f.window === 'defenceAnnounced')) return new Set(legal.map(G.mainProvince).filter(Boolean));
   return new Set();
 }
-/** v31.1 Large Map 1: a marker beside a circle (the general on the left; the Road and the WALLS note on the right) sits just clear
+/** v31.1 Large Map 2: a marker beside a circle (the general on the left; the Road and the WALLS note on the right) sits just clear
  * of the circle or the "5/3" pill, whatever the window size (the circle grows with the map, the markers have a minimum font size). */
 function placeSideMarks() {
   for (const m of $$('#tokens .mk[data-side]')) {
@@ -1926,7 +1926,7 @@ function placeSideMarks() {
 function renderMap(legal) {
   const s = st(); const picks = pickTargets(legal); const builder = ab && !topFrame(s);
   const showMin = $('#chkNames').checked; let h = '';
-  const LM = data.mapId === 'large1';   // v31.1: Large Map 1 prints the province names just above the dots: the general and Road markers go beside the circle, the WALLS notes to the right
+  const LM = data.mapId === 'large1';   // v31.1: Large Map 2 prints the province names just above the dots: the general and Road markers go beside the circle, the WALLS notes to the right
   const mk = (cls, txt, x, y, title = '', side = '') => { h += `<div class="mk ${cls}" style="left:${x}%;top:${y}%" title="${attr(title)}"${side}>${esc(txt)}</div>`; };
   if (!$('#links').innerHTML) {
     let links = ''; const seen = new Set();

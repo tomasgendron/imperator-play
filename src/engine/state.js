@@ -1,5 +1,5 @@
 // State factory, invariants (validateState), clone, stateHash (PLAN 3, 13.1). Pure.
-import { createRng, shuffle } from './rng.js';
+import { createRng, shuffle, int } from './rng.js';
 
 export const SCHEMA_VERSION = 2;   // 2 = rules update 2026-10-21: discards, players[].items/out/gameRollsTaken/startIncome, carthage.neutral
 export const PROVINCE_STATUSES = ['native', 'allied', 'conquered', 'starting', 'held'];
@@ -41,8 +41,8 @@ export function stateHash(state) {
 }
 
 /**
- * Blank game state before setup (PLAN 3.1 to 3.3): the map's unowned provinces (13 on Small Map 1, 19 on Large Map 1) with random Game Roll
- * numbers 3..8 (each used twice on Small Map 1, 16.h; three times on Large Map 1, 21.c),
+ * Blank game state before setup (PLAN 3.1 to 3.3): the map's unowned provinces (13 on Small Map 1, 20 on Large Map 2) with random Game Roll
+ * numbers 3..8 (each used twice on Small Map 1, 16.h; three times on Large Map 2, one number four times, 21.c),
  * rewards from the map defaults (Q5), Roma at 10 troops, Carthage natives 10, the static 74-card registry and shuffled decks.
  * Setup (roll-off, generals, start provinces) is M1 and fills players/turnOrder/startProvince.
  */
@@ -73,7 +73,9 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
     if (i >= 0) withheld.game.push(decks.game.splice(i, 1)[0]);
   }
   const pn = data.rules.provinceNumbers;
-  const numbers = shuffle(rng, pn.values.flatMap(v => Array(pn.timesEach).fill(v)));
+  const pool = pn.values.flatMap(v => Array(pn.timesEach).fill(v));
+  for (let i = 0; i < (pn.extraCopies || 0); i++) pool.push(pn.values[int(rng, pn.values.length) - 1]);   // v32.0 (21.c): one number, chosen at random each game, covers a fourth province
+  const numbers = shuffle(rng, pool);
   const provinces = {};
   let ni = 0;
   for (const p of data.provinces) {

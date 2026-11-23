@@ -1,5 +1,5 @@
 // Browser data loader: fetches data/*.json relative to the page and validates them with the engine's data.js.
-// v31.1: both maps are loaded (Small Map 1 = data/map.json, the default; Large Map 1 = data/maps/large1.json, 21.a); `data` stays Small Map 1.
+// v31.1: both maps are loaded (Small Map 1 = data/map.json, the default; Large Map 2 = data/maps/large1.json, 21.a); `data` stays Small Map 1.
 import { buildData, DECKS, MAPS, DEFAULT_MAP, validWinPrestige } from '../engine/data.js';
 
 const getJson = async url => {

@@ -173,14 +173,14 @@ async function boot() {
   document.body.dataset.ready = '1';
 }
 
-// ------------------------------------------------------------------ v31.2: the map (21.a), as on the desktop: Small Map 1 or Large Map 1 (19
-// provinces, its own art; tokens on its printed dots). Q5: Large Map 1 is the default for 3 players, Small Map 1 for 2; Q11: a map the
+// ------------------------------------------------------------------ v31.2: the map (21.a), as on the desktop: Small Map 1 or Large Map 2 (20
+// provinces, its own art; tokens on its printed dots). Q5: Large Map 2 is the default for 3 players, Small Map 1 for 2; Q11: a map the
 // player chose is kept when the player count changes. A save, a resumed game or a guest's game plays on its own map.
 const mapImgM = () => img(data.mapId && data.mapId !== 'small1' ? 'map.' + data.mapId : 'map');
 let mapPick = null;   // the start screen's manual choice; null = the default for the player count
 const autoMap = n => (n === 3 ? 'large1' : 'small1');
 const mapWanted = () => mapPick ?? autoMap(seats.length);
-// v31.39: the start screen's Prestige-to-win pick (8–20); null = the map default (8 on Small Map 1, 11 on Large Map 1).
+// v31.39: the start screen's Prestige-to-win pick (8–20); null = the map default (8 on Small Map 1, 11 on Large Map 2).
 // A custom pick is kept when the map changes — only the *default* follows the map — and it is the host's choice for an
 // online game; a loaded save plays at its own recorded target instead (G.saveWinPrestige).
 let winPick = null;
@@ -464,7 +464,7 @@ function openTestPanel() {
 function loadFrom(text, errEl = null, { local = false } = {}) {
   const on = !local && onlineSave(text);
   if (on) { askResume(on); return true; }   // v30.4 (the desktop's M14): a hosted online game: reopen the room, or play it here
-  const mid = G.saveMapId(text); const w = G.saveWinPrestige(text); const md = datasetFor(mid, w);   // v31.2: a save plays on its own map (Large Map 1 too) — v31.39: and at its own win target
+  const mid = G.saveMapId(text); const w = G.saveWinPrestige(text); const md = datasetFor(mid, w);   // v31.2: a save plays on its own map (Large Map 2 too) — v31.39: and at its own win target
   if (!md) { const m = `This save is for a map this build does not have (${mid}).`; SND.play('error_denied'); if (errEl) errEl.textContent = m; else if (document.body.dataset.screen === 'setup') $('#mErr').textContent = m; else toast(m); return false; }
   let ns; try { ns = G.readSave(text, md); } catch (e) { SND.play('error_denied'); if (errEl) errEl.textContent = e.message; else if (document.body.dataset.screen === 'setup') $('#mErr').textContent = e.message; else toast(e.message); return false; }
   clearTimeout(C.aiTimer); leaveNet(); setMap(mid, w); C.S = ns; enterGame(false); toast('Game loaded'); return true;
@@ -486,7 +486,7 @@ function askResume(on) {
       clearTimeout(C.aiTimer); if (C.NET) leaveNet();
       const mid = G.saveMapId(on); if (!datasets?.[mid]) throw new Error(`This save is for a map this build does not have (${mid}).`);
       const w = G.saveWinPrestige(on);   // v31.39: resume at the save's own win target
-      const r = await NETH.resume(on, o => G.readSave(o, datasetFor(mid, w))); setMap(mid, w);   // v31.3: Large Map 1 online too
+      const r = await NETH.resume(on, o => G.readSave(o, datasetFor(mid, w))); setMap(mid, w);   // v31.3: Large Map 2 online too
       playWhere = 'local'; closeSheet(true); enterGame(false); NETH.push();
       roomSheet(r.same ? 'The room is open again with the same code: the other players rejoin by themselves, or by opening the same link.'
         : `Room ${r.old} was taken, so the game has a new code. Send the other players this new link: their seats are kept.`, r.same ? null : r.old);
@@ -844,7 +844,7 @@ function reachFrom(id, legal) {
 // "Which province?" sheet instead of guessing; a tap on the map next to a single token opens that one.
 const TOK_GAP = 6, TAP_R = 34, TAP_TIE = 10;
 let nudge = {};
-// v31.2 (Large Map 1): the printed dots are 13.6 px (of the 1280 px art) in radius; a 44 px token covers one up to ~3.2x the art size,
+// v31.2 (Large Map 2): the printed dots are 13.6 px (of the 1280 px art) in radius; a 44 px token covers one up to ~3.2x the art size,
 // so beyond that the tokens grow with the zoom (r = 16/1280 of the map, the desktop's size), and a nudge never moves a token so far
 // that its circle no longer covers its dot (cap = token r - dot r - 1). Small Map 1 is unchanged.
 const LARGE_DOT_R = 13.6 / 1280, LARGE_TOK_R = 16 / 1280;

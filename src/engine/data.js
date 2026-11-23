@@ -15,7 +15,7 @@ export const ON_DRAW = ['keep', 'autoPlay', 'autoPlayInPlay', 'applyNow', 'build
 const PROVINCE_STATUS_REWARD = ['troop', 'gold'];
 
 // v31 (rules 21.a): the maps this build knows. The province count is per map; map.json (no `map.id`) is Small Map 1.
-export const MAPS = { small1: { provinces: 13, name: 'Small Map 1' }, large1: { provinces: 19, name: 'Large Map 1' } };
+export const MAPS = { small1: { provinces: 13, name: 'Small Map 1' }, large1: { provinces: 20, name: 'Large Map 2' } };
 export const DEFAULT_MAP = 'small1';
 /** The id of a raw map file (`map.id`; absent = Small Map 1). */
 export const mapIdOf = rawMap => rawMap?.map?.id ?? DEFAULT_MAP;
@@ -93,7 +93,8 @@ export function validateData(raw, opts = {}) {
     if (notEligible !== excluded) err(mapFile, null, `startingEligible=false (${notEligible}) must equal ruleset startProvinceExcluded (${excluded})`);
     // 16.h, 21.c: every number goes to the same count of non-Roma provinces
     const pn = R('provinceNumbers'); const regular = provinces.filter(p => p.kind !== 'roma').length;
-    if (!pn || !Array.isArray(pn.values) || !isInt(pn.timesEach) || pn.values.length * pn.timesEach !== regular) err(mapFile, null, `provinceNumbers (${pn?.values?.length} numbers x ${pn?.timesEach}) must cover the ${regular} provinces besides Roma (16.h, 21.c)`);
+    const extra = pn?.extraCopies ?? 0;   // v32.0 (21.c): one number, chosen at random each game, covers a fourth province
+    if (!pn || !Array.isArray(pn.values) || !isInt(pn.timesEach) || !isInt(extra) || extra < 0 || pn.values.length * pn.timesEach + extra !== regular) err(mapFile, null, `provinceNumbers (${pn?.values?.length} numbers x ${pn?.timesEach} + ${extra} extra) must cover the ${regular} provinces besides Roma (16.h, 21.c)`);
     const minD = R('startProvinceMinDistance') ?? 0;
     const eligible = id => provinces.find(p => p.id === id)?.startingEligible === true;
     const sides = R('twoPlayerSides');   // 4.g, 21.g
@@ -190,7 +191,7 @@ export function validateData(raw, opts = {}) {
 
 /** Validates and returns an immutable, indexed data bundle. Throws one Error listing every problem. */
 // v31.39: the Prestige needed to win is adjustable on the start screen (8–20; the map default is 8 on Small Map 1,
-// 11 on Large Map 1). `buildData` takes it as an override so every `data.rules.winPrestige` reader — the victory check,
+// 11 on Large Map 2). `buildData` takes it as an override so every `data.rules.winPrestige` reader — the victory check,
 // the AI threat line, the pips, the win popup — follows the chosen value with no other code change.
 export const WIN_PRESTIGE_MIN = 8;
 export const WIN_PRESTIGE_MAX = 20;

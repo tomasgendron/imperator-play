@@ -22,7 +22,7 @@ function hub() {
   return {
     onMessage: fn => h.msg.push(fn), onPeer: fn => h.peer.push(fn), onPeerClose: fn => h.close.push(fn),
     emitMsg: (p, m) => h.msg.forEach(f => f(p, m)), emitPeer: p => h.peer.forEach(f => f(p)), emitClose: p => h.close.forEach(f => f(p)),
-    // v31.3: a long message arrives in pieces (a full sync of a Large Map 1 game: ~50-60): onProgress(fn(peer, got, of)) after each piece
+    // v31.3: a long message arrives in pieces (a full sync of a Large Map 2 game: ~50-60): onProgress(fn(peer, got, of)) after each piece
     onProgress: fn => h.progress.push(fn), emitProgress: (p, got, of) => h.progress.forEach(f => f(p, got, of)),
   };
 }

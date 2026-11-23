@@ -36,7 +36,7 @@ export class HostRoom {
     s.connected = false; s.peer = null; this.changed(s.i);
     this.hooks.onLeft?.(this, s.i, name);
   }
-  /** v31.3: `data` may be a function (the page's current map: Small Map 1 or Large Map 1, chosen after the room opened). */
+  /** v31.3: `data` may be a function (the page's current map: Small Map 1 or Large Map 2, chosen after the room opened). */
   dataNow() { return typeof this.data === 'function' ? this.data() : this.data; }
   bySeatPeer(p) { return this.seats.find(s => s.peer === p) ?? null; }
   /** `connected` = the seat is playable (a guest seat: its guest answers). `guest` = an AI seat that once had a guest: whether that

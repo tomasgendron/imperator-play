@@ -1,9 +1,9 @@
 {
- "_comment": "Large Map 1, 19 provinces (rules 21.a-21.i). Links from the Drive sheet \"Large Map Province Connections\" (/workspace/largemap/large_links.json, 34 links: 20 land, 14 sea; 21.b). Token centres from LargeMap1_centers.json x 819/1280 (Roma on the eagle at 633,385, Q8). Rewards 21.d. startingEligible false for Roma, Carthage and Swiss (4.b, 21.f, 21.g). `rules` overrides ruleset.json values on this map only.",
+ "_comment": "Large Map 2, 20 provinces (rules 21.a-21.i). Links from the Drive sheet \"Large Map Province Connections\" (/workspace/largemap/large_links.json, 34 links: 20 land, 14 sea; 21.b) + v32.0: Illyrium land links to Germanica, Dalmacia, Parthia and the Caledonia-Mauretania sea link (38 links: 23 land, 15 sea). Token centres from LargeMap1_centers.json x 819/1280 (Roma on the eagle at 633,385, Q8); Illyrium's token (669.7, 80.5) measured from the Large Map 2 art — dot centre image (1046.6, 125.7) in 1280x720, verified with a crosshair overlay 2026-11-22. Rewards 21.d. startingEligible false for Roma, Carthage and Swiss (4.b, 21.f, 21.g). `rules` overrides ruleset.json values on this map only.",
  "map": {
   "id": "large1",
-  "name": "Large Map 1",
-  "image": "map/LargeMap1_approved.jpg",
+  "name": "Large Map 2",
+  "image": "map/LargeMap2_approved.jpg",
   "width": 1280,
   "height": 720,
   "tokenSpace": {
@@ -23,7 +23,9 @@
    "land": [
     "briton"
    ],
-   "sea": [],
+   "sea": [
+    "mauretania"
+   ],
    "defaultReward": "troop",
    "startingEligible": true,
    "hit": {
@@ -140,7 +142,8 @@
     "numidia"
    ],
    "sea": [
-    "iberia"
+    "iberia",
+    "caledonia"
    ],
    "defaultReward": "troop",
    "startingEligible": true,
@@ -186,7 +189,8 @@
    "land": [
     "upper_gaul",
     "swiss",
-    "dalmacia"
+    "dalmacia",
+    "illyrium"
    ],
    "sea": [],
    "defaultReward": "troop",
@@ -257,7 +261,8 @@
    "land": [
     "germanica",
     "swiss",
-    "macedonia"
+    "macedonia",
+    "illyrium"
    ],
    "sea": [
     "parthia"
@@ -268,6 +273,29 @@
     "shape": "circle",
     "cx": 551,
     "cy": 123,
+    "r": 22
+   }
+  },
+  {
+   "id": "illyrium",
+   "name": "Illyrium",
+   "kind": "regular",
+   "token": {
+    "x": 669.7,
+    "y": 80.5
+   },
+   "land": [
+    "germanica",
+    "dalmacia",
+    "parthia"
+   ],
+   "sea": [],
+   "defaultReward": "troop",
+   "startingEligible": true,
+   "hit": {
+    "shape": "circle",
+    "cx": 670,
+    "cy": 81,
     "r": 22
    }
   },
@@ -357,7 +385,8 @@
     "y": 179.92
    },
    "land": [
-    "phoenicia"
+    "phoenicia",
+    "illyrium"
    ],
    "sea": [
     "dalmacia",
@@ -490,7 +519,8 @@
      7,
      8
     ],
-    "timesEach": 3
+    "timesEach": 3,
+    "extraCopies": 1
    },
    "rule": "21.c, 16.h"
   },
@@ -508,6 +538,7 @@
     ],
     "east": [
      "dalmacia",
+     "illyrium",
      "macedonia",
      "thrace",
      "greece",
@@ -525,11 +556,11 @@
     "carthage",
     "swiss"
    ],
-   "rule": "4.b, 21.f, 21.g (Swiss is never a start on Large Map 1)"
+   "rule": "4.b, 21.f, 21.g (Swiss is never a start on Large Map 2)"
   },
   "startDistanceExceptions": {
    "value": [],
-   "rule": "20.o, 21.g (no exceptions on Large Map 1)"
+   "rule": "20.o, 21.g (no exceptions on Large Map 2)"
   },
   "fixedStarts": {
    "value": {

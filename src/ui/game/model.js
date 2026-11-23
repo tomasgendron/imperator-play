@@ -338,6 +338,30 @@ export function backfillNewCards(state, data) {
     }
   }
 }
+/** v32.0 (21.a): saves from before a province was added to the map (Illyrium on Large Map 2) gain it as a fresh native province —
+ * unowned, no troops, natives unrolled — so the old save keeps loading (validateState requires the save's provinces to match the
+ * map). Its number is the least-assigned number so far, ties broken by the lowest value (one number covers four provinces on
+ * Large Map 2, 21.c), and its reward is the map default. Runs in readSave before validation. */
+export function backfillMissingProvinces(state, data) {
+  if (!state?.provinces || !data?.provinces) return;
+  const counts = {};
+  for (const p of Object.values(state.provinces)) if (Number.isInteger(p.number)) counts[p.number] = (counts[p.number] ?? 0) + 1;
+  for (const def of data.provinces) {
+    if (state.provinces[def.id]) continue;
+    const roma = def.kind === 'roma';
+    const min = Math.min(...[3, 4, 5, 6, 7, 8].map(v => counts[v] ?? 0));
+    const n = roma ? null : [3, 4, 5, 6, 7, 8].find(v => (counts[v] ?? 0) === min);
+    if (!roma) counts[n] = (counts[n] ?? 0) + 1;
+    state.provinces[def.id] = {
+      id: def.id, number: n, reward: roma ? null : def.defaultReward,
+      owner: null, status: 'native', troops: roma ? data.rules.romaStartTroops : 0,
+      native: def.id === 'carthage'
+        ? { rolled: data.rules.carthageNative[0], count: data.rules.carthageNative[0], present: data.rules.carthageNative[0] }
+        : { rolled: null, count: null, present: null },
+      road: false, walls: [], healAtTurn: null,
+    };
+  }
+}
 /** v31.30 (19.k): old saves hold one-sided Walls — a list with a single facing. The facing concept is gone, so a
  * province with any Wall at all now has a Wall on every border: fill `walls` with all its neighbours (sorted).
  * A province already listing every neighbour, or with no Wall, is untouched. Runs in readSave before validation;
@@ -368,6 +392,7 @@ export function readSave(input, data) {
   if (state.carthage && state.carthage.destroyedForGood === undefined) state.carthage.destroyedForGood = false;   // v31.36 (16.o): saves from before the flag load as not destroyed for good   // v31.24 (18.r, 18.x): saves from before the deferred steal
   if (!state.turn.aiHumanAttacks) state.turn.aiHumanAttacks = {};   // v31.12: saves from before the Easy attack budget
   backfillNewCards(state, data);   // v31.9 (18.z): saves from before a card was added to a deck gain the new cards, shuffled into that deck (v31.11)
+  backfillMissingProvinces(state, data);   // v32.0 (21.a): saves from before a province was added to the map gain it as a fresh native province
   normaliseWalls(state, data);   // v31.30 (19.k): one-sided Walls in old saves become Walls on all sides
   let errs;
   try { errs = validateState(state, data); } catch (e) { errs = [e.message]; }

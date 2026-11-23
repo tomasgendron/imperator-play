@@ -30,7 +30,7 @@ function makeConn(cid, peerId, me) {
     const bytes = enc.encode(JSON.stringify(d)).length; stats.maxBytes = Math.max(stats.maxBytes, bytes);
     if (bytes >= PEERJS_MTU) { stats.dropped++; c.emit('error', { type: 'message-too-big' }); return; }   // as PeerJS: nothing is sent
     stats.sent++;
-    // v31.3: ?fpms=N: a slow link, every message N ms after the one before it (in order), to time long full syncs (Large Map 1)
+    // v31.3: ?fpms=N: a slow link, every message N ms after the one before it (in order), to time long full syncs (Large Map 2)
     if (!SLOW_MS) { chan().postMessage({ t: 'data', cid, to: peerId, d }); return; }
     const at = Math.max(Date.now(), c._at ?? 0) + SLOW_MS; c._at = at;
     setTimeout(() => chan().postMessage({ t: 'data', cid, to: peerId, d }), at - Date.now());

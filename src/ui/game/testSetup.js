@@ -217,7 +217,7 @@ export function renderTestSetupPage(box, host) {
         then give me control of the player in <select id="tsPlace" aria-label="Place to take over"><option value="1">1st place</option><option value="2">2nd place</option><option value="3">3rd place</option></select>.</p>
       <div class="ts-row">
         <label>Players <select id="tsPlayers"><option value="3" selected>3 players</option><option value="2">2 players</option></select></label>
-        ${mapIds.length > 1 ? `<label>Map <select id="tsMap">${mapIds.map(id => `<option value="${attr(id)}" ${id === host.mapId ? 'selected' : ''}>${id === 'large1' ? 'Large Map 1' : 'Small Map 1'}</option>`).join('')}</select></label>` : ''}
+        ${mapIds.length > 1 ? `<label>Map <select id="tsMap">${mapIds.map(id => `<option value="${attr(id)}" ${id === host.mapId ? 'selected' : ''}>${esc(host.dataForMap?.(id)?.mapName ?? (id === 'large1' ? 'Large Map 2' : 'Small Map 1'))}</option>`).join('')}</select></label>` : ''}
         <label>AI level <select id="tsDiff"><option value="normal" selected>Normal</option><option value="easy">Easy</option></select></label>
         <label>Seed <input id="tsSeed" size="10" placeholder="random" title="Same seed + same choices = the same run"> <button type="button" class="btn sm" id="tsSeedDice" title="Roll a fresh random seed">🎲</button></label>
         <label>Stop at turn <select id="tsCap"><option value="60" selected>60 — closest match</option><option value="40">40 — closest match</option></select></label>

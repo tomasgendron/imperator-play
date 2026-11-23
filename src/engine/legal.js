@@ -98,7 +98,9 @@ export function legalActions(state, data) {
         break;
       case 'chooseBattleCards': {
         const kinds = Object.keys(f.held); let combos = [{}];
-        for (const k of kinds) combos = combos.flatMap(c => Array.from({ length: f.held[k] + 1 }, (_, n) => ({ ...c, ...(n ? { [k]: n } : {}) })));
+        // v31.43 (18.b): at most two Elephants! per side per battle.
+        const cap = k => k === 'elephants' ? Math.min(f.held[k], data.rules.battle?.elephantsMaxPerBattle ?? 2) : f.held[k];
+        for (const k of kinds) combos = combos.flatMap(c => Array.from({ length: cap(k) + 1 }, (_, n) => ({ ...c, ...(n ? { [k]: n } : {}) })));
         for (const c of combos) {
           const txt = Object.entries(c).map(([k, n]) => `${n} ${data.cardDefsById[k]?.name ?? k}`).join(' + ');
           add({ type: 'CHOOSE_BATTLE_CARDS', cards: c }, txt ? `Commit ${txt} (${f.role})` : `No battle cards (${f.role})`);

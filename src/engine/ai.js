@@ -57,8 +57,8 @@ export function battleOdds(a, d, maxA = 3, maxD = 2, bonus = 0) {
 
 // ------------------------------------------------------------------ evaluation
 const W = { prestige: 60, province: 10, bonusTroop: 4, reward: 3, troop: 2.5, troopOver10: 0.8, gold: 1.2, card: 6, saved: 4, catapult: 4, road: 3, revolt: 6, threat: 0.35, under: 6 };
-const CARD_VALUE = { revolt: 5, assassin: 4, bribe_the_ally: 5, kill_revolt_leader: 5, busy_little_bee: 5, battlefield_imperator: 4, elephants: 6, moral_boost: 5, horn_of_titus_pullus: 5,
-  coin_master_selling: 8, coin_master_unused: 8, elephant_panic: 6, forced_march: 6, bandits_on_the_road: 5, spy_in_the_tent: 6 };   // v31.37 (18.aa, 18.ab): a lasting Gold bonus while held — keep it, never sell it (selling ends the bonus); v31.40 (18.ac–18.af): Panic ≈ an Elephant, March ≈ an extra action, Bandits ≈ a small bonus, Spy ≈ a random card
+const CARD_VALUE = { revolt: 5, assassin: 4, bribe_the_ally: 5, kill_revolt_leader: 5, busy_little_bee: 5, battlefield_imperator: 4, elephants: 3, moral_boost: 5, horn_of_titus_pullus: 5,
+  coin_master_selling: 8, coin_master_unused: 8, elephant_panic: 6, forced_march: 6, bandits_on_the_road: 5, spy_in_the_tent: 6 };   // v31.37 (18.aa, 18.ab): a lasting Gold bonus while held — keep it, never sell it (selling ends the bonus); v31.40 (18.ac–18.af): Panic ≈ an Elephant, March ≈ an extra action, Bandits ≈ a small bonus, Spy ≈ a random card; v31.43 (18.b): one Elephants! covers half the rounds now, so 6 → 3 — the second completes coverage, each card is worth ~half the old value
 const handValue = (state, p) => p.hand.reduce((t, c) => t + (CARD_VALUE[state.cards[c.uid].def] ?? W.card), 0);
 
 function playerScore(state, data, pid, cache) {
@@ -187,6 +187,7 @@ export function humanAttacksUsed(state, pid) { return state.turn.aiHumanAttacks?
 export function defenderHoldOdds(state, data, b, me, hornBest = 0) {
   const committed = (b.att.cards ?? []).map(uid => state.cards[uid]?.def);
   const held = battleCardsHeld(state, data, me);
+  const attEle = committed.filter(d => d === 'elephants').length, defEle = held.elephants?.length ?? 0;
   let ignore = 0;
   if (wallsActive(state, data, b)) {
     ignore += (playerOf(state, b.att.player).items?.catapult ?? 0) * data.rules.catapult.wallRollsIgnoredEach;
@@ -194,9 +195,9 @@ export function defenderHoldOdds(state, data, b, me, hornBest = 0) {
   }
   const o = liveOdds(state, data, b, {
     a: attForce(b), d: defForce(state, b) + hornBest,
-    attBonus: committed.filter(d => d === 'elephants').length,
+    attEleOdd: attEle >= 1, attEleEven: attEle >= 2,   // v31.43 (18.b): one elephant covers the odd rounds, a second the even ones
     attMoralUntil: committed.includes('moral_boost') ? 1 : 0,
-    defBonus: held.elephants?.length ?? 0,
+    defEleOdd: defEle >= 1, defEleEven: defEle >= 2,
     defMoralUntil: (held.moral_boost?.length ?? 0) ? 1 : 0,
     ignore,
   });
@@ -283,7 +284,9 @@ export function chooseAction(state, data, opts = {}) {
       const none = cards.find(x => !n(x)) ?? cards[0];
       const el = all.action.cards.elephants ?? 0, mo = all.action.cards.moral_boost ?? 0;
       const p0 = liveOdds(state, data, b).p;
-      const p1 = liveOdds(state, data, b, f.role === 'attacker' ? { attBonus: b.att.elephants + el, attMoralUntil: mo } : { defBonus: b.def.elephants + el, defMoralUntil: mo }).p;
+      // v31.43 (18.b): committing elephants buys round parity — the first the odd rounds, a second the even ones.
+      const tot = (f.role === 'attacker' ? b.att.elephants : b.def.elephants) + el;
+      const p1 = liveOdds(state, data, b, f.role === 'attacker' ? { attEleOdd: tot >= 1, attEleEven: tot >= 2, attMoralUntil: mo } : { defEleOdd: tot >= 1, defEleEven: tot >= 2, defMoralUntil: mo }).p;
       const swing = f.role === 'attacker' ? p1 - p0 : p0 - p1;
       const stakes = f.role === 'defender' ? (state.provinces[b.target].status === 'starting' || b.target === 'roma' ? 1.5 : 1) : 1;
       return swing * stakes > 0.1 ? all.action : none.action;
@@ -309,7 +312,7 @@ export function chooseAction(state, data, opts = {}) {
       // defender's Elephants were committed and refunded 6 times because the AI always retreated after round 1. While fewer
       // than 4 rounds have been fought and the defender has such a card committed or queued, fight on to round 4 at a much
       // lower bar: the AI's own cards stay spent either way, so continuing costs only troops, and burning the defender's cards
-      // (each worth ~6 in hand, far more as a battle swing) plus the small chance of winning is worth a few lost troops.
+      // (each worth ~3-5 in hand, far more as a battle swing) plus the small chance of winning is worth a few lost troops.
       // v31.15 (Tomas's correction of the v31.14 version): the burn is ONE factor in the decision, not an override — fight on
       // only when the AI can afford the bleed. His rule: burn the cards "because even if I lose 8 troops (4 rounds) I have
       // enough troops elsewhere to keep working towards prestige", but retreat when backup troops are thin. So the lowered bar

@@ -3,13 +3,16 @@
 // rolls with the Wall cancelled by Catapults and Germanicus (19.u, 15.h), Scipio (+1 on a tied pairing or an extra die, 15.c, 15.g),
 // Pompey at sea (15.d), Germanicus' Fight to the Death (15.h, both sides), his die floor (15.h, v31.25: every die counts at
 // least 2) and his last-stand loss cap (15.h, v31.25: at most 1 troop lost in a round at 2 troops), Caesar's fleeing troop (15.b, both sides), Roma's Ingrained
-// Loyalty roll (12.j, cap 20, 12.k), Elephants (+1 every round, 18.b) and Moral Boost (+1 for one round each, 18.c, queued one per round),
+// Loyalty roll (12.j, cap 20, 12.k), Elephants (+1 on odd rounds for the first card, even rounds for the second, 18.b, v31.43) and Moral Boost (+1 for one round each, 18.c, queued one per round),
 // ties to the defender (Q16) and "both sides at 0: the defender keeps 1" (Q20).
 // It is a dynamic program over (attackers, defenders, round) with exact per-round loss tables (sorted-dice multisets), so a call costs
 // well under a millisecond once warm. It never peeks: a rival's hidden battle cards / Horn are not counted.
+// v31.43 (18.b): Elephants! cover only half the rounds — the first card the odd rounds, a second the even rounds — so the
+// per-round elephant bonus depends on the round's parity, and the memo key carries that parity (the steady state past the
+// last moral/wall round is a 2-round cycle, not a single round).
 import { playerOf } from './core.js';
 import * as S from './selectors.js';
-import { attackPreview, battleCardsHeld, borrowLimit, attForce, defForce, wallsActive } from './battle.js';
+import { attackPreview, battleCardsHeld, borrowLimit, attForce, defForce, wallsActive, elephantParity } from './battle.js';
 
 // ---- sorted multisets of n six-sided dice, descending, with their probabilities
 const msets = new Map();
@@ -42,7 +45,8 @@ function roundTable(nA, nD, net, attFloor = false, defFloor = false) {
 
 /**
  * Exact odds of a battle fought to the end. p: {a, d, round (next round to roll, 1 = first), maxA (attacker dice before the force
- * limit), defDice, wall, ignore (rolls 1..ignore have the Wall cancelled), defWallDice, attBonus/defBonus (Elephants, all rounds),
+ * limit), defDice, wall, ignore (rolls 1..ignore have the Wall cancelled), defWallDice, attEleOdd/attEleEven/defEleOdd/defEleEven
+ * (Elephants: the first card covers the odd rounds, a second the even rounds, 18.b, v31.43),
  * attMoralUntil/defMoralUntil (+1 in rounds <= this), germAtt/germDef (Fight to the Death: +1 to each die at 2 troops, +2 at 1;
  * v31.25: the same flags also carry the die floor — every die of a Germanicus side counts at least 2 — and the last-stand
  * loss cap, at most 1 troop lost in a round by a Germanicus force at 2 troops).
@@ -51,18 +55,20 @@ function roundTable(nA, nD, net, attFloor = false, defFloor = false) {
  * Returns {p: P(conquest), surv: E[attacker survivors on a conquest] (not conditional), lose: 1 - p}.
  */
 export function fightOdds(q) {
-  const P = { round: 1, maxA: 3, defDice: 2, wall: false, ignore: 0, defWallDice: 3, attBonus: 0, defBonus: 0, attMoralUntil: 0, defMoralUntil: 0, germAtt: false, germDef: false, attLost: false, defLost: false, delta: 2, ...q };
+  const P = { round: 1, maxA: 3, defDice: 2, wall: false, ignore: 0, defWallDice: 3, attEleOdd: false, attEleEven: false, defEleOdd: false, defEleEven: false, attMoralUntil: 0, defMoralUntil: 0, germAtt: false, germDef: false, attLost: false, defLost: false, delta: 2, ...q };
   const a0 = Math.max(0, Math.min(80, Math.round(P.a))), d0 = Math.max(0, Math.min(80, Math.round(P.d)));
   const rMax = Math.max(P.ignore, P.attMoralUntil, P.defMoralUntil, P.round) + 1;
   const memo = new Map();
   const f = (a, d, r) => {
     if (d <= 0) return a > 0 ? [1, a] : [0, 0];
     if (a <= 0) return [0, 0];
-    const rc = Math.min(r, rMax); const key = (a * 128 + d) * 64 + rc;
+    const rc = Math.min(r, rMax); const key = ((a * 128 + d) * 64 + rc) * 2 + (r % 2);
     const m = memo.get(key); if (m) return m;
     const nA = Math.min(P.maxA, a);
     const nD = Math.min(P.wall && rc > P.ignore ? P.defWallDice : P.defDice, d);
-    let net = P.attBonus - P.defBonus + (rc <= P.attMoralUntil ? 1 : 0) - (rc <= P.defMoralUntil ? 1 : 0);
+    // v31.43 (18.b): the elephant bonus follows the round's parity — the true round r, not the clamped rc.
+    let net = (r % 2 === 1 ? (P.attEleOdd ? 1 : 0) - (P.defEleOdd ? 1 : 0) : (P.attEleEven ? 1 : 0) - (P.defEleEven ? 1 : 0))
+      + (rc <= P.attMoralUntil ? 1 : 0) - (rc <= P.defMoralUntil ? 1 : 0);
     const attStart = P.attStart ?? a0;
     if (P.germAtt && attStart >= 3 && a < attStart) { if (a === 2) net += 1; else if (a === 1) net += 2; }
     if (P.germDef) { if (d === 2) net -= 1; else if (d === 1) net -= 2; }
@@ -74,7 +80,7 @@ export function fightOdds(q) {
       const aL = P.germAtt && attStart >= 3 && a === 2 ? Math.min(o.aL, 1) : o.aL;
       const dL = P.germDef && d === 2 ? Math.min(o.dL, 1) : o.dL;
       const a2 = a - aL, d2 = d - dL;
-      const [w, s] = a2 <= 0 ? [0, 0] : f(a2, d2, rc + 1);   // a2 = 0 and d2 = 0: the defender keeps 1 (Q20)
+      const [w, s] = a2 <= 0 ? [0, 0] : f(a2, d2, r + 1);   // the true round: parity must keep alternating past the clamp (v31.43, 18.b)
       pw += o.p * w; sv += o.p * s;
     }
     const res = [pw, sv]; memo.set(key, res); return res;
@@ -121,10 +127,11 @@ export function attackOdds(state, data, action, opts = {}) {
   const defGen = id => !!(defPid && dg?.at === action.target && dg.id === id && S.generalPerksActive(state, defPid));
   if (on('caesar')) { if (d >= minFlee) d -= 1; }                          // 15.b: one enemy troop flees
   else if (defGen('caesar') && a >= minFlee) a -= 1;                         // 15.b defending: one of ours flees (it comes back if we lose)
+  const eleHeld = held.elephants?.length ?? 0;   // v31.43 (18.b): one held elephant covers the odd rounds, a second the even ones
   const base = {
     a, d, round: 1, maxA: pv.sea ? (on('pompey') ? Math.max(R.attackerDiceSea, R.pompeyDiceSea) : R.attackerDiceSea) : R.attackerDiceLand,
     defDice: R.defenderDice, defWallDice: R.defenderDiceWithWall, wall: pv.wall, ignore: pv.wallRollsIgnored,
-    attBonus: held.elephants?.length ?? 0, attMoralUntil: held.moral_boost?.length ?? 0, germAtt: on('germanicus'), germDef: defGen('germanicus'), delta,
+    attEleOdd: eleHeld >= 1, attEleEven: eleHeld >= 2, attMoralUntil: held.moral_boost?.length ?? 0, germAtt: on('germanicus'), germDef: defGen('germanicus'), delta,
   };
   const run = q => (action.target === 'roma' ? withLoyalty(data, q) : fightOdds(q));
   let best = { ...run(base), perk: null, params: base };
@@ -146,9 +153,10 @@ export function liveOdds(state, data, b = state.battle, over = {}) {
   else maxA = b.sea ? (on('pompey') ? Math.max(R.attackerDiceSea, R.pompeyDiceSea) : R.attackerDiceSea) : R.attackerDiceLand;
   const moralLeft = side => b[side].queue.filter(u => state.cards[u].def === 'moral_boost').length;
   const dp = b.def.player; const delta = data.generalsById.germanicus?.perks?.find(x => x.handler === 'fightToTheDeath')?.params?.delta ?? 2;
+  const aP = elephantParity(b, 'att'), dP = elephantParity(b, 'def');   // v31.43 (18.b): committed elephants by round parity
   const q = {
     a: attForce(b), d: defForce(state, b), round: nextRound, maxA, defDice: R.defenderDice, defWallDice: R.defenderDiceWithWall,
-    wall: wallsActive(state, data, b), ignore: b.wallRollsIgnored, attBonus: b.att.elephants, defBonus: b.def.elephants,
+    wall: wallsActive(state, data, b), ignore: b.wallRollsIgnored, attEleOdd: aP.odd, attEleEven: aP.even, defEleOdd: dP.odd, defEleEven: dP.even,
     attMoralUntil: nextRound - 1 + moralLeft('att'), defMoralUntil: nextRound - 1 + moralLeft('def'),
     germAtt: b.mode === 'attack' && on('germanicus'), germDef: b.mode === 'attack' && !!(dp && b.def.general && perksOn(state, dp, 'germanicus')), delta,
     attStart: b.att.started ?? attForce(b), defStart: b.def.started ?? defForce(state, b),

@@ -1,5 +1,16 @@
 [
  {
+  "version": "31.43",
+  "date": "2026-11-22",
+  "title": "Elephants! now cover only half the battle rounds",
+  "bullets": [
+   "Elephants! (18.b): one card now gives +1 to all of your dice on the odd battle rounds only (1, 3, 5, ...). A second Elephants! in the same battle covers the even rounds (2, 4, 6, ...), so two cards together match what one card used to do — and the old +2 double is gone.",
+   "At most two Elephants! can join one battle per side. The deck still has 5 copies; a third copy just can't join the same battle.",
+   "Elephant Panic! (18.ac): it throws away the first Elephants! played — the odd-rounds card — and the survivor keeps its own rounds.",
+   "The battle display now says which rounds your Elephants! cover: odd rounds, even rounds, or odd + even rounds."
+  ]
+ },
+ {
   "version": "31.42",
   "date": "2026-11-22",
   "title": "The Generals box on the start screen no longer jumps around",

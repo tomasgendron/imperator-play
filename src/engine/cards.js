@@ -268,7 +268,13 @@ responseWindows.elephantPanic = {
     spend(ctx, f.player, entry.uid, { source: 'elephantPanic', battleId: b.id });
     const [gone] = b[oppSide].played.splice(i, 1);
     b[oppSide].elephants -= 1;   // the card is already in the discard pile (committed cards leave the hand at play time, 18.i); Panic only takes it out of the fight, and keeps it from being refunded on an early retreat (17.k)
-    emit(ctx, 'elephantPanicked', { actor: f.player, rule: '18.ac', pub: { battleId: b.id, player: f.player, opponent: b[oppSide].player ?? null, side: f.side, uid: gone.uid } });
+    // v31.43 (18.b): Panic takes the FIRST committed Elephants! — the odd-rounds card — and the survivor keeps its own
+    // parity (a 2-stack leaves the even-rounds card). A pre-v31.43 save has no parity on its played entries: the removed
+    // card was the first committed, so any survivors cover the even rounds — stamp them so the fallback can't flip them.
+    const goneParity = gone.parity ?? 'odd';
+    if (goneParity === 'odd') b[oppSide].eleOdd = false; else b[oppSide].eleEven = false;
+    if (!gone.parity && b[oppSide].elephants > 0) { for (const c of b[oppSide].played) if (c.def === 'elephants') c.parity = 'even'; b[oppSide].eleEven = true; }
+    emit(ctx, 'elephantPanicked', { actor: f.player, rule: '18.ac', pub: { battleId: b.id, player: f.player, opponent: b[oppSide].player ?? null, side: f.side, uid: gone.uid, parity: goneParity } });
   },
   pass(ctx, f) { /* the window closes; advance() asks the other side, then the first die is rolled */ },
 };

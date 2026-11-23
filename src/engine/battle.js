@@ -164,7 +164,7 @@ const perkFns = {
   disciplinedAdvance: { rolls: () => 1000 },
 };
 for (const [k, v] of Object.entries(perkFns)) registerPerk(k, v);
-registerEffect('battleModifier', { elephants: 'all rounds', moral_boost: 'one round' });
+registerEffect('battleModifier', { elephants: 'odd/even rounds', moral_boost: 'one round' });
 registerEffect('callReinforcements', {});
 registerEffect('enableRomaAttack', {});
 registerDecree('carthageDecree', {});
@@ -209,8 +209,8 @@ export function declareAttack(ctx, pid, a, opts = {}) {
   }
   const b = state.battle = {
     id: 'b' + (state.eventSeq + 1), mode: 'attack', stage: 'borrow', round: 0, target: a.target, sea: route.sea, via: route.via, sneak: !!opts.sneak,
-    att: { player: pid, from: a.from, own: n, borrow: a.borrow ?? null, borrowMax: bmax, borrowed: 0, borrowedDead: 0, general: withGeneral, perk: a.perk ?? null, cards, queue: [], elephants: 0, playedRound: 0 },
-    def: { player: t.owner, kind: defKind(state, a.target), general: false, cards: null, queue: [], elephants: 0, playedRound: 0, hornAsked: false, startForce: 0 },
+    att: { player: pid, from: a.from, own: n, borrow: a.borrow ?? null, borrowMax: bmax, borrowed: 0, borrowedDead: 0, general: withGeneral, perk: a.perk ?? null, cards, queue: [], elephants: 0, eleOdd: false, eleEven: false, playedRound: 0 },
+    def: { player: t.owner, kind: defKind(state, a.target), general: false, cards: null, queue: [], elephants: 0, eleOdd: false, eleEven: false, playedRound: 0, hornAsked: false, startForce: 0 },
     moral: { att: 0, def: 0 }, fled: null, wallRollsIgnored: 0, wallSources: [], loyaltyDone: a.target !== 'roma', rounds: [],
   };
   b.def.general = !!(t.owner && generalOf(state, t.owner)?.at === a.target);
@@ -222,6 +222,8 @@ function pickCards(data, held, want) {
   for (const [def, k] of Object.entries(want)) {
     check(data.cardDefsById[def]?.type === 'battle', 'NOT_A_BATTLE_CARD', `${def} is not a battle card (18.h).`, '18.h');
     check(isInt(k) && k >= 0 && k <= (held[def]?.length ?? 0), 'NOT_IN_HAND', `You hold ${held[def]?.length ?? 0} ${def} card(s).`, '18.i');
+    // v31.43 (18.b): at most two Elephants! per side per battle — the first covers odd rounds, the second even rounds.
+    if (def === 'elephants') check(k <= (data.rules.battle?.elephantsMaxPerBattle ?? 2), 'ELEPHANT_MAX', `At most ${data.rules.battle?.elephantsMaxPerBattle ?? 2} Elephants! in one battle (18.b).`, '18.b');
     uids.push(...(held[def] ?? []).slice(0, k));
   }
   return uids;
@@ -423,14 +425,32 @@ define('RETURN_REINFORCEMENTS', {
 });
 for (const t of ['APPLY_PLUS_ONE', 'BATTLE_CARDS_DONE']) define(t, { run: () => fail('OBSOLETE', `${t} no longer exists: ${t === 'APPLY_PLUS_ONE' ? "Scipio's +1 is placed automatically (15.g, 2026-10-21)" : 'battle cards are committed before round 1 (18.i, Q17)'}.`) });
 
+/** v31.43 (18.b): which battle rounds a side's committed Elephants! cover. The first committed card covers the odd rounds
+ * (1, 3, 5, …), a second covers the even rounds (2, 4, 6, …); at most two per side per battle. The flags are the source
+ * of truth; a pre-v31.43 save has a count but no flags, so the count stands in — one elephant is the odd one, two is both.
+ * (A Panic that takes the odd card out of a 2-stack leaves eleEven set, so the fallback never fires there.) */
+export function elephantParity(b, side) {
+  const s = b[side];
+  if (s.eleOdd || s.eleEven) return { odd: !!s.eleOdd, even: !!s.eleEven };
+  return { odd: (s.elephants ?? 0) >= 1, even: (s.elephants ?? 0) >= 2 };
+}
+/** v31.43 (18.b): this round's Elephants! bonus for a side — +1 if its elephants cover this round's parity, else 0. */
+export function elephantBonus(b, side) {
+  const p = elephantParity(b, side);
+  return (b.round % 2 === 1 ? p.odd : p.even) ? 1 : 0;
+}
+
 // ------------------------------------------------------------------ cards in a round (18.b, 18.c, 18.i, Q70, Q71)
 function playCard(ctx, b, side, uid, source) {
   const { state } = ctx; const pid = side === 'att' ? b.att.player : b.def.player; const pl = mustPlayer(state, pid);
   const i = pl.hand.findIndex(c => c.uid === uid); if (i < 0) return;
   const [entry] = pl.hand.splice(i, 1); toDiscard(state, uid);
   const def = state.cards[uid].def;
-  (b[side].played ??= []).push({ uid, def, round: b.round, entry });   // for the early-retreat return (17.k, 18.i)
-  if (def === 'elephants') b[side].elephants += 1; else b.moral[side] = 1;
+  // v31.43 (18.b): the first Elephants! covers the odd rounds, the second the even rounds — record the parity on the
+  // played entry (the Panic handler and the refund both read the played list) as well as on the side's flags.
+  const parity = def === 'elephants' ? (b[side].elephants === 0 ? 'odd' : 'even') : undefined;
+  (b[side].played ??= []).push({ uid, def, round: b.round, entry, ...(parity ? { parity } : {}) });   // for the early-retreat return (17.k, 18.i)
+  if (def === 'elephants') { b[side].elephants += 1; if (parity === 'odd') b[side].eleOdd = true; else b[side].eleEven = true; } else b.moral[side] = 1;
   emit(ctx, 'cardPlayed', { actor: pid, rule: def === 'elephants' ? '18.b' : '18.c', pub: { battleId: b.id, round: b.round, player: pid, role: side === 'att' ? 'attacker' : 'defender', def, uid, source } });
 }
 function playSide(ctx, b, side) {
@@ -630,11 +650,14 @@ defineRoll('battleRound', (ctx, f) => {
     if (b.def.general && b.def.player && perksOn(state, b.def.player, 'germanicus') && floorDice(fin.def)) adj.push({ side: 'defender', source: 'germanicusFloor', delta: 1, why: 'Germanicus die floor: 1s count as 2 (15.h)' });
   }
   for (const side of ['att', 'def']) {
-    const bonus = b[side].elephants + b.moral[side];
+    // v31.43 (18.b): Elephants! cover only their half of the rounds — the first card the odd rounds, a second the even
+    // rounds — so the bonus this round is 0 or 1, never 2. Moral boost is unchanged (one round).
+    const ele = elephantBonus(b, side);
+    const bonus = ele + b.moral[side];
     if (bonus) fin[side] = fin[side].map(v => v + bonus);
     // v22 (Vidi's bug, 2026-10-24): one labelled adjustment per card, so the Battle panel never shows "undefined: +2"
     const who = side === 'att' ? 'attacker' : 'defender';
-    if (b[side].elephants) adj.push({ side: who, source: 'elephants', delta: b[side].elephants, appliesTo: 'all', why: `Elephants!${b[side].elephants > 1 ? ' x' + b[side].elephants : ''} (18.b)` });
+    if (ele) { const p = elephantParity(b, side); adj.push({ side: who, source: 'elephants', delta: ele, appliesTo: 'all', why: `Elephants! +1 (${p.odd && p.even ? 'odd + even' : p.odd ? 'odd' : 'even'} rounds) (18.b)` }); }
     if (b.moral[side]) adj.push({ side: who, source: 'moral_boost', delta: b.moral[side], appliesTo: 'all', why: 'Moral boost! this roll (18.c)' });
   }
   if (b.mode === 'attack') {
@@ -873,8 +896,8 @@ function advanceDecree(ctx) {
   const c = state.provinces.carthage;
   state.battle = {
     id: 'b' + (state.eventSeq + 1), mode: 'decree', stage: 'start', round: 0, target: 'carthage', sea: false, via: null,
-    att: { player: d.roller, from: null, own: d.legions, borrow: 0, borrowMax: 0, borrowed: 0, borrowedDead: 0, general: false, perk: 'none', cards: [], queue: [], elephants: 0, playedRound: 0 },
-    def: { player: null, kind: 'natives', general: false, cards: [], queue: [], elephants: 0, playedRound: 0, hornAsked: true, startForce: c.native.present },
+    att: { player: d.roller, from: null, own: d.legions, borrow: 0, borrowMax: 0, borrowed: 0, borrowedDead: 0, general: false, perk: 'none', cards: [], queue: [], elephants: 0, eleOdd: false, eleEven: false, playedRound: 0 },
+    def: { player: null, kind: 'natives', general: false, cards: [], queue: [], elephants: 0, eleOdd: false, eleEven: false, playedRound: 0, hornAsked: true, startForce: c.native.present },
     moral: { att: 0, def: 0 }, fled: null, wallRollsIgnored: 0, wallSources: [], loyaltyDone: true, rounds: [], senders: [...d.senders],
   };
   emit(ctx, 'decreeBattle', { actor: d.roller, rule: '16.n', pub: { legions: d.legions, senders: d.senders, carthage: c.native.present, roller: d.roller } });

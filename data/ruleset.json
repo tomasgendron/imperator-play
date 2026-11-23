@@ -159,9 +159,10 @@
     "tiesGoTo": "defender",
     "scipioExtraDieLand": 4,
     "scipioExtraDieSea": 3,
-    "pompeyDiceSea": 3
+    "pompeyDiceSea": 3,
+    "elephantsMaxPerBattle": 2
    },
-   "rule": "17.n, 17.x, 19.k, 15.c, 15.d, Q16"
+   "rule": "17.n, 17.x, 19.k, 15.c, 15.d, 18.b, Q16"
   },
   "borrowFraction": {
    "value": {

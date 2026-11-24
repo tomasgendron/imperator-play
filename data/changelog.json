@@ -1,5 +1,23 @@
 [
  {
+  "version": "32.3",
+  "date": "2026-11-24",
+  "title": "Forced March! always lets you play 2 cards, and clearer rules",
+  "bullets": [
+   "Forced March! (18.ad): in the turn you play it you may play 2 Game Cards instead of 1 — Forced March! and one other non-battle card, in either order. New: if you already played a card this turn, you can still play Forced March! as your 2nd card (it gives the 3rd action; no 3rd card). The hand shows a note when this is possible.",
+   "The written rules now also say: Spy in the Tent! takes only cards in the hand, and a stolen card can be played right away; no battle-won card for the defender when the attacker withdraws or loses everything to Ingrained loyalty; how many survivors may go back after a conquest; Prestige never drops below 0; when you can summon your general, and that a Caesar summoned mid-battle brings no fled troop."
+  ]
+ },
+ {
+  "version": "32.2",
+  "date": "2026-11-24",
+  "title": "Rules brought up to date with the game (no gameplay change)",
+  "bullets": [
+   "Nothing changes in how the game plays. The written rules were checked against the game and now also say: after a Senate Decree destroys Carthage, 2 and 9 give no decrees until Roma falls; losing an allied province (in battle or by fleeing) costs no Prestige; when you are attacked you can summon your general on the same screen where you choose to flee or fight; an under-garrisoned province's roll gives no reward and no Game Card; and Bandits on the Road! takes away your next Merchant Bonus.",
+   "The README of the public game repository now always says the Prestige target depends on the map (8 on the small map, 11 on the large map), so an update can no longer turn it back to a fixed 8."
+  ]
+ },
+ {
   "version": "32.1",
   "date": "2026-11-23",
   "title": "Forced March! now also gives an extra card play, and clearer help for new players",

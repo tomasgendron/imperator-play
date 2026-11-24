@@ -434,13 +434,15 @@ TURN_PLAYS.forced_march = {
   validate(ctx, pid) {
     const { state } = ctx;
     check(!state.turn.forcedMarch, 'ALREADY_MARCHING', 'You already played Forced March! this turn (18.ad).', '18.ad');
-    return {};
+    // v32.3 (18.ad, Vidi 2026-11-24): played after another card already used the normal slot, the March is the turn's 2nd card
+    return { asSecondCard: S.forcedMarchAsSecondCard(state) };   // read before useCardSlot marks anything
   },
-  apply(ctx, pid) {
+  apply(ctx, pid, plan = {}) {
     const { state } = ctx;
     state.turn.forcedMarch = true;
-    state.turn.forcedMarchExtra = true;   // v32.1 (18.ad, Vidi 2026-11-23): one extra non-battle card play this turn
-    emit(ctx, 'forcedMarchPlayed', { actor: pid, rule: '18.ad', pub: { player: pid, extraCardPlay: true } });
+    if (plan.asSecondCard) { state.turn.forcedMarchExtra = false; state.turn.extraCardPlayed = true; }   // it IS the extra play: 2 cards played
+    else state.turn.forcedMarchExtra = true;   // v32.1 (18.ad, Vidi 2026-11-23): one extra non-battle card play this turn
+    emit(ctx, 'forcedMarchPlayed', { actor: pid, rule: '18.ad', pub: { player: pid, extraCardPlay: !plan.asSecondCard, ...(plan.asSecondCard ? { asSecondCard: true } : {}) } });
   },
 };
 // ---- Bandits on the Road! (18.ae): steal the victim's current Merchant Bonus in Gold now; they get none next turn

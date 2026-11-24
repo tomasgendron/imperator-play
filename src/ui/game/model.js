@@ -1,7 +1,7 @@
 // Pure model of the M5 game page: no DOM, so `node --test` drives exactly what the page shows and clicks.
 // The page keeps a console session (src/ui/consoleModel.js) and asks this module who looks at the screen, what a human may do
 // now (grouped for the phase bar, the map and the builder), what a card looks like, which sounds an event plays, and how a save file reads.
-import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, recallMoveTargets, fleeOptions, effectiveActionsPerTurn, canRevolt, isSmallEmpire, rewardNeed, cardSlotOpen, onlyExtraSlotLeft } from '../../engine/index.js';
+import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, recallMoveTargets, fleeOptions, effectiveActionsPerTurn, canRevolt, isSmallEmpire, rewardNeed, cardSlotOpen, onlyExtraSlotLeft, forcedMarchAsSecondCard } from '../../engine/index.js';
 import { newSession, play, aiToMove, aiMove, stateOf, current, formatEvent, describePrompt } from '../consoleModel.js';
 
 export { newSession, play, aiToMove, aiMove, stateOf, describePrompt };
@@ -1174,6 +1174,9 @@ export function revoltRiskTip(state, data, id) {
 export function cardSlotNote(state) {
   if (!state?.turn || state.phase !== 'turn') return '';
   if (onlyExtraSlotLeft(state)) return 'Forced March!: you may play 1 more non-battle card this turn (no action; not a battle card, 18.ad).';
+  // v32.3 (18.ad, Vidi 2026-11-24): the normal card play is used, but a held Forced March! can still be the 2nd card this turn
+  const me = state.players?.find(p => p.id === state.turn.activePlayerId);
+  if (forcedMarchAsSecondCard(state) && me?.hand?.some(c => state.cards[c.uid]?.def === 'forced_march')) return 'You can still play Forced March! as your 2nd card this turn: it gives a 3rd action (18.ad).';
   return '';
 }
 export const SHOW_PROV_NUMBERS_KEY = 'imperator.showProvNumbers';

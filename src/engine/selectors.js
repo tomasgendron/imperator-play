@@ -11,7 +11,15 @@ export { effectiveActionsPerTurn };
  */
 export const FORCED_MARCH_EXTRA_CARDS = Object.freeze(['revolt', 'assassin', 'bribe_the_ally', 'bandits_on_the_road', 'spy_in_the_tent', 'busy_little_bee']);
 /** Is the turn's card slot open for `def` right now: the normal one-card slot (18.h), or Forced March!'s extra play (18.ad)? */
-export const cardSlotOpen = (state, def) => !state.turn?.nonBattleCardPlayed || (!!state.turn?.forcedMarchExtra && FORCED_MARCH_EXTRA_CARDS.includes(def));
+export const cardSlotOpen = (state, def) => !state.turn?.nonBattleCardPlayed || (!!state.turn?.forcedMarchExtra && FORCED_MARCH_EXTRA_CARDS.includes(def))
+  || (def === 'forced_march' && forcedMarchAsSecondCard(state));
+/**
+ * v32.3 (18.ad, 18.h, decided by Vidi 2026-11-24: "They should have the option to play 2 game cards instead of 1"): Forced March!
+ * may also be the turn's SECOND card, after the normal one-card slot was already used by another card. It then still gives the
+ * third action, and it is itself the extra card play (no further card opens): 2 Game cards that turn either way. Before v32.3 a
+ * card played first closed the turn to Forced March!, so the order decided whether a player got 2 cards or 1.
+ */
+export const forcedMarchAsSecondCard = state => !!state.turn?.nonBattleCardPlayed && !state.turn?.forcedMarch && !state.turn?.forcedMarchExtra && !state.turn?.extraCardPlayed;
 /** Only Forced March!'s extra play is left (the normal slot is used): true when the next card play would take the extra. */
 export const onlyExtraSlotLeft = state => !!state.turn?.nonBattleCardPlayed && !!state.turn?.forcedMarchExtra;
 

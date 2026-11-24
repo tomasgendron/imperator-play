@@ -241,7 +241,7 @@ export function legalActions(state, data) {
       if (gold >= c.wall && !state.provinces[id].walls.length) add({ type: 'BUILD_WALL', province: id }, `Build a Wall in ${nm(data, id)} (${c.wall} Gold, defends from all sides, 19.k)`);
     }
     // cards played by hand in the Actions step (18.h): not an action, one per turn, held since an earlier turn
-    if (S.cardSlotOpen(state, null) || state.turn.forcedMarchExtra) {   // v32.1 (18.ad): Forced March!'s extra play, non-battle cards only
+    if (S.cardSlotOpen(state, null) || state.turn.forcedMarchExtra || S.forcedMarchAsSecondCard(state)) {   // v32.1 (18.ad): Forced March!'s extra play, non-battle cards only; v32.3: or the March as the 2nd card
       const seen = new Set();
       for (const e of me.hand) {
         const def = state.cards[e.uid].def;
@@ -258,7 +258,7 @@ export function legalActions(state, data) {
           if (k === 2) for (let i = 0; i < ts.length; i++) for (let j = i + 1; j < ts.length; j++)
             add({ type: 'PLAY_CARD', cardUid: e.uid, kills: [{ province: ts[i], n: 1 }, { province: ts[j], n: 1 }] }, `Play Assassin! on ${nm(data, ts[i])} and ${nm(data, ts[j])} (1 each)`);
         }
-        if (def === 'forced_march') add({ type: 'PLAY_CARD', cardUid: e.uid }, 'Play Forced March!: take 3 actions this turn instead of 2 (playing the card is not an action)');
+        if (def === 'forced_march') add({ type: 'PLAY_CARD', cardUid: e.uid }, S.forcedMarchAsSecondCard(state) ? 'Play Forced March! as your 2nd card this turn: take 3 actions instead of 2 (playing the card is not an action, 18.ad)' : 'Play Forced March!: take 3 actions this turn instead of 2, and play 1 more non-battle card (2 cards this turn; playing a card is not an action, 18.ad)');
         if (def === 'bandits_on_the_road') for (const t of banditTargets(state, data, who)) add({ type: 'PLAY_CARD', cardUid: e.uid, targetPlayer: t.player }, `Play Bandits on the Road! on ${state.players.find(p => p.id === t.player)?.name ?? t.player}: steal their ${t.bonus} Gold Merchant Bonus right away, and they get none on their next turn`);
         if (def === 'spy_in_the_tent') for (const t of spyTargets(state, data, who)) add({ type: 'PLAY_CARD', cardUid: e.uid, targetPlayer: t }, `Play Spy in the Tent! on ${state.players.find(p => p.id === t)?.name ?? t}: steal 1 random Game Card from their hand, unseen`);
         if (def === 'sneak_attack_sea') for (const s of sneakAttacks(state, data, who)) {

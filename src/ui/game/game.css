@@ -946,3 +946,13 @@ body.screen-test .phasebar,body.screen-test .main{display:none}
 .ts-panelwrap{display:flex;flex-direction:column;gap:10px}
 .ts-panelwrap .ts-tweaks{max-height:62vh;overflow:auto}
 @media (max-width:760px){.ts-provrow{grid-template-columns:110px 1fr 110px;gap:4px}.ts-provrow .ts-max{display:none}.ts-playname{min-width:0;flex:1 1 100%}}
+
+/* v32.1 (Q239): the Revolt! warning in the province panel */
+.revolt-risk{color:#b5651d;font-weight:600}
+
+/* v32.1 (Q236): the Summon General button stands out when the general can join the battle */
+.summon-hl{box-shadow:0 0 0 2px #f5c542,0 0 10px 2px rgba(245,197,66,.75);font-weight:700;animation:summonPulse 1.6s ease-in-out infinite}
+@keyframes summonPulse{50%{box-shadow:0 0 0 2px #f5c542,0 0 18px 5px rgba(245,197,66,.95)}}
+
+/* v32.1 (Q237): Card… has a gold edge when a card can be played now */
+.btn.gold-edge{box-shadow:inset 0 0 0 2px #d4a017}

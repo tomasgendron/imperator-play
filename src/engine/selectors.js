@@ -2,6 +2,19 @@
 import { OWNED_STATUSES, effectiveActionsPerTurn } from './state.js';   // v31.40 (18.ad): re-exported so the turn/battle/legal code reads the cap as S.effectiveActionsPerTurn
 export { effectiveActionsPerTurn };
 
+/**
+ * v32.1 (18.ad, decided by Vidi 2026-11-23): playing Forced March! opens ONE extra card play that same turn, for a NON-battle
+ * Game card only. `state.turn.forcedMarchExtra` is true while that extra play is open (set by TURN_PLAYS.forced_march, cleared
+ * when it is used and at every turn start; undefined in an old save = closed). The extra play costs no action (18.h), like any
+ * card play. Never the extra: battle cards (Elephants!, Moral boost!: never in a turn slot anyway), Battlefield Imperator (a
+ * battle-committed attack on Roma, 18.w), Sneak Attack from the Sea! (it launches a battle, 18.z) and Forced March! itself.
+ */
+export const FORCED_MARCH_EXTRA_CARDS = Object.freeze(['revolt', 'assassin', 'bribe_the_ally', 'bandits_on_the_road', 'spy_in_the_tent', 'busy_little_bee']);
+/** Is the turn's card slot open for `def` right now: the normal one-card slot (18.h), or Forced March!'s extra play (18.ad)? */
+export const cardSlotOpen = (state, def) => !state.turn?.nonBattleCardPlayed || (!!state.turn?.forcedMarchExtra && FORCED_MARCH_EXTRA_CARDS.includes(def));
+/** Only Forced March!'s extra play is left (the normal slot is used): true when the next card play would take the extra. */
+export const onlyExtraSlotLeft = state => !!state.turn?.nonBattleCardPlayed && !!state.turn?.forcedMarchExtra;
+
 export const neighbours = (data, id) => [...data.provincesById[id].land, ...data.provincesById[id].sea];
 export const isNeighbour = (data, a, b) => neighbours(data, a).includes(b);
 export const linkType = (data, a, b) => (data.provincesById[a].land.includes(b) ? 'land' : data.provincesById[a].sea.includes(b) ? 'sea' : null);
@@ -151,6 +164,12 @@ export function earnsReward(state, data, id) {
   if (p.status === 'starting') return true;
   if (p.status === 'allied') return p.troops >= alliedRewardNeed(state, data, id);
   return p.status === 'conquered' && p.troops >= minGarrison(state, data, id).min;
+}
+/** v32.1 (Q233, 17.q): the troops a held province needs to collect a Game Roll reward (an allied province: its ally reward need, 19.r). */
+export function rewardNeed(state, data, id) {
+  const p = state.provinces[id];
+  if (!p?.owner || p.status === 'starting') return 0;
+  return p.status === 'allied' ? alliedRewardNeed(state, data, id) : minGarrison(state, data, id).min;
 }
 /** Does the province give its Resources-step bonus troop? (20.b, 20.k, 17.q) Allied provinces do when the owner's own troops reach
  *  the Game Roll reward minimum, natives + 1 with Pompey / Garrison card applied (19.r, 17.d; Vidi 2026-10-25). */

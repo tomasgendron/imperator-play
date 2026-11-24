@@ -90,6 +90,7 @@ button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:poin
 .tok .nn{position:absolute;left:-7px;top:-7px;min-width:19px;height:19px;border-radius:10px;background:#1b1512;color:var(--gold2);border:1px solid var(--gold);font-size:10.5px;display:flex;align-items:center;justify-content:center;padding:0 3px}
 .tok .natb{position:absolute;right:-8px;bottom:-6px;min-width:19px;height:19px;border-radius:10px;background:var(--native);color:#fff;border:1.5px solid #f3e7c4;font-size:10.5px;display:flex;align-items:center;justify-content:center;padding:0 3px}
 .tok .gen{position:absolute;right:-12px;top:-12px;width:24px;height:24px;border-radius:50%;border:2px solid var(--gold2);background:#000 center/cover;box-shadow:0 1px 4px #000}
+.tok .lowb{position:absolute;right:-14px;top:11px;font-size:12px;line-height:1;color:#ffb347;filter:drop-shadow(0 1px 1px #000);pointer-events:none}   /* v32.1 (Q233): under-garrisoned icon */
 .tok .wall{position:absolute;left:-9px;bottom:-5px;font-size:12px;filter:drop-shadow(0 1px 1px #000)}
 .tok .lbl{position:absolute;top:44px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:10.5px;font-weight:700;letter-spacing:.03em;color:#fff7df;text-shadow:0 0 3px #000,0 1px 2px #000,0 0 6px #000;pointer-events:none}
 .tok.sel{outline:3px solid var(--gold2);outline-offset:3px;animation:pulse 1.6s infinite}
@@ -606,3 +607,7 @@ body[data-screen="test"] #testSetup{display:block}
 .ts-chip button{border:0;background:none;cursor:pointer;color:#a3262a;font-weight:700;padding:0 4px;font-size:15px}
 .ts-tweaklog{margin:0;padding-left:1.2em;font-size:.92em;line-height:1.5;max-height:140px;overflow:auto}
 .ts-warn{background:#fbe9e5;border:1.5px solid #bc2418;color:#8f1d12;border-radius:8px;padding:8px 12px;font-weight:700}
+
+/* v32.1 (Q236): the Summon General button stands out when the general can join the battle */
+.summon-hl{box-shadow:0 0 0 2px #f5c542,0 0 10px 2px rgba(245,197,66,.75);font-weight:700;animation:summonPulse 1.6s ease-in-out infinite}
+@keyframes summonPulse{50%{box-shadow:0 0 0 2px #f5c542,0 0 18px 5px rgba(245,197,66,.95)}}

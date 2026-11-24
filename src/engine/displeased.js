@@ -10,7 +10,7 @@ import { fail, check, emit, pushFrame, popFrame, topFrame, mustPlayer, playerOf,
 import { define } from './actions.js';
 import { registerEffect } from './registry.js';
 import { changeTroops, moveSurvivors, provinceChoiceHandlers, responseWindows, turnHooks, romaConvert } from './turn.js';
-import { heldLongEnough, rivals } from './cards.js';
+import { heldLongEnough, rivals, useCardSlot } from './cards.js';
 import { int } from './rng.js';
 import * as S from './selectors.js';
 
@@ -21,7 +21,7 @@ const defOf = (state, uid) => state.cards[uid].def;
 /** The Busy Little Bee! the drawer could play now, or null (18.x, 18.h). */
 export function beeFor(state, data, pid) {
   const pl = playerOf(state, pid);
-  if (state.turn.activePlayerId !== pid || state.turn.nonBattleCardPlayed) return null;
+  if (state.turn.activePlayerId !== pid || !S.cardSlotOpen(state, 'busy_little_bee')) return null;   // v32.1: Forced March!'s extra play counts (18.ad)
   if (pl.gold < (data.cardDefsById.busy_little_bee.play?.costGold ?? 1) || !rivals(state, pid).length) return null;
   return pl.hand.find(c => defOf(state, c.uid) === 'busy_little_bee' && heldLongEnough(state, data, c)) ?? null;
 }
@@ -64,7 +64,7 @@ responseWindows.displeasedResponse = {
     pl.gold -= cost;
     const holder = data.rules.beeGoldTo === 'romaPile' ? null : S.romaHolder(state);   // Q90 flag
     if (holder && holder !== f.player) mustPlayer(state, holder).gold += cost; else { state.roma.goldPile += cost; if (!S.romaHolder(state)) romaConvert(ctx); }
-    state.turn.nonBattleCardPlayed = true;
+    useCardSlot(state);
     pl.hand.splice(pl.hand.indexOf(entry), 1); toDiscard(state, entry.uid);
     emit(ctx, 'cardPlayed', { actor: f.player, rule: '18.x', pub: { player: f.player, def: 'busy_little_bee', uid: entry.uid, source: 'displeasedResponse' } });
     emit(ctx, 'displeasedRedirected', { actor: f.player, rule: '18.x', pub: { player: f.player, to: a.targetPlayer, def: f.def, gold: cost, goldTo: holder && holder !== f.player ? holder : 'roma' } });

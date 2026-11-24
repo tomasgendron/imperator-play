@@ -4,7 +4,7 @@
 import { loadGameData, datasetFor } from '../loadData.js';
 import { resolveAsset } from '../assets.js';
 import { setupChoices, checkSetup, current } from '../consoleModel.js';
-import { topFrame, whoActs, minGarrison, totalTroops, provincesOf as ownedBy, viewFor, eventsFor, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces, sellGold } from '../../engine/index.js';
+import { topFrame, whoActs, minGarrison, totalTroops, provincesOf as ownedBy, viewFor, eventsFor, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces, sellGold, attackSendNote } from '../../engine/index.js';
 import * as G from './model.js';
 import { createSound } from './sound.js';
 import { HostRoom, PING_MS } from '../../net/host.js';
@@ -430,6 +430,7 @@ function enterGame() {
   document.body.className = 'screen-game'; document.body.dataset.screen = 'game'; applyTabsHidden();
   closeBattlePop(); closeModal();
   C.viewer = null; for (const k of Object.keys(news)) delete news[k]; ab = null; bv = null; lastRoll = {}; overShown = false; C.aiPaused = false; selected = null; C.busy = false; chatLog.clear(); chatRendered = -1;   // v31.27: a new game starts with an empty chat (ephemeral, never saved)
+  if (C.NET?.role === 'guest') for (const m of C.NET.client?.chatHistory ?? []) chatLog.add(m);   // v32.1 (Q240): a rejoin keeps the chat so far
   $('#ovOver').classList.remove('on'); clearBattle(); setTab('table');
   document.body.dataset.online = C.NET ? C.NET.role : '';
   if (C.NET?.role === 'host') netPush();
@@ -643,6 +644,7 @@ async function joinGame() {
   n.client = new GuestClient({ transport: t, makeTransport, build: C.uiLabel, name, token, tokens, claim, data, hooks: {
     onHold: () => { if (C.NET === n) say('Waiting for the host to give you a seat…'); },
     onChat: (c, m) => { if (C.NET === n) addChat(m); },   // v31.27 (Update 2): a chat line relayed by the host (including our own)
+    onChatLog: (c, list) => { if (C.NET !== n) return; chatLog.clear(); for (const m of list) chatLog.add(m); chatRendered = -1; try { if (C.S && st()) renderChat(); } catch { /* no view yet: shown when the game opens */ } },   // v32.1 (Q240): the chat so far, on a rejoin
     onWelcome: (c, m) => { n.code = c.code; if (C.NET === n) { pendDone(); joinPickClear(); } else n.pending = false; rememberSeat(store, c.code, { token: m.token, seat: m.seat, name: m.name, was: was || null }); if (claim) joinClaim = null;
       if (!inGame()) say(`Joined room ${c.code} as ${m.name} (seat ${m.seat + 1}, ${SEAT_COLOR_NAMES[m.seat]}). ${m.started ? 'Loading the game in progress…' : 'Waiting for the host to start…'}`); },
     // v30.5.1: welcomed into a game in progress but no game state came: never sit silently (the client keeps asking too)
@@ -725,8 +727,9 @@ function renderNetBanner() {
   if (status === 'reconnecting') html = `<span class="spin">⟳</span> <b>Reconnecting…</b> Lost the host (${esc(whyText(i.why))}). Try ${i.attempt} of ${i.of}, next in ${Math.max(1, Math.round((i.inMs ?? 0) / 1000))} s. Your seat is kept. <button type="button" class="btn sm" id="nbNow">Try now</button> <span class="small">new code?</span> <input id="nbCode" size="7" maxlength="16" placeholder="${attr(c.code)}" spellcheck="false" aria-label="A new room code from the host"> <button type="button" class="btn sm" id="nbLeave">Leave</button>`;
   else if (status === 'lost') html = `<b>Could not reach the host.</b> Your seat is kept: if the host resumed under a new code, type it: <input id="nbCode" size="8" maxlength="16" placeholder="${attr(c.code)}" spellcheck="false"> <button type="button" class="btn sm gold" id="nbNow">Try again</button> <button type="button" class="btn sm" id="nbLeave">Leave</button>`;
   else if (status === 'hostAway') html = `<b>The host is not answering</b> (away, or their tab is in the background) for ${Math.round(HOST_AWAY_MS / 1000)}+ s. Waiting… your seat is kept.`;
-  else if (status === 'waiting') html = `<span class="spin">⟳</span> <b>Your move was sent</b>: waiting for the host to answer. Their page may be showing a popup (they must click OK) or be in the background. You can make your move again in ${Math.round(PEND_RETRY_MS / 1000)} s if nothing happens.`;
+  else if (status === 'waiting') html = `<span class="spin">⟳</span> <b>Syncing…</b> Your move was sent: waiting for the host to answer. Their page may be showing a popup (they must click OK) or be in the background. You can make your move again in ${Math.round(PEND_RETRY_MS / 1000)} s if nothing happens.`;
   else if (status === 'ai') html = `The host gave your seat to the <b>AI</b> for now. Stay on this page: the host can give it back to you.`;
+  else if (status === 'connected' && C.NET.pending) html = '<span class="spin">⟳</span> <b>Syncing…</b> <span class="small">waiting for the host to confirm your move</span>';   // v32.1 (Q238): the post-roll pause is never silent
   const typed = $('#nbCode')?.value ?? '', focused = document.activeElement?.id === 'nbCode';   // a re-render keeps a half-typed code
   el.hidden = !html; el.className = 'netbanner ' + status; el.innerHTML = html;
   if ($('#nbCode') && typed) { $('#nbCode').value = typed; if (focused) $('#nbCode').focus(); }
@@ -800,7 +803,7 @@ function guestHeal() {
 function guestSend(action) {
   if (C.NET.pending || C.NET.lost) { if (C.NET.lost) toast(C.NET.lost); return false; }
   if (C.NET.client.status !== 'connected') { toast('Reconnecting to the host: wait a moment'); return false; }   // M14
-  C.NET.pending = true; C.NET.client.act(action); pendWatch();
+  C.NET.pending = true; C.NET.client.act(action); pendWatch(); renderNetBanner();   // v32.1 (Q238): "Syncing…" at once
   freezeControls(); $('#ovAsk').classList.remove('on'); return true;
 }
 /** v26.1 (the stuck Revolt Roll): a move this guest sent and the host has not answered yet. After PEND_SLOW_MS the banner says so
@@ -814,8 +817,8 @@ function pendWatch() {
 }
 function pendDone() {
   if (C.NET?.role !== 'guest') return;
-  const was = C.NET.slow; C.NET.pending = false; C.NET.slow = false; clearTimeout(C.NET.pendSlow); clearTimeout(C.NET.pendRetry);
-  if (was) renderNetBanner();
+  const was = C.NET.slow || C.NET.pending; C.NET.pending = false; C.NET.slow = false; clearTimeout(C.NET.pendSlow); clearTimeout(C.NET.pendRetry);
+  if (was) renderNetBanner();   // v32.1 (Q238): clears "Syncing…" too
 }
 /** v26.1: why a click on your roll or draw did nothing (it used to say "No roll is due for you right now" in every case). */
 function notDueText(kind) {
@@ -1559,12 +1562,16 @@ function openShips() {
 
 // ------------------------------------------------------------------ Play a card: pick the card, then (Revolt!, Assassin!, Bribe) pick the enemy province yourself (M6 item 8)
 function openCardMenu(legal) {
+  // v32.1 (Q237): "Card…" opens the hand — every card held: the playable ones as buttons (pick a target next), the rest greyed with
+  // the reason (battle cards: commit them when you attack or are attacked; passive cards; held too briefly; slot used)
   const c = G.categorize(legal).card; const byUid = {};
   for (const d of c) (byUid[d.action.cardUid] ??= []).push(d);
   const s = st(); const me = s.turn.activePlayerId; const hand = G.handCards(s.players.find(p => p.id === me));
-  const rows = Object.entries(byUid).map(([uid, ds]) => { const def = s.cards[uid].def; return `<button class="btn" data-card="${uid}"><img src="${img('card.' + def)}" alt="" style="height:64px;border-radius:4px;vertical-align:middle;margin-right:6px">${esc(data.cardDefsById[def]?.name ?? def)} <span class="small">(${ds.length} target${ds.length === 1 ? '' : 's'})</span></button>`; }).join('')
-    + hand.filter(c => !byUid[c.uid] && data.cardDefsById[s.cards[c.uid].def]?.type !== 'battle').filter((c, i, a) => a.findIndex(x => s.cards[x.uid].def === s.cards[c.uid].def) === i).map(c => { const def = s.cards[c.uid].def; const why = G.cardBlockReason(s, data, me, c.uid); if (!why || Object.keys(byUid).some(u => s.cards[u].def === def)) return ''; return `<div class="btn off cardoff" data-off="${c.uid}"><img src="${img('card.' + def)}" alt="" style="height:64px;border-radius:4px;vertical-align:middle;margin-right:6px;filter:grayscale(1)">${esc(data.cardDefsById[def]?.name ?? def)} <span class="small whynot">${esc(why)}</span></div>`; }).join('');
-  openModal(`<div class="ask menu" style="display:flex;flex-direction:column;gap:8px;min-width:380px"><h2>Play a card</h2><div class="opts">${rows || '<p class="small">No card in your hand.</p>'}</div><div class="foot"><span class="small">Playing a card is not an action; one such card per turn (18.h).</span><button class="btn" data-close>Cancel</button></div></div>`);
+  const face = (def, grey = false) => `<img src="${img('card.' + def)}" alt="" style="height:64px;border-radius:4px;vertical-align:middle;margin-right:6px${grey ? ';filter:grayscale(1)' : ''}">`;
+  const rows = Object.entries(byUid).map(([uid, ds]) => { const def = s.cards[uid].def; return `<button class="btn" data-card="${uid}">${face(def)}${esc(data.cardDefsById[def]?.name ?? def)} <span class="small">(${ds.length} target${ds.length === 1 ? '' : 's'})</span></button>`; }).join('')
+    + hand.filter(x => !byUid[x.uid]).filter((x, i, a) => a.findIndex(y => s.cards[y.uid].def === s.cards[x.uid].def) === i).map(x => { const def = s.cards[x.uid].def; if (Object.keys(byUid).some(u => s.cards[u].def === def)) return ''; const why = G.cardBlockReason(s, data, me, x.uid) || 'not playable right now'; return `<div class="btn off cardoff" data-off="${x.uid}">${face(def, true)}${esc(data.cardDefsById[def]?.name ?? def)} <span class="small whynot">${esc(why)}</span></div>`; }).join('');
+  const slot = G.cardSlotNote(s);
+  openModal(`<div class="ask menu" id="handMenu" style="display:flex;flex-direction:column;gap:8px;min-width:380px"><h2>Your hand (${hand.length} card${hand.length === 1 ? '' : 's'})</h2>${slot ? `<p class="small" id="extraPlayNote"><b>${esc(slot)}</b></p>` : ''}<div class="opts">${rows || '<p class="small">No card in your hand.</p>'}</div><div class="foot"><span class="small">Playing a card is not an action; one such card per turn (18.h), plus one more non-battle card after Forced March! (18.ad).</span><button class="btn" data-close>Close</button></div></div>`);
   $$('#modalBox [data-card]').forEach(b => b.onclick = () => { SND.play('card_flip'); openCardTargets(b.dataset.card); });
   $$('#modalBox [data-off]').forEach(b => b.onclick = () => { SND.play('error_denied'); toast(b.querySelector('.whynot')?.textContent || "Can't play that card now."); });
 }
@@ -1719,6 +1726,7 @@ function optionsHtml(list) {
     const def = d.action.cardUid ? st().cards[d.action.cardUid]?.def : null;
     const art = def ? `<img src="${img('card.' + def)}" alt="" style="height:64px;border-radius:4px;vertical-align:middle;margin-right:6px">` : '';
     if (d.range) return `<div class="optrow" data-row="${k}">${art}<span>${esc(d.label.replace(/\s*\(\d+-\d+\)$/, ''))}</span><input type="range" min="${d.range.min}" max="${d.range.max}" value="${d.range.max}" data-range-for="${k}"><b class="v">${d.range.max}</b><button class="btn sm gold" data-key="${k}">OK</button></div>`;
+    if (d.type === 'SUMMON_GENERAL') return G.summonButtonHtml([d], { cls: 'btn' });   // v32.1 (Q236): highlighted, with the bonus
     return `<button class="btn" data-key="${k}">${art}${esc(d.label)}</button>`;
   }).join('');
 }
@@ -1867,8 +1875,9 @@ function turnActsHtml(pid, pre = '') {
     else if (pre) b.push(`<button class="btn sm" data-a="${t}"${none(`No ${{ ATTACK: 'attack', ALLY: 'ally', MOVE: 'move' }[t]} is possible right now.`)}>${{ ATTACK: 'Attack', ALLY: 'Ally', MOVE: 'Move' }[t]}</button>`);
   b.push(`<button class="btn sm" data-menu="buy"${dis}>Buy…</button>`, `<button class="btn sm" data-menu="build"${dis}>Build…</button>`);
   const heldCards = G.handCards(G.playerById(s, pid)).some(x => data.cardDefsById[s.cards[x.uid].def]?.type !== 'battle');   // M8 item 3: the menu also says why a card is not playable
-  if (c.card.length || heldCards) b.push(`<button class="btn sm" data-menu="card"${dis} title="Play a card from your hand">Card…</button>`);
-  else if (pre) b.push(`<button class="btn sm" data-menu="card"${none('No card to play.')}>Card…</button>`);
+  // v32.1 (Q237): Card… is always there on your turn and always opens your hand (playable cards first, every other card greyed with
+  // the reason, battle cards included) — it used to be greyed or missing with nothing to play, so a click did nothing
+  b.push(`<button class="btn sm${c.card.length ? ' gold-edge' : ''}" data-menu="card"${dis} title="${c.card.length ? 'Play a card from your hand' : heldCards ? 'Open your hand (no card can be played right now: it says why)' : 'Open your hand'}">Card…</button>`);
   if (legal.some(x => x.type === 'SELL_CARD')) b.push(`<button class="btn sm" id="${I('panelSell')}"${dis} title="Free: +${data.rules.sellCard?.gold ?? 2} Gold per card (20.p)">Sell…</button>`);
   else if (pre) b.push(`<button class="btn sm"${none('No card to sell.')}>Sell…</button>`);
   if (c.scout.length) b.push(`<button class="btn sm" data-menu="scout"${dis} title="Scout a target: roll its natives (${c.scout.length} targets)">Scout…</button>`);
@@ -1942,11 +1951,13 @@ function renderMap(legal) {
     // v27 (Vidi 9:12 PM): a held province shows troops/natives, the natives lighter ("5/3"); no natives (0 or not known): troops only
     const nat = p.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
     const tip = `${def.name}: ${!p.owner && id !== 'roma' ? `${p.native.present ?? '?'} natives` : `${p.troops} troop${p.troops === 1 ? '' : 's'}${nat ? `, ${nat} native${nat === 1 ? '' : 's'}` : ''}`}${id === 'carthage' && s.carthage?.neutral ? " — Under Roma's control" : ''}`;
+    // v32.1 (Q233 / Q239): the token tooltip says what an under-garrisoned province needs, and warns when rivals can Revolt! it
+    const tipX = [G.underGarrisonTip(s, data, id), G.revoltRiskTip(s, data, id)].filter(Boolean).join(' ');
     if (nat) { cls += ' wn'; txt = `${p.troops}<span class="nat">/${nat}</span>`; }
     if (selected === id) cls += ' sel';
     if (builder) cls += ab.from === id ? ' ab-origin' : ab.to === id ? ' ab-tgt' : picks.has(id) ? ' ab-ok' : ' ab-dim';
     else if (picks.has(id)) cls += ' pick';
-    h += `<div class="${cls}" data-id="${id}" style="left:${x}%;top:${y}%" title="${attr(tip)}" data-troops="${p.owner || id === 'roma' ? p.troops : ''}" data-natives="${nat || ''}">${txt}</div>`;
+    h += `<div class="${cls}" data-id="${id}" style="left:${x}%;top:${y}%" title="${attr(tipX ? `${tip}. ${tipX}` : tip)}" data-troops="${p.owner || id === 'roma' ? p.troops : ''}" data-natives="${nat || ''}">${txt}</div>`;
     if (p.road) mk('road', 'R', x + (LM ? 2.9 : 2.4), y + (LM ? 0 : 3.9), 'Road', LM ? ` data-at="${id}" data-side="r"` : '');
     if (p.walls?.length) mk('wall', 'W', x - (LM ? 2.9 : 2.4), y, 'Wall — defends from all sides (19.k)');   // v31.30: one W badge per walled province, mid-left (gen is above-left, road below-right, "!" top-right, number above-right)
     { const num = G.provNumberLabel(s, id); if (num) mk('lbl', num, x + (LM ? 2.9 : 2.4), y - 5.7, 'Game Roll number'); }   // v31.30 (Update 5): above-right, clear of the min label below and the general above-left
@@ -2035,6 +2046,7 @@ function showInfo(id, pin) {
   // v31.30 (Update 4): the desktop panel had the same gap as the map tokens — an under-garrisoned ally showed no warning
   // (the table and the mobile sheet already did). For an ally the warning is the lost reward / bonus troop (19.e), not revolt.
   if (G.displayUnderGarrisoned(s, data, id)) rows.push(['Garrison', '<b class="pk-bad">UNDER-GARRISONED</b> — no bonus troop, no reward.']);
+  { const rv = G.revoltRiskTip(s, data, id); if (rv) rows.push(['Revolt!', `<span class="revolt-risk" title="${attr(rv)}">⚠ ${esc(rv)}</span>`]); }   // v32.1 (Q239, 18.m)
   // v31.31 (Updates 4–5): provinceSheetActs already drops the ATTACK rows (the "Attack here from …" flow below is the
   // only attack path) and the Assassin! shortcut rows (play the card from your hand instead). Desktop additionally
   // hides the Ally/Move builder rows here, as before — the builder owns those.
@@ -2240,7 +2252,8 @@ function renderBuilder(legal) {
       if (ab.type === 'ATTACK' && gv && ng) mid = `<label class="bd-gen"><input type="checkbox" id="abGen" ${v?.action.withGeneral ? 'checked' : ''}> Attack WITH ${esc(gName)} (he is in ${esc(prov(ab.from))})</label>`;
       else if (vars.length > 1) mid = `<div class="opts" style="display:flex;flex-direction:column;gap:3px">${vars.map(x => `<label class="small"><input type="radio" name="abv" value="${attr(G.descKey(x))}" ${G.descKey(x) === ab.key ? 'checked' : ''}> ${esc(x.label)}</label>`).join('')}</div>`;
       else mid = `<div class="small">${esc(v?.label ?? '')}</div>`;
-      if (v?.range) { const n = Math.max(v.range.min, Math.min(v.range.max, ab.n ?? v.range.max)); ab.n = n; const stay = [G.garrisonStayText(s, data, ab.from), ab.type !== 'ATTACK' && ab.to ? G.garrisonStayText(s, data, ab.to) : ''].filter(Boolean).join(' '); mid += `<div class="bd-row"><label>Troops</label><button class="bd-pm" data-d="-1">−</button><input type="range" id="abN" min="${v.range.min}" max="${v.range.max}" value="${n}" data-range-for="${attr(ab.key)}" style="--bc:var(--${c})"><button class="bd-pm" data-d="1">+</button><b class="bd-num v">${n}</b></div><div class="small garrison-note" id="garStay">${v.range.min} to ${v.range.max} may go. ${esc(stay)}</div>`; }
+      // v32.1 (Q235): an attack's note says "Send up to N (1 must stay)" (attackSendNote); a move keeps the garrison text
+      if (v?.range) { const n = Math.max(v.range.min, Math.min(v.range.max, ab.n ?? v.range.max)); ab.n = n; const stay = [ab.type === 'ATTACK' ? `${prov(ab.from)}: ${attackSendNote(s, data, ab.from)}.` : G.garrisonStayText(s, data, ab.from), ab.type !== 'ATTACK' && ab.to ? G.garrisonStayText(s, data, ab.to) : ''].filter(Boolean).join(' '); mid += `<div class="bd-row"><label>Troops</label><button class="bd-pm" data-d="-1">−</button><input type="range" id="abN" min="${v.range.min}" max="${v.range.max}" value="${n}" data-range-for="${attr(ab.key)}" style="--bc:var(--${c})"><button class="bd-pm" data-d="1">+</button><b class="bd-num v">${n}</b></div><div class="small garrison-note" id="garStay">${v.range.min} to ${v.range.max} may go. ${esc(stay)}</div>`; }
       if (ab.type === 'ATTACK' && v) {
         const pv = G.attackPreview(s, data, { ...v.action, troops: ab.n ?? v.action.troops });
         // item 3: Borrow on the same screen (19.c: optional, locked before the first roll)

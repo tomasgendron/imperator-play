@@ -49,6 +49,7 @@ const NETG = createGuest({
   pick: (seats, choose) => { joinPick = seats ? { seats, choose } : null; const e = $('#mPick'); if (e) { e.innerHTML = pickHtml(); bindPick(); } },
   lost: msg => { SND.play('error_denied'); openSheet('netlost', `<div class="sh-head"><h2>Disconnected</h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div><div class="sh-body" id="netLostBox"><p>${esc(msg)}</p></div><div class="sh-foot"><button class="btn gold wide" data-close>OK</button><button class="btn wide" id="nlLeave">Back to the start</button></div>`); $('#nlLeave').onclick = () => { closeSheet(true); toStart(); }; },
   onChat: m => addChat(m),   // v31.27 (Update 2): a chat line relayed by the host (including our own)
+  onChatLog: list => { chatLog.clear(); for (const m of list) chatLog.add(m); chatRendered = -1; try { if (C.S && st()) renderChatList(); } catch { /* no view yet: shown when the game opens */ } },   // v32.1 (Q240): the chat so far, on a rejoin
 });
 const isGuest = () => C.NET?.role === 'guest';
 const isHost = () => C.NET?.role === 'host';
@@ -570,6 +571,7 @@ function enterGame(fresh) {
   C.viewer = C.NET?.me ?? null; C.aiPaused = false; C.busy = false; selected = null; document.body.dataset.netLost = ''; overShown = false; lastRoll = null; askSeen = null;
   if (popKind) closePop(); $('#cardPlays').innerHTML = ''; battleOff = null;   // nothing of the last game stays on screen
   chatLog.clear(); chatRendered = -1;   // v31.27: a new game starts with an empty chat (ephemeral, never saved)
+  if (C.NET?.role === 'guest') for (const m of C.NET.client?.chatHistory ?? []) chatLog.add(m);   // v32.1 (Q240): a rejoin keeps the chat so far
   requestAnimationFrame(() => { MV.start(0.45, 0.5); });
   $('#maphint').hidden = !fresh; if (fresh) setTimeout(() => { $('#maphint').hidden = true; }, 4000);
   autosave(); render(); schedule(); guard();
@@ -705,8 +707,9 @@ function renderNetBar() {
   if (status === 'reconnecting') html = `<span class="spin">⟳</span> <b>Reconnecting…</b> Lost the host (${esc(whyText(i.why))}). Try ${i.attempt} of ${i.of}. Your seat is kept. <button type="button" class="btn sm" id="nbNow">Try now</button>`;
   else if (status === 'lost') html = `<b>Could not reach the host.</b> Your seat is kept. A new code from the host? <input id="nbCode" size="8" maxlength="16" placeholder="${attr(c.code)}" spellcheck="false" autocapitalize="characters" aria-label="New room code"> <button type="button" class="btn sm gold" id="nbNow">Try again</button> <button type="button" class="btn sm" id="nbLeave">Leave</button>`;
   else if (status === 'hostAway') html = `<b>The host is not answering</b> (away, or their page is in the background) for ${Math.round(HOST_AWAY_MS / 1000)}+ s. Waiting… your seat is kept.`;
-  else if (status === 'waiting') html = `<span class="spin">⟳</span> <b>Your move was sent</b>: waiting for the host. Their page may be showing a popup (they must tap OK) or be in the background. You can make your move again in ${Math.round(PEND_RETRY_MS / 1000)} s.`;
+  else if (status === 'waiting') html = `<span class="spin">⟳</span> <b>Syncing…</b> Your move was sent: waiting for the host. Their page may be showing a popup (they must tap OK) or be in the background. You can make your move again in ${Math.round(PEND_RETRY_MS / 1000)} s.`;
   else if (status === 'ai') html = 'The host gave your seat to the <b>AI</b> for now. Stay on this page: the host can give it back.';
+  else if (status === 'connected' && n.pending) html = '<span class="spin">⟳</span> <b>Syncing…</b> <span class="small">waiting for the host to confirm your move</span>';   // v32.1 (Q238)
   else if (status === 'ended') html = `<b>${esc(n.lost)}</b> <button type="button" class="btn sm" id="nbLeave">Back to the start</button>`;
   const typed = $('#nbCode')?.value ?? '', focused = document.activeElement?.id === 'nbCode';
   el.hidden = !html; el.className = 'netbar ' + status; el.innerHTML = html;
@@ -788,7 +791,7 @@ function renderTokens(s, legal) {
     // token (20 px apart, each with its own data-gen) so every one stays visible and tappable — a lone general keeps the
     // old top-right spot exactly.
     const genHtml = gs.map((g, i) => `<span class="gen" data-gen="${attr(g)}" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%${gs.length > 1 ? `;left:calc(50% - 12px + ${(i - (gs.length - 1) / 2) * 20}px);right:auto;top:-14px` : ''}"></span>`).join('');
-    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${num ? `<span class="nn">${num}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${genHtml}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}${id === 'carthage' && s.carthage?.neutral ? ' · Under Roma\'s control' : ''}${minLbl ? ` · ${minLbl}` : ''}</span></button>`;
+    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${num ? `<span class="nn">${num}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${genHtml}${G.displayUnderGarrisoned(s, data, id) ? `<span class="lowb" title="${attr(G.underGarrisonTip(s, data, id))}">⚠</span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}${id === 'carthage' && s.carthage?.neutral ? ' · Under Roma\'s control' : ''}${minLbl ? ` · ${minLbl}` : ''}</span></button>`;
   }).join(''));
 }
 function tokenTap(id) {
@@ -952,7 +955,7 @@ function rowsHtml(list, off = false) {
   return `<div class="alist">${list.map((d, i) => {
     const def = d.action.cardUid ? st().cards[d.action.cardUid]?.def : null;
     const label = d.range ? d.label.replace(/\s*\(\d+-\d+\)$/, '') : d.label;
-    return `<div class="rowwrap" data-i="${i}"><button class="arow" data-i="${i}"${off ? ' disabled' : ''}><span class="ic">${def ? `<img src="${attr(img('card.' + def))}" alt="" style="width:26px;border-radius:3px">` : ICON[d.type] ?? '•'}</span><span class="t"><b>${esc(label)}</b>${d.range ? `<small>${esc(d.range.field)}: <span class="rv">${d.range.max}</span> (${d.range.min}–${d.range.max})</small>` : ''}</span><span class="go">›</span></button>
+    return `<div class="rowwrap" data-i="${i}"><button class="arow${d.type === 'SUMMON_GENERAL' ? ' summon-hl' : ''}" data-i="${i}"${off ? ' disabled' : ''}><span class="ic">${def ? `<img src="${attr(img('card.' + def))}" alt="" style="width:26px;border-radius:3px">` : ICON[d.type] ?? '•'}</span><span class="t"><b>${esc(label)}</b>${d.range ? `<small>${esc(d.range.field)}: <span class="rv">${d.range.max}</span> (${d.range.min}–${d.range.max})</small>` : ''}</span><span class="go">›</span></button>
       ${d.range && d.range.max > d.range.min && !off ? `<div class="stepper" data-i="${i}"><button data-d="-1" aria-label="Fewer">−</button><b class="rv">${d.range.max}</b><button data-d="1" aria-label="More">＋</button></div>` : ''}</div>`;
   }).join('')}</div>`;
 }
@@ -1158,7 +1161,7 @@ function openCards() {
       <div class="btns">${plays.length ? `<button class="btn gold" data-play="${c.uid}">${plays.length === 1 ? 'Play it' : `Play: choose (${plays.length})`}</button>` : ''}${sell ? `<button class="btn" data-sell="${c.uid}">Sell +${sellGold(s, data, whoActs(s), c.uid)} Gold</button>` : ''}</div></div></div>`;
   };
   openSheet('cards', `<div class="sh-head"><h2>${p ? `${esc(p.name)}'s hand` : 'Hands'}<small>${p ? `Only ${esc(p.name)} may look · ${h.cards.length} card(s)` : 'AI hands are always hidden'}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
-    <div class="sh-body">${h.cards.length ? h.cards.map(c => row(c)).join('') : '<p class="note">No cards in hand.</p>'}${h.saved.map(c => row(c, 'saved: ')).join('')}${h.inPlay.map(c => row(c, 'in play: ')).join('')}
+    <div class="sh-body">${G.cardSlotNote(s) ? `<p class="note" id="extraPlayNote"><b>${esc(G.cardSlotNote(s))}</b></p>` : ''}${h.cards.length ? h.cards.map(c => row(c)).join('') : '<p class="note">No cards in hand.</p>'}${h.saved.map(c => row(c, 'saved: ')).join('')}${h.inPlay.map(c => row(c, 'in play: ')).join('')}
     <p class="note">${s.players.filter(x => x.id !== h.owner).map(x => `${esc(x.name)}: ${G.handCount(x)} card(s), hidden`).join(' · ')}</p></div>`);
   $$('#sheet .cardrow').forEach(row => row.onclick = ev => {
     if (ev.target.closest('button')) return;
@@ -1200,7 +1203,7 @@ function openProvince(id, refresh = false) {
   const html = `<div class="sh-head"><span class="sw" style="--c:${p.owner ? cvar(p.owner) : id === 'roma' ? 'var(--roma)' : 'var(--native)'};width:16px;height:16px"></span><h2>${esc(def.name)}<small>${id === 'carthage' && s.carthage?.neutral ? "Under Roma's control" : owner ? `${esc(owner)}'s province` : id === 'roma' ? 'Roma · no holder' : 'Unowned · natives'} · number ${p.number ?? '–'} · reward ${esc(p.reward ?? '–')}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body" id="provBody" data-id="${id}">
       <div class="stats"><div class="stat"><small>Troops</small><b>${p.owner || id === 'roma' ? p.troops : '–'}</b></div><div class="stat"><small>Natives</small><b>${p.native.count === null ? (id === 'roma' ? '–' : '?') : `${p.native.present}/${p.native.count}`}</b></div><div class="stat"><small>Min garrison</small><b class="${under ? 'warn' : 'ok'}">${m ? m.min : '–'}${p.owner ? (under ? ' ✗' : ' ✓') : ''}</b></div></div>
-      <div class="chips" style="margin-bottom:4px"><span class="pchip">🧱 ${p.walls?.length ? 'Wall — all sides (19.k)' : 'No wall'}</span><span class="pchip">🛣 ${p.road ? 'Road' : 'No road'}</span><span class="pchip">⚑ ${gens.length ? esc(gens.join(', ')) + ' here' : 'No general'}</span><span class="pchip">${esc(p.status)}</span>${id === 'carthage' && s.carthage?.neutral ? (s.carthage?.destroyedForGood ? '<span class="pchip">🏛 Under Roma\'s control · destroyed for good: no decrees until Roma falls (16.o)</span>' : '<span class="pchip">🏛 Under Roma\'s control (16.n)</span>') : ''}</div>
+      <div class="chips" style="margin-bottom:4px"><span class="pchip">🧱 ${p.walls?.length ? 'Wall — all sides (19.k)' : 'No wall'}</span><span class="pchip">🛣 ${p.road ? 'Road' : 'No road'}</span><span class="pchip">⚑ ${gens.length ? esc(gens.join(', ')) + ' here' : 'No general'}</span><span class="pchip">${esc(p.status)}</span>${G.revoltRiskTip(s, data, id) ? `<span class="pchip revolt-risk" title="Revolt! (18.m)">⚠ ${esc(G.revoltRiskTip(s, data, id))}</span>` : ''}${under && p.owner ? `<span class="pchip">⚠ ${esc(G.underGarrisonTip(s, data, id))}</span>` : ''}${id === 'carthage' && s.carthage?.neutral ? (s.carthage?.destroyedForGood ? '<span class="pchip">🏛 Under Roma\'s control · destroyed for good: no decrees until Roma falls (16.o)</span>' : '<span class="pchip">🏛 Under Roma\'s control (16.n)</span>') : ''}</div>
       <div class="sec">Borders (⚓ by sea)</div>
       <div class="chips" id="provBorders">${nb.map(([x, k]) => { const o = s.provinces[x].owner; const t = reach.has(x); return `<button class="pchip${t ? ' tg' : ''}" data-goprov="${attr(x)}" aria-label="Open ${attr(prov(x))}"><span class="sw" style="--c:${o ? cvar(o) : x === 'roma' ? 'var(--roma)' : 'var(--native)'}"></span>${esc(prov(x))}${k === 'sea' ? ' ⚓' : ''}<small>${o || x === 'roma' ? s.provinces[x].troops : s.provinces[x].native.present ?? '?'}</small></button>`; }).join('')}</div>
       ${reach.size ? `<p class="note" style="margin:6px 2px 0">Gold ring = you can attack, ally with or move there from ${esc(def.name)} now (it glows on the map).</p>` : ''}

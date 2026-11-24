@@ -305,7 +305,7 @@ define('CHOOSE_START_PROVINCE', {
 function startFirstTurn(ctx) {
   const { state } = ctx;
   state.phase = 'turn'; state.setup = null;
-  state.turn = { number: 1, round: 1, activePlayerId: state.turnOrder[0], step: 'resources', actionsUsed: 0, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} };
+  state.turn = { number: 1, round: 1, activePlayerId: state.turnOrder[0], step: 'resources', actionsUsed: 0, forcedMarch: false, forcedMarchExtra: false, extraCardPlayed: false, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} };
   emit(ctx, 'turnStarted', { actor: state.turnOrder[0], rule: '17.a', pub: { number: 1, round: 1, player: state.turnOrder[0] } });
 }
 

@@ -58,7 +58,7 @@ export function battleOdds(a, d, maxA = 3, maxD = 2, bonus = 0) {
 // ------------------------------------------------------------------ evaluation
 const W = { prestige: 60, province: 10, bonusTroop: 4, reward: 3, troop: 2.5, troopOver10: 0.8, gold: 1.2, card: 6, saved: 4, catapult: 4, road: 3, revolt: 6, threat: 0.35, under: 6 };
 const CARD_VALUE = { revolt: 5, assassin: 4, bribe_the_ally: 5, kill_revolt_leader: 5, busy_little_bee: 5, battlefield_imperator: 4, elephants: 3, moral_boost: 5, horn_of_titus_pullus: 5,
-  coin_master_selling: 8, coin_master_unused: 8, elephant_panic: 6, forced_march: 6, bandits_on_the_road: 5, spy_in_the_tent: 6 };   // v31.37 (18.aa, 18.ab): a lasting Gold bonus while held — keep it, never sell it (selling ends the bonus); v31.40 (18.ac–18.af): Panic ≈ an Elephant, March ≈ an extra action, Bandits ≈ a small bonus, Spy ≈ a random card; v31.43 (18.b): one Elephants! covers half the rounds now, so 6 → 3 — the second completes coverage, each card is worth ~half the old value
+  coin_master_selling: 8, coin_master_unused: 8, elephant_panic: 6, forced_march: 9, bandits_on_the_road: 5, spy_in_the_tent: 6 };   // v31.37 (18.aa, 18.ab): a lasting Gold bonus while held — keep it, never sell it (selling ends the bonus); v31.40 (18.ac–18.af): Panic ≈ an Elephant, March ≈ an extra action, Bandits ≈ a small bonus, Spy ≈ a random card; v32.1 (18.ad): March 6 → 9, it now also opens an extra non-battle card play; v31.43 (18.b): one Elephants! covers half the rounds now, so 6 → 3 — the second completes coverage, each card is worth ~half the old value
 const handValue = (state, p) => p.hand.reduce((t, c) => t + (CARD_VALUE[state.cards[c.uid].def] ?? W.card), 0);
 
 function playerScore(state, data, pid, cache) {
@@ -512,8 +512,22 @@ export function chooseAction(state, data, opts = {}) {
           if (!s) { v = -Infinity; break; }
           const COSTLY = new Set(['MOVE', 'ATTACK', 'ALLY', 'BUY_TROOP', 'BUY_GAME_CARD', 'BUILD_ROAD', 'BUILD_WALL', 'BUY_CATAPULT', 'BUY_MERCHANT_SHIP', 'MOVE_MERCHANT_SHIP', 'BUY_PRESTIGE']);
           const st2 = lite(s);
-          let best = -Infinity;
+          let best = -Infinity; const cardGain = {}; let baseS = null;
           for (const d2 of legalActions(s, data, me)) {
+            // v32.1 (18.ad, Vidi 2026-11-23): Forced March! also opens one extra NON-battle card play this turn. legal.js lists
+            // only extra-eligible cards in the post-March state (the normal slot is used). Each card is valued like the main
+            // PLAY_CARD case: Spy in the Tent! by its fixed blind value (never peek at the hidden hand), Bandits by the whole
+            // Gold swing, the rest by the 1-ply gain over the post-March state. Best target per card kind.
+            if (d2.type === 'PLAY_CARD') {
+              const cd = s.cards[d2.action.cardUid]?.def;
+              if (cd === 'sneak_attack_sea' || cd === 'forced_march') continue;
+              let g;
+              if (cd === 'spy_in_the_tent') g = W.card + (0.7 * W.card) / Math.max(1, s.players.filter(p => p.id !== me && !p.out).length);
+              else if (cd === 'bandits_on_the_road') g = S.merchantBonusFor(s, data, d2.action.targetPlayer, S.roadNetwork(s, data, d2.action.targetPlayer).roads) * W.gold * 1.7;
+              else { const s3 = after(s, data, d2.action); if (!s3) continue; baseS ??= evaluate(s, data, me); g = evaluate(s3, data, me) - baseS; }
+              cardGain[cd] = Math.max(cardGain[cd] ?? -Infinity, g);
+              continue;
+            }
             if (!COSTLY.has(d2.type)) continue;
             if (d2.type === 'ATTACK') {
               const max = d2.range?.max ?? d2.action.troops;
@@ -526,7 +540,17 @@ export function chooseAction(state, data, opts = {}) {
             const s2 = after(s, data, d2.action);
             if (s2) best = Math.max(best, evaluate(s2, data, me) - base);
           }
-          v = best;
+          // Played first, the March lets the AI play up to TWO more non-battle cards this turn (the extra play, then nothing
+          // else; or, in the usual order, it simply replaces the normal slot). Credit the two best positive card gains (one
+          // entry per copy held); the alternative — playing the best card in the normal slot and keeping the March — is what
+          // the other PLAY_CARD descriptors score, so March-first only wins when the second card (+ any third action) pays for
+          // the March card itself (charged in `base`). With no card to add, the v31.40 rule stands: never burn it for nothing.
+          const gains = [];
+          for (const [cd, g] of Object.entries(cardGain)) if (g > 0) for (const c of s.players.find(p => p.id === me).hand) if (s.cards[c.uid].def === cd) gains.push(g);
+          gains.sort((x, y) => y - x);
+          const cardsPart = (gains[0] ?? 0) + (gains[1] ?? 0);
+          if (cardsPart > 0) { baseS ??= evaluate(s, data, me); best = Math.max(best, baseS - base); }   // no useful 3rd action: the March is just spent
+          v = best + cardsPart;
           break;
         }
         if (def === 'bandits_on_the_road') {

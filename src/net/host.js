@@ -4,7 +4,7 @@
 // test's consoleModel.play) does, so the engine's own checks (NOT_YOUR_TURN, NOT_YOUR_PROMPT, illegal moves) decide, and any
 // `dice` a guest sends is stripped before that (only the host's state.rng rolls).
 import { PROTO, parse, msg, seatView, seatEvents, cleanAction, token as newToken } from './protocol.js';
-import { cleanChatText, CHAT_EMOJIS } from './chat.js';   // v31.27: chat rides the room (a guest talks to the host, the host relays)
+import { cleanChatText, CHAT_EMOJIS, CHAT_CAP } from './chat.js';   // v31.27: chat rides the room (a guest talks to the host, the host relays)
 import { humanLegal } from '../ui/game/model.js';
 
 export const PING_MS = 5000, AWAY_MS = 15000;
@@ -96,6 +96,10 @@ export class HostRoom {
     // v31.21: the first join and a mid-game join are the same hello. The host assigns the seat. A saved token only pre-selects it.
     if (this.hooks.onJoinRequest) {
       if (this.started && this.last?.state?.phase === 'finished') { this.reject(peer, 'GAME_OVER', 'This game is over.'); this.transport.send(peer, msg('bye', { reason: 'GAME_OVER' })); return; }
+      // v32.1 (Q240): a RETURNING player (same name as exactly one away seat of this game) is re-seated at once, without the
+      // host's seat dialog; anyone else still waits for the host to assign a seat (v31.21)
+      const back = this.returningSeat(peer, m);
+      if (back) { this.autoReseat(peer, back, m); return; }
       this.queueJoin(peer, m, seat); return;
     }
     if (!seat && this.started) {
@@ -123,6 +127,24 @@ export class HostRoom {
       seat.token = newToken(this.rnd); seat.name = cleanName(m.name, seat.i);
     }
     this.seatIn(peer, seat);
+  }
+  /** v32.1 (Q240): the away seat a returning player gets back by name in a game in progress: an online guest seat that was taken
+   *  before (it has a token and a name) and whose player is not connected now. Seats the host gave to the AI, a seat still online
+   *  (a second device), a stranger's name, or two matching seats all go to the host's seat dialog as before (v31.21).
+   *  Names compare case-insensitively. */
+  returningSeat(peer, m) {
+    if (!this.started || !this.last?.state) return null;   // a resumed game with no step yet: the host decides (v31.21)
+    const name = String(m.name ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 20).toLowerCase();
+    if (!name) return null;
+    const hits = this.seats.filter(s => s.kind === 'remote' && s.token && (s.name ?? '').toLowerCase() === name && !s.connected);
+    return hits.length === 1 ? hits[0] : null;
+  }
+  autoReseat(peer, seat, m) {
+    console.warn('[net] auto-reseat', { peer, seat: seat.i, name: seat.name, kind: seat.kind });
+    this.pending.delete(peer);
+    if (m.token && m.token === seat.token) this.seatIn(peer, seat, { assigned: true });   // same as assign(): a matching token keeps it
+    else this.takeOver(peer, seat, m, { assigned: true });
+    this.hooks.onNotice?.(this, 'rejoined', { peer, name: seat.name, seat: seat.i });
   }
   /** A seat whose data channel has already closed is not "online", even if the close event has not been delivered yet. */
   reapDead() {
@@ -190,6 +212,8 @@ export class HostRoom {
       if (this.started && this.last) this.sendUpdate(seat, this.last, { full: true });   // every join mid-game gets the whole current view at once
       else if (this.started) this.hooks.onWantState?.(this, seat.i);   // a resumed game may not have a step cached until the page pushes one
     } catch (e) { console.warn('[net] sendUpdate failed', e?.stack || e?.message || e); }
+    // v32.1 (Q240): a (re)joining player gets the chat so far, so a rejoin keeps the conversation
+    if (this.started && this.chatHistory?.length) { try { this.transport.send(peer, msg('chatlog', { list: this.chatHistory.slice() })); } catch { /* a dead channel */ } }
   }
   /** v30.5.1: the seats a joiner may take in a game in progress: an AI seat, or a guest seat whose player is offline. Never the host's
    *  own seat, never a guest seat whose player is online. */
@@ -205,7 +229,10 @@ export class HostRoom {
   /** v31.27 (Update 2): send one chat message to every connected guest (the host's own screen shows it directly, so
    *  the host never gets its own broadcast back). The sender's own screen gets it through this broadcast too, so every
    *  screen sees every message exactly once, in the same order. */
-  broadcastChat(m) { const line = msg('chat', m); for (const s of this.seats) if (s.peer) this.transport.send(s.peer, line); }
+  broadcastChat(m) {
+    (this.chatHistory ??= []).push(m); while (this.chatHistory.length > CHAT_CAP) this.chatHistory.shift();   // v32.1 (Q240): kept for a rejoin
+    const line = msg('chat', m); for (const s of this.seats) if (s.peer) this.transport.send(s.peer, line);
+  }
   /** The host changed the setup (lobby only): seat kinds and the names of the host's and AI seats. A guest keeps its seat when it is
    *  still Online, otherwise moves to a free Online seat, otherwise is told its seat is gone. Sends the lobby only when it changed. */
   configure(seats) {

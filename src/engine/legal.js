@@ -22,12 +22,47 @@ function stayNote(state, data, id) {
   const may = Math.max(0, p.troops - must);
   return p.troops < min ? `${nm(data, id)} minimum ${min}, already under it (${p.troops} here; at least ${floor} must stay)` : `${nm(data, id)} minimum ${min}: keep ${must} to stay at minimum (${may} may leave)`;
 }
+/** v32.1 (Q235): the attack origin's note — how many may be SENT (all but the floor, 17.g), not the move-style "keep N to stay
+ *  at minimum (M may leave)", which read as if only M could attack. Logic unchanged: the slider max is still maxLeaving. */
+export function attackSendNote(state, data, id) {
+  const p = state.provinces[id];
+  if (!p?.owner) return '';
+  const floor = p.status === 'held' ? data.rules.romaFloorOnHold : data.rules.provinceFloor;
+  const max = S.maxLeaving(state, data, id);
+  const min = S.minGarrison(state, data, id).min;
+  const may = Math.max(0, p.troops - Math.max(min, floor));
+  const warn = p.status === 'conquered' && p.troops >= min && max > may ? `; sending more than ${may} leaves ${nm(data, id)} under its minimum of ${min} (no perks until refilled, 17.q)` : '';
+  return `Send up to ${max} (${floor} must stay)${warn}`;
+}
+/**
+ * v32.1 (Q236): what summoning the general would add to THIS battle, read from the general data (generals.json perk params)
+ * and the battle's own state, e.g. "+1 die" (Scipio attacking, before the first roll). Start-of-battle perks (Caesar's flee,
+ * Scipio's die, Germanicus's Disciplined Advance) only count while the battle has not started; per-roll perks always do.
+ */
+export function summonBonusText(state, data, pid, side) {
+  const b = state.battle; const pl = state.players.find(p => p.id === pid);
+  const g = data.generalsById[pl?.general?.id]; if (!b || !g) return '';
+  const att = side === 'att'; const started = (b.round ?? 0) >= 1 || (b.rounds?.length ?? 0) > 0;
+  const R = data.rules.battle ?? {};
+  const out = [];
+  for (const pk of g.perks ?? []) {
+    const pr = pk.params ?? {};
+    if (pk.id === 'enemy_flees' && !started) out.push(`−${pr.enemyLoses ?? 1} enemy troop (flees)`);
+    if (pk.id === 'extra_die' && att && !started) out.push(`+${pr.extraDice ?? 1} die`);
+    if (pk.id === 'sea_master' && att && b.sea) out.push(`+${Math.max(1, (R.pompeyDiceSea ?? 3) - (R.attackerDiceSea ?? 2))} die at sea`);
+    if (pk.id === 'fight_to_the_death') out.push(`+${pr.delta ?? 2} per die at ${pr.whenOwnTroops ?? 1} troop`);
+    if (pk.id === 'die_floor') out.push(`dice count at least ${pr.min ?? 2}`);
+    if (pk.id === 'disciplined_advance' && att && !started && b.mode === 'attack' && state.provinces[b.target]?.walls?.length) out.push('ignores the Wall');
+  }
+  return out.join(', ');
+}
 function maybeSummon(state, data, who, add) {
   const g = summonGeneralTarget(state, data, who);
   if (!g) return;
   const pl = state.players.find(p => p.id === who);
   const name = data.generalsById[pl?.general?.id]?.name ?? 'General';
-  add({ type: 'SUMMON_GENERAL' }, `Summon ${name} to battle${g.already ? '' : ` (from ${nm(data, g.from)})`}`);
+  const bonus = summonBonusText(state, data, who, g.side);   // v32.1 (Q236): the bonus he brings, on the button itself
+  add({ type: 'SUMMON_GENERAL' }, `Summon ${name} to battle${g.already ? '' : ` (from ${nm(data, g.from)})`}${bonus ? ` · ${bonus}` : ' · no battle bonus here'}`);
 }
 
 /** Who has to act now: the top frame's player, else the active player (null when the game is over). */
@@ -200,17 +235,17 @@ export function legalActions(state, data) {
       if (gold >= c.troop) add({ type: 'BUY_TROOP', province: id }, `Buy 1 troop in ${nm(data, id)} (${c.troop} Gold)`);
       if (gold >= c.troops2) add({ type: 'BUY_TROOP', province: id, n: 2 }, `Buy 2 troops in ${nm(data, id)} (${c.troops2} Gold)`);
       if (gold >= c.troops3) add({ type: 'BUY_TROOP', province: id, n: 3 }, `Buy 3 troops in ${nm(data, id)} (${c.troops3} Gold)`);
-      if (gold >= c.gameCardGold && state.provinces[id].troops > c.gameCardTroops) add({ type: 'BUY_GAME_CARD', fromProvince: id }, `Buy a Game Card, paying a troop from ${nm(data, id)} (${c.gameCardGold} Gold)`);
+      if (gold >= c.gameCardGold && state.provinces[id].troops > c.gameCardTroops) add({ type: 'BUY_GAME_CARD', fromProvince: id }, `Buy a Game Card — Cost: ${c.gameCardGold} Gold + ${c.gameCardTroops} troop (the troop from ${nm(data, id)})`);
       const road = S.roadCost(state, data, who);
       if (gold >= road && !state.provinces[id].road) add({ type: 'BUILD_ROAD', province: id }, `Build a Road in ${nm(data, id)} (${road} Gold)`);
       if (gold >= c.wall && !state.provinces[id].walls.length) add({ type: 'BUILD_WALL', province: id }, `Build a Wall in ${nm(data, id)} (${c.wall} Gold, defends from all sides, 19.k)`);
     }
     // cards played by hand in the Actions step (18.h): not an action, one per turn, held since an earlier turn
-    if (!state.turn.nonBattleCardPlayed) {
+    if (S.cardSlotOpen(state, null) || state.turn.forcedMarchExtra) {   // v32.1 (18.ad): Forced March!'s extra play, non-battle cards only
       const seen = new Set();
       for (const e of me.hand) {
         const def = state.cards[e.uid].def;
-        if (seen.has(def) || !TURN_PLAYS[def] || !heldLongEnough(state, data, e)) continue;
+        if (seen.has(def) || !TURN_PLAYS[def] || !heldLongEnough(state, data, e) || !S.cardSlotOpen(state, def)) continue;
         seen.add(def);
         const owner = id => { const o = state.provinces[id].owner; return state.players.find(p => p.id === o)?.name ?? o; };
         if (def === 'revolt') for (const t of revoltTargets(state, data, who)) add({ type: 'PLAY_CARD', cardUid: e.uid, target: t }, `Play Revolt! on ${owner(t)}'s ${nm(data, t)}`);
@@ -256,8 +291,8 @@ export function legalActions(state, data) {
       if (max < 1) continue;
       for (const t of attackTargets(state, data, who, from)) {
         const what = `${nm(data, t.id)}${state.provinces[t.id].owner ? '' : ' (natives)'} from ${nm(data, from)}${t.via ? ' via ' + nm(data, t.via) : ''}`;
-        add({ type: 'ATTACK', from, target: t.id, troops: max }, `ATTACK ${what} (${stayNote(state, data, from)})`, { field: 'troops', min: 1, max });
-        if (gen?.at === from && !S.generalRecalled(state, who)) add({ type: 'ATTACK', from, target: t.id, troops: max, withGeneral: true }, `ATTACK ${what} with the general (${stayNote(state, data, from)})`, { field: 'troops', min: 1, max });
+        add({ type: 'ATTACK', from, target: t.id, troops: max }, `ATTACK ${what} (${attackSendNote(state, data, from)})`, { field: 'troops', min: 1, max });
+        if (gen?.at === from && !S.generalRecalled(state, who)) add({ type: 'ATTACK', from, target: t.id, troops: max, withGeneral: true }, `ATTACK ${what} with the general (${attackSendNote(state, data, from)})`, { field: 'troops', min: 1, max });
       }
     }
     for (const target of data.provinceIds) {

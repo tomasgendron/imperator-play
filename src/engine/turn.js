@@ -368,7 +368,7 @@ defineRoll('gameRoll', (ctx, f) => {
   for (const who of orderFrom(state, pid)) {                    // turn order from the active player (16.c, 16.l)
     let got = false;
     for (const id of matches.filter(m => state.provinces[m].owner === who)) {
-      if (!S.earnsReward(state, data, id)) { emit(ctx, 'rewardDenied', { actor: who, rule: '17.q', pub: { player: who, province: id, reason: 'below the garrison needed (17.q, 19.g)' } }); continue; }
+      if (!S.earnsReward(state, data, id)) { emit(ctx, 'rewardDenied', { actor: who, rule: '17.q', pub: { player: who, province: id, reason: 'below the garrison needed (17.q, 19.g)', need: S.rewardNeed(state, data, id), own: state.provinces[id].troops } }); continue; }   // v32.1 (Q233): need/own for the on-screen reason
       const p = state.provinces[id];
       if (p.reward === 'gold') mustPlayer(state, who).gold += 1; else changeTroops(ctx, id, 1);   // a reward troop goes into the province that earned it (Q6)
       emit(ctx, 'rewardGranted', { actor: who, rule: '16.k', pub: { player: who, province: id, reward: p.reward, number: v } });
@@ -699,7 +699,7 @@ export function nextTurn(ctx) {
   let i = order.indexOf(prev);
   do i = (i + 1) % order.length; while (playerOf(state, order[i]).out && order[i] !== prev);   // eliminated players are skipped (12.m)
   const next = order[i];
-  state.turn = { number: t.number + 1, round: Math.ceil((t.number + 1) / order.length), activePlayerId: next, step: 'resources', actionsUsed: 0, forcedMarch: false, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} };
+  state.turn = { number: t.number + 1, round: Math.ceil((t.number + 1) / order.length), activePlayerId: next, step: 'resources', actionsUsed: 0, forcedMarch: false, forcedMarchExtra: false, extraCardPlayed: false, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} };
   emit(ctx, 'turnStarted', { actor: next, rule: '17.a', pub: { number: state.turn.number, round: state.turn.round, player: next } });
   // v31.34 (Update 3, 18.o): the recall is over on the recalled player's first turn after its through-turn — tell them, once,
   // so they know the general is free to move again. Clearing here is safe: the recalled label (app.js) and the move lock

@@ -4,7 +4,7 @@
 // transport, the same room code, the seat token in the hello, with retries (`retryMs`); the host gives the same seat back with the
 // whole current view. A host that stops answering (no ping for HOST_AWAY_MS) is shown as away until it answers again.
 import { PROTO, parse, msg, normCode } from './protocol.js';
-import { cleanChatText } from './chat.js';   // v31.27: chat rides the same channel (the guest sends to the host, the host relays it back to every screen)
+import { cleanChatText, CHAT_CAP } from './chat.js';   // v31.27: chat rides the same channel (the guest sends to the host, the host relays it back to every screen)
 import { HOST, HOST_UNREACHABLE_TEXT, SIGNALLING_TEXT } from './transport.js';
 
 const KEEP = 3;   // views kept (the page only reads the current step and the one before it)
@@ -183,7 +183,13 @@ export class GuestClient {
       }
       // v31.27 (Update 2): a chat line relayed by the host — including the sender's own, which is how the sender's
       // screen shows it (a guest never renders its own line on send). Empty or over-long lines never get this far.
-      case 'chat': { const text = cleanChatText(m.text); if (text) this.hooks.onChat?.(this, { from: m.from ?? null, name: m.name ?? 'Player', text, emoji: !!m.emoji }); break; }
+      case 'chat': { const text = cleanChatText(m.text); if (text) { const line = { from: m.from ?? null, name: m.name ?? 'Player', text, emoji: !!m.emoji }; this.keepChat([line]); this.hooks.onChat?.(this, line); } break; }
+      // v32.1 (Q240): the chat so far, sent by the host when this guest (re)joins — kept on the client so the page can show it
+      // even if it enters the game (and clears its chat panel) after this arrives
+      case 'chatlog': {
+        const list = (Array.isArray(m.list) ? m.list : []).map(x => ({ from: x?.from ?? null, name: x?.name ?? 'Player', text: cleanChatText(x?.text), emoji: !!x?.emoji })).filter(x => x.text);
+        this.chatHistory = []; this.keepChat(list); this.hooks.onChatLog?.(this, this.chatHistory.slice()); break;
+      }
       case 'reject': if (m.code === 'STALE') this.resync('STALE'); this.hooks.onReject?.(this, m); break;
       case 'bye': {
         const r = m.reason ?? 'BYE';
@@ -205,6 +211,8 @@ export class GuestClient {
     this.hooks.onResync?.(this, why);
     return true;
   }
+  /** v32.1 (Q240): the client's copy of the chat (last CHAT_CAP lines), restored by the page after a (re)join. */
+  keepChat(lines) { (this.chatHistory ??= []).push(...lines); while (this.chatHistory.length > CHAT_CAP) this.chatHistory.shift(); }
   /** Sends a move for this guest's own seat (the host checks it, rolls any dice and answers with an update or a reject). */
   act(action) { const { dice, ...a } = action ?? {}; this.transport.send(HOST, msg('act', { seq: this.seq, action: a })); }   // eslint-disable-line no-unused-vars
   /** v31.27 (Update 2): sends a chat line to the host, which relays it to every screen (including this one). False when

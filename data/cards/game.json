@@ -500,7 +500,7 @@
     "delayTurns": 1,
     "usesTurnCardSlot": true
    },
-   "text": "Play it on your turn to take 3 actions instead of the usual 2. Playing the card itself is not an action.",
+   "text": "Play it on your turn to take 3 actions instead of the usual 2, and you may play 1 extra non-battle Game Card that same turn. Playing either card is not an action.",
    "art": {
     "front": "cards/game/forced_march.png"
    },

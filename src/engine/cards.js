@@ -166,7 +166,10 @@ export function cardBlock(state, data, pid, uid) {
   if (f) return B('WRONG_FRAME', 'finish the current choice first', '18.h', `No card can be played now: the game waits for ${f.kind}.`);
   if (state.turn.step !== 'actions') return B('WRONG_STEP', `only in your Actions step (now: ${state.turn.step})`, '18.h');
   if (!heldLongEnough(state, data, entry)) return B('HOLD_A_TURN', `drawn on turn ${entry.drawnOnTurn}: you must hold it a turn, playable from turn ${entry.drawnOnTurn + (d.play?.delayTurns ?? 0)}`, '18.h', `${name} was drawn on turn ${entry.drawnOnTurn}: it can be played from turn ${entry.drawnOnTurn + 1} (18.h).`);
-  if (state.turn.nonBattleCardPlayed) return B('CARD_SLOT_USED', 'you already played your one non-battle card this turn', '18.h', 'You already played your one non-battle card this turn (18.h).');
+  if (state.turn.nonBattleCardPlayed && !S.cardSlotOpen(state, def)) {
+    if (state.turn.forcedMarchExtra) return B('EXTRA_PLAY_NON_BATTLE_ONLY', `Forced March!'s extra play is for a non-battle card (Revolt!, Assassin!, Bribe the Ally!, Bandits on the Road!, Spy in the Tent!): not ${name}`, '18.ad', `Forced March!'s extra card play is for a non-battle Game card only (Revolt!, Assassin!, Bribe the Ally!, Bandits on the Road!, Spy in the Tent!, Busy Little Bee!), so ${name} cannot be it (18.ad).`);
+    return B('CARD_SLOT_USED', 'you already played your one non-battle card this turn', '18.h', `You already played your one non-battle card this turn (18.h)${state.turn.forcedMarch ? ', and Forced March!\'s extra play is used too (18.ad)' : ''}.`);
+  }
   if (def === 'revolt' && !revoltTargets(state, data, pid).length) { const n = revoltNoTarget(state, data, pid); return B('NO_LEGAL_TARGET', n.reason, '18.m', n.message); }
   if (def === 'assassin' && assassinKills(state, data, pid) < 1) return B('NO_LEGAL_TARGET', 'no province you do not control has 2+ troops (Roma, a neutral Carthage and provinces already struck do not count)', '18.e', 'No province you do not control has 2 or more troops (and has not been struck yet; never Roma or a neutral Carthage): the Assassin cannot be played and stays in your hand (18.e).');
   if (def === 'bribe_the_ally') {
@@ -198,6 +201,11 @@ function spend(ctx, pid, uid, extra = {}, dest = 'discard') {
   if (dest === 'throwaway') toThrowaway(state, uid); else toDiscard(state, uid);
   emit(ctx, 'cardPlayed', { actor: pid, rule: '18.h', pub: { player: pid, def: defOf(state, uid), uid, ...extra, ...(dest === 'throwaway' ? { dest: 'throwaway' } : {}) } });
 }
+/** Marks a card play in the turn: the normal slot if free, else Forced March!'s extra play (18.h, 18.ad). */
+export function useCardSlot(state) {
+  if (!state.turn.nonBattleCardPlayed) state.turn.nonBattleCardPlayed = true;
+  else if (state.turn.forcedMarchExtra) { state.turn.forcedMarchExtra = false; state.turn.extraCardPlayed = true; }
+}
 const TURN_PLAYS = {};     // def id -> {rule, validate(ctx, pid, a) -> plan, apply(ctx, pid, plan)}
 
 define('PLAY_CARD', {
@@ -218,7 +226,7 @@ define('PLAY_CARD', {
     if (block) fail(block.code, block.message, block.rule);
     const play = TURN_PLAYS[defOf(state, entry.uid)];
     const plan = play.validate(ctx, pid, a);                   // throws before anything changes: an illegal play spends nothing
-    state.turn.nonBattleCardPlayed = true;
+    useCardSlot(state);   // v32.1 (18.ad): the normal slot first, else Forced March!'s extra play
     // v31.11 (18.z): a Sneak Attack from the Sea! actually played to attack goes to the throwaway pile for good, never the discard
     spend(ctx, pid, entry.uid, { source: 'turn' }, defOf(state, entry.uid) === 'sneak_attack_sea' ? 'throwaway' : 'discard');
     play.apply(ctx, pid, plan, entry.uid);
@@ -420,7 +428,8 @@ TURN_PLAYS.sneak_attack_sea = {
   },
 };
 
-// ---- Forced March! (18.ad): 3 actions this turn instead of 2; playing the card costs no action, uses the one-card slot
+// ---- Forced March! (18.ad): 3 actions this turn instead of 2, plus one extra NON-battle card play this turn (v32.1, Vidi 2026-11-23);
+// playing the card costs no action and uses the normal one-card slot
 TURN_PLAYS.forced_march = {
   validate(ctx, pid) {
     const { state } = ctx;
@@ -430,7 +439,8 @@ TURN_PLAYS.forced_march = {
   apply(ctx, pid) {
     const { state } = ctx;
     state.turn.forcedMarch = true;
-    emit(ctx, 'forcedMarchPlayed', { actor: pid, rule: '18.ad', pub: { player: pid } });
+    state.turn.forcedMarchExtra = true;   // v32.1 (18.ad, Vidi 2026-11-23): one extra non-battle card play this turn
+    emit(ctx, 'forcedMarchPlayed', { actor: pid, rule: '18.ad', pub: { player: pid, extraCardPlay: true } });
   },
 };
 // ---- Bandits on the Road! (18.ae): steal the victim's current Merchant Bonus in Gold now; they get none next turn

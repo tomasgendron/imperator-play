@@ -1,7 +1,7 @@
 // Pure model of the M5 game page: no DOM, so `node --test` drives exactly what the page shows and clicks.
 // The page keeps a console session (src/ui/consoleModel.js) and asks this module who looks at the screen, what a human may do
 // now (grouped for the phase bar, the map and the builder), what a card looks like, which sounds an event plays, and how a save file reads.
-import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, recallMoveTargets, fleeOptions, effectiveActionsPerTurn } from '../../engine/index.js';
+import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, recallMoveTargets, fleeOptions, effectiveActionsPerTurn, canRevolt, isSmallEmpire, rewardNeed, cardSlotOpen, onlyExtraSlotLeft } from '../../engine/index.js';
 import { newSession, play, aiToMove, aiMove, stateOf, current, formatEvent, describePrompt } from '../consoleModel.js';
 
 export { newSession, play, aiToMove, aiMove, stateOf, describePrompt };
@@ -209,7 +209,8 @@ export function battleCardsChoice(legal, ticked) {
 export function summonButtonHtml(legal, { cls = 'btn gold', id = '', disabled = false } = {}) {
   const d = legal.find(x => x.type === 'SUMMON_GENERAL');
   if (!d) return '';
-  return `<button class="${escHtml(cls)}"${id ? ` id="${escHtml(id)}"` : ''}${disabled ? ' disabled' : ''} data-key="${escHtml(descKey(d))}">${escHtml(d.label)}</button>`;
+  // v32.1 (Q236): highlighted (class summon-hl, a pulsing gold ring) — the label carries the general's real bonus, e.g. "+1 die"
+  return `<button class="${escHtml(cls)} summon-hl"${id ? ` id="${escHtml(id)}"` : ''}${disabled ? ' disabled' : ''} data-key="${escHtml(descKey(d))}" title="Your general can join this battle">⚑ ${escHtml(d.label)}</button>`;
 }
 
 /** M12: a hand as an array (a viewFor view gives another player's hand as {hidden, count}: no cards), its size, a deck's size. */
@@ -456,7 +457,7 @@ export function gameRollPopup(events, i, state, data) {
     const owned = e.pub.owners ?? [];
     if (!owned.length) lines.push(`Nobody holds a province with number ${v}: nothing happens.`);
     for (const x of got) { players.add(x.pub.player); lines.push(`${nm(x.pub.player)}: ${provName(data, x.pub.province)} gives +1 ${x.pub.reward === 'gold' ? 'Gold' : 'troop (placed there)'} and a Game Card (16.k).`); }
-    for (const x of denied) { players.add(x.pub.player); lines.push(`${nm(x.pub.player)}: ${provName(data, x.pub.province)} is below its minimum garrison: no reward, no card (17.q).`); }
+    for (const x of denied) { players.add(x.pub.player); lines.push(`${nm(x.pub.player)}: ${rewardDeniedText(data, x.pub)}`); }   // v32.1 (Q233)
     const cards = new Set(got.map(x => x.pub.player)); const multi = [...cards].filter(p => got.filter(x => x.pub.player === p).length > 1);
     for (const p of multi) lines.push(`${nm(p)} holds 2 provinces with ${v}: both rewards, but only 1 Game Card (16.l).`);
   }
@@ -467,6 +468,12 @@ export function gameRollPopup(events, i, state, data) {
   return { kind: 'gameRoll', value: v, title, lines, art, players: [...players], matched, sticky: rollerHuman };
 }
 
+/** v32.1 (Q233, 17.q): why a Game Roll match paid nothing, e.g. "Upper Gaul rolled, but it needs 5 troops to collect (it has 3): no reward, no card (17.q)." */
+export function rewardDeniedText(data, pub) {
+  const name = provName(data, pub.province);
+  if (pub.need == null) return `${name} is below its minimum garrison: no reward, no card (17.q).`;   // an event from an older save
+  return `${name} rolled, but it needs ${pub.need} troop${pub.need === 1 ? '' : 's'} to collect (it has ${pub.own}): no reward, no card (17.q).`;
+}
 /** Batch 5 item 6: how a card being looked at can be played right now. mode: 'targets' (PLAY_CARD with a target to pick),
  *  'now' (one PLAY_CARD with nothing to pick), 'build' (a saved Road / Wall card: the Build screen opens on "where"), or 'none'. */
 export function cardPlayView(state, data, legal, uid) {
@@ -940,7 +947,8 @@ export function buySteps(state, data, legal) {
     const d = legal.find(x => x.type === 'BUY_GAME_CARD' && x.action.fromProvince === id) ?? null; const p = state.provinces[id];
     return { id, name: provName(data, id), troops: p.troops, enabled: !!d, paid: d, reason: d ? '' : p.troops <= c.gameCardTroops ? `only ${p.troops} troop: at least 1 must stay (17.f)` : p.status === 'held' ? `Roma must keep ${data.rules.romaFloorOnHold} while held` : 'not possible right now' };
   });
-  const card = { item: 'gameCard', name: 'Game Card', cost: c.gameCardGold, costText: `${c.gameCardGold} Gold + ${c.gameCardTroops} troop · 1 action · max 1 per turn`, provinces: cardProvs };
+  // v32.1 (Q234): the troop part of the price is spelled out — "Cost: 2 Gold + 1 troop (pick a province)". No all-Gold option (Q232 undecided).
+  const card = { item: 'gameCard', name: 'Game Card', cost: c.gameCardGold, costText: `Cost: ${c.gameCardGold} Gold + ${c.gameCardTroops} troop (pick a province) · 1 action · max 1 per turn`, provinces: cardProvs };
   card.reason = state.turn?.gameCardBought ? 'you already bought a Game Card this turn (max 1, 17.s)' : why(cardProvs, c.gameCardGold, () => (mine.every(id => state.provinces[id].troops <= c.gameCardTroops) ? 'no province can pay a troop and keep 1 (17.f)' : ''));
   card.enabled = !card.reason;
   // v31.14: Buy Prestige (22.g) has no province — it goes straight to the pay step (buyHtml skips "Where" for items with no provinces).
@@ -1144,6 +1152,29 @@ export function displayUnderGarrisoned(state, data, id) {
   if (p.status === 'allied') return p.troops < displayMin(state, data, id);
   if (p.status === 'conquered') return p.troops < minGarrison(state, data, id).min;
   return false;
+}
+/** v32.1 (Q233, 17.q): the map tooltip of an under-garrisoned province — what it needs to collect Game Roll rewards. '' otherwise. */
+export function underGarrisonTip(state, data, id) {
+  if (!displayUnderGarrisoned(state, data, id)) return '';
+  const need = state.provinces[id].status === 'allied' ? displayMin(state, data, id) : rewardNeed(state, data, id);
+  return `Under-garrisoned: needs ${need} troop${need === 1 ? '' : 's'} to collect Game Roll rewards and its bonus troop (17.q).`;
+}
+/**
+ * v32.1 (Q239, 18.m): the tooltip on a conquered province that a rival could aim Revolt! at right now — "Rivals can play
+ * Revolt! here." Same test as the engine's Revolt! targets (conquered, never Roma, under 10 troops, no general of the owner
+ * stationed there, not a small empire of 2 or fewer provinces). '' otherwise (start provinces, allies, protected provinces).
+ */
+export function revoltRiskTip(state, data, id) {
+  const p = state?.provinces?.[id];
+  if (!p?.owner || p.status !== 'conquered' || id === 'roma') return '';
+  if (!canRevolt(state, data, id) || isSmallEmpire(state, p.owner)) return '';
+  return 'Rivals can play Revolt! here.';
+}
+/** v32.1 (18.ad): the hand's note while Forced March!'s extra card play is open, '' otherwise (both UIs show it). */
+export function cardSlotNote(state) {
+  if (!state?.turn || state.phase !== 'turn') return '';
+  if (onlyExtraSlotLeft(state)) return 'Forced March!: you may play 1 more non-battle card this turn (no action; not a battle card, 18.ad).';
+  return '';
 }
 export const SHOW_PROV_NUMBERS_KEY = 'imperator.showProvNumbers';
 /** v31.30 (Update 5): "Show Prov Numbers" map toggle. Off by default; remembered in this browser like Hide AI battles. */

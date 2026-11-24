@@ -1,5 +1,21 @@
 [
  {
+  "version": "32.1",
+  "date": "2026-11-23",
+  "title": "Forced March! now also gives an extra card play, and clearer help for new players",
+  "bullets": [
+   "Forced March! (18.ad): besides the third action, the turn you play it you may play 1 extra non-battle Game Card (Revolt!, Assassin!, Bribe the Ally!, Bandits on the Road!, Spy in the Tent! or Busy Little Bee!). It costs no action, battle cards never count (nor Battlefield Imperator or Sneak Attack from the Sea!), and it does not carry over to the next turn.",
+   "Game Roll: when your province rolls but is under its minimum garrison, the popup now says why — how many troops it needs and how many it has (17.q). Under-garrisoned provinces get a ⚠ marker and a tooltip on the map.",
+   "Buying a Game Card now reads \"Cost: 2 Gold + 1 troop (pick a province)\".",
+   "Attacks say \"Send up to N (1 must stay)\" and warn when sending more would leave the province under its minimum.",
+   "Summon General is highlighted in battle and shows the bonus your general really gives there.",
+   "The Card… button is always there on your turn and opens your whole hand, with a reason next to each card you cannot play now.",
+   "Online: after you roll, the bar shows \"Syncing…\" with a spinner while the host catches up.",
+   "Map tooltips mark provinces where rivals can play Revolt!",
+   "Online: a player who drops and rejoins with the same name gets their seat back at once, and the chat so far is restored."
+  ]
+ },
+ {
   "version": "32.0",
   "date": "2026-11-22",
   "title": "The large map is now Large Map 2: Illyrium and a Caledonia–Mauretania sea link",

@@ -76,6 +76,7 @@ export function createGuest(page) {
       // v30.5.1: a game in progress with several free seats: "Which player are you?" (the player names; one tap joins that seat)
       onHold: () => { if (mineNet()) page.say('Waiting for the host to give you a seat…'); },
       onChat: (c, m) => { if (mineNet()) page.onChat?.(m); },   // v31.27 (Update 2): a chat line relayed by the host (including our own)
+      onChatLog: (c, list) => { if (mineNet()) page.onChatLog?.(list); },   // v32.1 (Q240): the chat so far, on a (re)join
       onPick: (c, seats) => { if (!mineNet()) return; page.busyJoin(false); page.say('This game is already running. Which player are you?');
         page.pick?.(seats, i => { if (!mineNet()) return; page.pick?.(null); page.busyJoin(true); page.say(`Joining as ${seats.find(x => x.i === i)?.name ?? 'that player'}…`); c.pick(i); }); },
       // v31.3: a long full sync (a Large Map 2 game: ~50-60 pieces) shows how far it is
@@ -170,7 +171,7 @@ export function createGuest(page) {
     const n = C.NET;
     if (n.pending || n.lost) { if (n.lost) page.toast(n.lost); return false; }
     if (n.client.status !== 'connected') { page.toast('Reconnecting to the host: wait a moment'); return false; }
-    n.pending = true; n.client.act(action); pendWatch(); page.freezeControls(); return true;
+    n.pending = true; n.client.act(action); pendWatch(); page.banner?.(); page.freezeControls(); return true;   // v32.1 (Q238): "Syncing…" at once
   }
   /** v31.27 (Update 2): a chat line to the host, which relays it to every screen (including this one). */
   function chat(text) {
@@ -187,8 +188,8 @@ export function createGuest(page) {
   }
   function pendDone() {
     if (C.NET?.role !== 'guest') return;
-    const was = C.NET.slow; C.NET.pending = false; C.NET.slow = false; clearTimeout(C.NET.pendSlow); clearTimeout(C.NET.pendRetry);
-    if (was) page.banner();
+    const was = C.NET.slow || C.NET.pending; C.NET.pending = false; C.NET.slow = false; clearTimeout(C.NET.pendSlow); clearTimeout(C.NET.pendRetry);
+    if (was) page.banner();   // v32.1 (Q238): clears "Syncing…" too
   }
   /** Why this guest cannot act now (null: nothing special; the shared gate's own reason is used). */
   function notDue() {

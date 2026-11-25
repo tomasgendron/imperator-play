@@ -42,9 +42,10 @@ export const topFrame = state => state.pending[state.pending.length - 1] ?? null
 export function popFrame(ctx) { return ctx.state.pending.pop(); }
 
 export const playerOf = (state, id) => state.players.find(p => p.id === id);
-/** AI difficulty of a seat (v31.12): 'normal' unless the seat chose 'easy'. Saves from before difficulty default to Normal. */
-export const AI_DIFFICULTIES = ['normal', 'easy'];
+/** AI difficulty of a seat (v31.12 / v32.5): 'normal', 'easy', or 'hard'. Saves from before difficulty, or with an unknown value, default to Normal. */
+export const AI_DIFFICULTIES = ['normal', 'easy', 'hard'];
 export const difficultyOf = (state, id) => { const d = playerOf(state, id)?.difficulty; return AI_DIFFICULTIES.includes(d) ? d : 'normal'; };
+export const aiDifficultyLabel = d => (d === 'easy' ? 'Easy' : d === 'hard' ? 'Hard' : 'Normal');
 export function mustPlayer(state, id) { const p = playerOf(state, id); if (!p) fail('UNKNOWN_PLAYER', `No player "${id}".`); return p; }
 
 /** Player ids in turn order, starting with `first`. */

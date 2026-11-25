@@ -120,6 +120,112 @@ function hash(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { 
 const after = (state, data, action) => { const r = applyAction(state, action, { data }); return r.error ? null : r.state; };
 const lite = state => ({ ...state, log: [] });   // the log does not matter for any decision
 
+/** Board Prestige plus Gold Prestige (22.f): the figure used for the win check and for Hard's "closest to winning". */
+export function towardWin(player, data) {
+  return (player?.prestige ?? 0) + S.goldPrestige(player?.gold, data);
+}
+/** The rival closest to winning (Prestige + Gold Prestige). Ties break by player id, so it is deterministic. Public info only. */
+export function prestigeLeader(state, data, pid) {
+  const rivals = state.players.filter(p => p.id !== pid && !p.out);
+  if (!rivals.length) return null;
+  let best = rivals[0], bestT = towardWin(best, data);
+  for (const p of rivals.slice(1)) {
+    const t = towardWin(p, data);
+    if (t > bestT || (t === bestT && p.id < best.id)) { best = p; bestT = t; }
+  }
+  return best.id;
+}
+/** A province next to a rival; `strong` means that rival is the prestige leader or clearly outnumbers this garrison. Public map only. */
+export function isBorderProvince(state, data, pid, id, { strong = false } = {}) {
+  const here = state.provinces[id];
+  const leader = strong ? prestigeLeader(state, data, pid) : null;
+  return S.neighbours(data, id).some(n => {
+    const q = state.provinces[n];
+    if (!q.owner || q.owner === pid) return false;
+    if (!strong) return true;
+    return q.owner === leader || q.troops >= (here?.troops ?? 0) + 2;
+  });
+}
+/**
+ * Troops an adjacent rival (with a Road, 19.b) could send, as attackBar already judges a counter-attack: max(troops − 1) over
+ * neighbouring rival armies. Public map only.
+ */
+export function originThreatTroops(state, data, origin, pid) {
+  const p = state.provinces[origin];
+  if (!p) return 0;
+  return Math.max(0, ...S.neighbours(data, origin).map(n => state.provinces[n]).filter(q => q.owner && q.owner !== pid && q.road && q.status !== 'held').map(q => q.troops - 1));
+}
+/**
+ * v32.5 (17.y, Vidi): after a conquest, how many survivors the AI sends back. Every AI level uses this.
+ * Default: send none (keep everyone in the new province) — that also keeps at least the minimum garrison when enough
+ * survivors exist (minGarrison includes Garrison Requirement and Pompey, 17.c / 17.f / 18.t).
+ * Send survivors back only when:
+ *   (1) the home (origin) is threatened: it is (or would stay) below its own minimum, or an adjacent rival army could take it; or
+ *   (2) a further attack this turn from the origin would clear the usual odds bar if more troops went home.
+ * Judgment: a follow-up attack never drops the new province below its minimum. A home-threat may, but only when there are
+ * not enough survivors to both keep the minimum and make the origin safe. If there are not enough survivors to meet the
+ * new minimum, none are sent back (keep as many as 17.y allows).
+ */
+export function survivorBackChoice(state, data, f, opts = {}) {
+  const me = opts.me ?? f.player ?? f.resolvableBy?.[0];
+  const cfg = opts.cfg ?? aiConfig(opts);
+  const own = f.own ?? 0;
+  const mx = f.maxBack ?? 0;
+  const target = f.target, origin = f.origin;
+  if (!target || !origin || mx <= 0) return { back: 0, reason: 'none', keepMin: 0, needHome: 0, needAttack: 0 };
+  const minT = S.minGarrison(state, data, target).min;
+  const minO = S.minGarrison(state, data, origin).min;
+  const originNow = state.provinces[origin]?.troops ?? 0;
+  const keepAtNew = Math.min(own, Math.max(minT, own > 0 && target !== 'roma' ? 1 : 0));
+  const keepMinBack = Math.max(0, Math.min(mx, own - keepAtNew));
+  const safeAt = left => Math.max(minO, originThreatTroops(state, data, origin, me) + 1);
+  const needHome = Math.max(0, safeAt(originNow) - originNow);
+
+  let needAttack = 0;
+  const unused = Math.max(0, S.effectiveActionsPerTurn(state, data) - (state.turn?.actionsUsed ?? 0));
+  if (unused > 0 && me) {
+    const barAt = (troops, targetId) => attackBar(state, data, me, { from: origin, target: targetId, troops }, cfg).bar;
+    for (const t of attackTargets(state, data, me, origin)) {
+      // Only send if the extra troops are what make a follow-up decent. An already-good attack with
+      // the troops already at the origin (or a vacant neighbour that 2 troops would auto-win) is not a reason.
+      if (originNow >= 1) {
+        const o0 = attackOdds(state, data, { type: 'ATTACK', playerId: me, from: origin, target: t.id, troops: originNow });
+        if (o0.ok && o0.p >= barAt(originNow, t.id)) continue;
+      }
+      for (let send = 1; send <= keepMinBack; send++) {
+        const n = originNow + send;
+        const o = attackOdds(state, data, { type: 'ATTACK', playerId: me, from: origin, target: t.id, troops: n });
+        if (o.ok && o.p >= barAt(n, t.id)) { needAttack = Math.max(needAttack, send); break; }
+      }
+    }
+  }
+
+  const want = Math.max(needHome, needAttack);
+  if (want <= 0) return { back: 0, reason: 'stay', keepMin: keepMinBack, needHome, needAttack };
+  // Home threat may dip below the new minimum; a follow-up attack may not.
+  const cap = (needHome > keepMinBack) ? mx : keepMinBack;
+  const back = Math.max(0, Math.min(cap, want, mx));
+  return { back, reason: needHome >= needAttack ? 'home' : 'attack', keepMin: keepMinBack, needHome, needAttack };
+}
+
+/** Merge Hard's bars/biases on top of the base config, then any test overrides. */
+export function configForLevel(level, opts = {}) {
+  const hard = level === 'hard' ? (AI_CONFIG.hard ?? {}) : {};
+  return aiConfig({
+    config: {
+      ...hard,
+      ...(opts.config ?? {}),
+      attack: { ...hard.attack, ...(opts.config?.attack ?? {}) },
+      spend: { ...AI_CONFIG.spend, ...hard.spend, ...(opts.config?.spend ?? {}) },
+      threat: { ...AI_CONFIG.threat, ...hard.threat, ...(opts.config?.threat ?? {}) },
+    },
+  });
+}
+export function troopBuyCost(data, n) {
+  const c = data.rules.costs;
+  return n >= 3 ? c.troops3 : n === 2 ? c.troops2 : c.troop;
+}
+
 /**
  * M8 item 1: the bar an attack must clear (AI config): a base chance by target (natives, a rival, Carthage, Roma), raised when the
  * attackers leave the origin weak: under its minimum garrison (17.q), no longer revolt-proof (10+ troops, 17.c), or outnumbered by a
@@ -146,8 +252,9 @@ function attackValue(state, data, pid, action, base, cfg) {
   if (!o.ok || o.p < attackBar(state, data, pid, action, cfg).bar) return -Infinity;   // under-strength stays banned; Roma and Carthage stay at 70%+
   const meP = playerOf(state, pid);
   const line = prestigeThreatLine(data, cfg);
-  const selfClose = meP.prestige >= line;
-  const threat = !!(t.owner && t.owner !== pid && playerOf(state, t.owner).prestige >= line);
+  const toward = p => p.prestige + (cfg.threat?.countGoldPrestige ? S.goldPrestige(p.gold, data) : 0);
+  const selfClose = toward(meP) >= line;
+  const threat = !!(t.owner && t.owner !== pid && toward(playerOf(state, t.owner)) >= line);
   const earning = threat && (S.earnsReward(state, data, action.target) || S.earnsBonusTroop(state, data, action.target));
   const gainP = action.target === 'roma' ? data.rules.prestige.roma : action.target === 'carthage' ? data.rules.prestige.carthage : data.rules.prestige.conquest;
   // Close to winning: hold the troops, unless this battle would win the game or a rival who is level or ahead is the target.
@@ -164,13 +271,14 @@ function attackValue(state, data, pid, action, base, cfg) {
   if (t.owner) gain += 0.7 * (W.prestige * data.rules.prestige.loss + W.province + d * W.troop) / Math.max(1, state.players.filter(p => !p.out && p.id !== pid).length);
   if (earning) gain += cfg.threat?.attackBias ?? 180;
   else if (threat) gain += (cfg.threat?.attackBias ?? 180) * 0.35;
+  if (cfg.threat?.leaderBias && t.owner && t.owner !== pid && t.owner === prestigeLeader(state, data, pid)) gain += cfg.threat.leaderBias;
   const v = evaluate(s2, data, pid) - base;   // the origin is emptied, the action is spent
   return v + o.p * gain + o.surv * W.troop - (1 - o.p) * 4 + (o.p < 0.45 ? -40 : 0);
 }
 
 // ------------------------------------------------------------------ the policy
-/** AI strength levels (Q94, Vidi 2026-10-21: one normal level now; easy/hard can plug in here later as weight sets / search depth). */
-export const AI_LEVELS = Object.freeze({ normal: { id: 'normal', name: 'Normal' }, easy: { id: 'easy', name: 'Easy' } });
+/** AI strength levels (Q94, Vidi 2026-10-21; v32.5 adds Hard). */
+export const AI_LEVELS = Object.freeze({ normal: { id: 'normal', name: 'Normal' }, easy: { id: 'easy', name: 'Easy' }, hard: { id: 'hard', name: 'Hard' } });
 
 /** Is `id` a human seat (not an AI seat)? Easy's restraint applies against humans only. */
 export const isHumanSeat = (state, id) => !!id && playerOf(state, id)?.controller !== 'ai';
@@ -234,15 +342,19 @@ export function easyCardRestrained(state, seed, cfg, cardUid) {
  * to the acting seat's difficulty in the game state (per-seat, set at setup, v31.12).
  */
 export function chooseAction(state, data, opts = {}) {
-  const seed = opts.seed ?? 'ai'; const cfg = aiConfig(opts);
+  const seed = opts.seed ?? 'ai';
   const legal = opts.legal ?? legalActions(state, data);
   if (!legal.length) return null;
-  if (legal.length === 1) return legal[0].action;
+  // A lone PLACE_SURVIVORS still needs the v32.5 garrison policy to fill `back` (the legal default is always back: 0). Other singleton actions, including a lone ATTACK/MOVE with a troop range, keep the historical early return so Normal/Easy troop counts stay the same.
+  if (legal.length === 1 && legal[0].type !== 'PLACE_SURVIVORS') return legal[0].action;
   const me = whoActs(state); const f = topFrame(state);
-  const level = opts.level ?? difficultyOf(state, me);   // v31.12: Easy restrains itself against humans; Normal is unchanged
+  const level = opts.level ?? difficultyOf(state, me);   // v31.12 Easy / v32.5 Hard; defaults to the seat's difficulty
+  const cfg = configForLevel(level, opts);
   const st = lite(state);
   const summon = legal.find(d => d.type === 'SUMMON_GENERAL');
   if (summon && state.battle && summonGeneralTarget(state, data, me)) {
+    // v32.5 Hard (c): always summon when the general is adjacent. Normal/Easy still need a +0.02 odds swing.
+    if (level === 'hard') return summon.action;
     const before = liveOdds(state, data, state.battle).p;
     const s2 = after(st, data, summon.action);
     const afterP = s2?.battle ? liveOdds(s2, data, s2.battle).p : before;
@@ -289,7 +401,11 @@ export function chooseAction(state, data, opts = {}) {
       const p1 = liveOdds(state, data, b, f.role === 'attacker' ? { attEleOdd: tot >= 1, attEleEven: tot >= 2, attMoralUntil: mo } : { defEleOdd: tot >= 1, defEleEven: tot >= 2, defMoralUntil: mo }).p;
       const swing = f.role === 'attacker' ? p1 - p0 : p0 - p1;
       const stakes = f.role === 'defender' ? (state.provinces[b.target].status === 'starting' || b.target === 'roma' ? 1.5 : 1) : 1;
-      return swing * stakes > 0.1 ? all.action : none.action;
+      const big = b.target === 'roma' || b.target === 'carthage' || state.provinces[b.target].owner;
+      // v32.5 Hard (c): in a big fight always stack; otherwise a lower swing bar (0.04 vs 0.1).
+      if (level === 'hard' && (cfg.alwaysStackBig ?? true) && big) return all.action;
+      const need = level === 'hard' ? (cfg.cardSwing ?? 0.04) : 0.1;
+      return swing * stakes > need ? all.action : none.action;
     }
     case 'choosePerk': return legal[0].action;   // Scipio (15.c): only the extra die is left (an old save)
     case 'returnReinforcements': {
@@ -428,6 +544,11 @@ export function chooseAction(state, data, opts = {}) {
           const n0 = S.roadNetwork(state, data, me).roads, n1 = S.roadNetwork(s2, data, me).roads;
           const gain = (S.merchantBonusFor(s2, data, me, n1) - S.merchantBonusFor(state, data, me, n0)) * 20 + Math.max(0, n1 - n0) * 3;
           v += gain;
+          // v32.5 Hard (f): extra value for a Road that grows the Roma-reaching network, especially early.
+          if (level === 'hard' && a.type === 'BUILD_ROAD' && n1 > n0) {
+            const early = (state.turn?.round ?? 1) <= (cfg.roadEarlyRounds ?? 12);
+            v += (cfg.roadEarlyBonus ?? 10) * (early ? 1.5 : 1);
+          }
           if (a.type === 'MOVE_MERCHANT_SHIP' && gain <= 0) v = -Infinity;
         }
         break;
@@ -442,6 +563,18 @@ export function chooseAction(state, data, opts = {}) {
           const need = pr?.status === 'allied' ? S.alliedRewardNeed(state, data, a.province) : S.minGarrison(state, data, a.province).min;
           const closed = Math.max(0, Math.min(n, need - pr.troops));
           if (closed > 0) v += closed * 3;
+        }
+        if (level === 'hard') {
+          // v32.5 Hard (d)(e): save toward Gold Prestige when close to winning; otherwise buy troops, preferring a strong border.
+          const meP = playerOf(state, me);
+          const close = towardWin(meP, data) >= prestigeThreatLine(data, cfg);
+          const pay = troopBuyCost(data, n);
+          if (close) {
+            if (S.goldPrestige(meP.gold - pay, data) < S.goldPrestige(meP.gold, data)) v = -Infinity;
+            else if (meP.gold < data.rules.goldPrestigeGold && meP.gold + 4 >= data.rules.goldPrestigeGold) v -= 10;
+          } else if (unused > 0) v += 3 * n;
+          if (isBorderProvince(state, data, me, a.province, { strong: true })) v += (cfg.borderBias ?? 6);
+          else if (!isBorderProvince(state, data, me, a.province)) v -= 2;
         }
         break;
       }
@@ -470,6 +603,10 @@ export function chooseAction(state, data, opts = {}) {
           for (const n of tries) { const val = oneply({ ...a, troops: n }, cost); if (val > best) { best = val; bestN = n; } }
           a = { ...a, troops: bestN }; v = best;
         } else v = oneply(a, cost);
+        if (level === 'hard') {   // v32.5 Hard (e): pull troops toward a strong border, out of the interior
+          if (isBorderProvince(state, data, me, a.to, { strong: true })) v += (cfg.borderBias ?? 6);
+          else if (!isBorderProvince(state, data, me, a.to)) v -= 3;
+        }
         break;
       }
       case 'ALLY': {
@@ -485,6 +622,13 @@ export function chooseAction(state, data, opts = {}) {
       case 'PLAY_CARD': {
         // v31.12: an Easy seat holds Revolt!/Assassin! back against humans (never in rounds 1-10, then a 50% coin flip each time)
         const def = state.cards[a.cardUid]?.def;
+        // v32.5 Hard (b): hold Revolt! unless the target is the prestige leader's or under-garrisoned; hold Spy for the leader.
+        if (level === 'hard' && def === 'revolt') {
+          const owner = state.provinces[a.target]?.owner;
+          const forLeader = owner && owner === prestigeLeader(state, data, me);
+          const under = S.isUnderGarrisoned(state, data, a.target);
+          if (owner && owner !== me && !forLeader && !under) { v = -Infinity; break; }
+        }
         if (def === 'sneak_attack_sea') {   // v31.19 (t643u): the AI may play it, but only when the sea attack clears the same bar as a normal attack
           if (level === 'easy' && isHumanSeat(state, state.provinces[a.target]?.owner) && humanAttacksUsed(state, me) >= (cfg.easy?.maxHumanAttacksPerTurn ?? 1)) { v = -Infinity; break; }
           const max = d.range?.max ?? a.troops ?? 1;
@@ -573,9 +717,11 @@ export function chooseAction(state, data, opts = {}) {
           // v31.40 (18.af): fixed value, not the 1-ply outcome — the look-ahead would peek at the victim's hidden hand (the
           // seeded steal shows exactly which card is taken). A random Game Card is worth ~W.card to the thief and ~0.7 * W.card
           // / rivals to deny the victim (evaluate weights rivals at 0.7); +4 against the prestige leader.
+          // v32.5: the leader is judged by Prestige + Gold Prestige; Hard holds the card unless the target is that leader.
+          const leader = prestigeLeader(state, data, me);
+          if (level === 'hard' && a.targetPlayer !== leader) { v = -Infinity; break; }
           const rivals = state.players.filter(p => p.id !== me && !p.out);
-          const leader = rivals.length ? Math.max(...rivals.map(p => p.prestige)) : 0;
-          v = W.card + (0.7 * W.card) / Math.max(1, rivals.length) + (playerOf(state, a.targetPlayer)?.prestige === leader && leader > playerOf(state, me).prestige ? 4 : 0);
+          v = W.card + (0.7 * W.card) / Math.max(1, rivals.length) + (a.targetPlayer === leader && towardWin(playerOf(state, a.targetPlayer), data) > towardWin(playerOf(state, me), data) ? 4 : 0);
           break;
         }
         const s = after(st, data, a);
@@ -586,11 +732,10 @@ export function chooseAction(state, data, opts = {}) {
         break;
       }
       case 'PLACE_SURVIVORS': {
-        const mx = d.range?.max ?? 0;
-        const tries = [...new Set([0, mx, Math.max(0, Math.min(mx, f.own - S.minGarrison(state, data, f.target).min))])];
-        let best = -Infinity, bestN = 0;
-        for (const n of tries) { const val = oneply({ ...a, back: n }); if (val > best) { best = val; bestN = n; } }
-        a = { ...a, back: bestN }; v = best;
+        // v32.5: every AI level keeps the minimum garrison in the new province unless home is threatened or a
+        // follow-up attack this turn needs the troops (survivorBackChoice). The 1-ply no longer picks "send the max".
+        const plan = survivorBackChoice(state, data, f, { level, cfg, me });
+        a = { ...a, back: plan.back }; v = oneply(a);
         if (f.general) {   // 17.y: the general stays on the new front unless the origin is the better place to attack from next
           const front = id => (attackTargets(state, data, me, id).length ? 1 : 0);
           const want = front(f.target) < front(f.origin);

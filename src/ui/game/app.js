@@ -4,7 +4,7 @@
 import { loadGameData, datasetFor } from '../loadData.js';
 import { resolveAsset } from '../assets.js';
 import { setupChoices, checkSetup, current } from '../consoleModel.js';
-import { topFrame, whoActs, minGarrison, totalTroops, provincesOf as ownedBy, viewFor, eventsFor, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces, sellGold, attackSendNote } from '../../engine/index.js';
+import { topFrame, whoActs, minGarrison, totalTroops, provincesOf as ownedBy, viewFor, eventsFor, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces, sellGold, attackSendNote, aiDifficultyLabel } from '../../engine/index.js';
 import * as G from './model.js';
 import { createSound } from './sound.js';
 import { HostRoom, PING_MS } from '../../net/host.js';
@@ -209,7 +209,7 @@ function renderSetup() {
     <td><span class="sw" style="background:${SEAT_COLORS[i]}" title="${SEAT_COLOR_NAMES[i]}"></span></td>
     <td>${x.controller === 'remote' ? `<input name="name${i}" value="${attr(remoteName(i))}" size="12" readonly class="remote${remoteName(i) ? ' joined' : ''}" placeholder="waiting for a player…" aria-label="Seat ${i + 1}: online player">` : `<input name="name${i}" value="${attr(x.name)}" size="12" aria-label="Seat ${i + 1} name">`}</td>
     <td><span class="seg">${hosting ? toggle(i, 'human', 'You') + toggle(i, 'remote', 'Online') : toggle(i, 'human', 'Human')}${toggle(i, 'ai', 'AI')}</span></td>
-    <td>${x.controller === 'ai' ? `<select name="dif${i}" aria-label="Seat ${i + 1} AI difficulty" title="Easy holds Revolt! and Assassin! back against humans, and attacks a human at most once per turn"><option value="normal" ${x.difficulty !== 'easy' ? 'selected' : ''}>Normal</option><option value="easy" ${x.difficulty === 'easy' ? 'selected' : ''}>Easy</option></select>` : '<span class="small">—</span>'}</td>
+    <td>${x.controller === 'ai' ? `<select name="dif${i}" aria-label="Seat ${i + 1} AI difficulty" title="Easy holds back against humans. Normal is the usual AI. Hard hunts the leader, holds key cards, attacks at better odds, and keeps garrisons."><option value="easy" ${x.difficulty === 'easy' ? 'selected' : ''}>Easy</option><option value="normal" ${x.difficulty !== 'easy' && x.difficulty !== 'hard' ? 'selected' : ''}>Normal</option><option value="hard" ${x.difficulty === 'hard' ? 'selected' : ''}>Hard</option></select>` : '<span class="small">—</span>'}</td>
     <td class="gcell"><select name="gen${i}" aria-label="Seat ${i + 1} general">${genOpts(i)}</select><button type="button" class="btn sm genseat${genSeat === i ? ' on' : ''}" data-genseat="${i}" title="Choose ${attr(x.name)}'s general from the cards below" aria-pressed="${genSeat === i}">🂠 cards</button></td>
     ${sel ? startCell(i) : ''}</tr>`).join('');
   $$('#seats input:not([readonly]), #seats select').forEach(el => el.oninput = el.onchange = () => {
@@ -1807,7 +1807,7 @@ function renderPlayers() {
     const tags = tag(p.savedResources) + tag(p.inPlay) + (p.items?.catapult ? `<span class="tag">Catapult ×${p.items.catapult}</span>` : '');
     const used = s.phase === 'turn' ? G.actionsUsedLabel(s, data) : '';
     return `<div class="player ${active ? 'active' : ''} ${p.out ? 'out' : ''}" data-pid="${p.id}" style="--pc:var(--${c})">
-      <div class="ph"><span class="nm">${esc(p.name)}</span><span class="gn">${esc(gen?.name ?? 'no general yet')}</span><span class="ctl ${p.controller === 'ai' ? 'ai' : ''}" ${p.controller === 'ai' && p.difficulty === 'easy' ? 'title="Easy: holds Revolt! and Assassin! back against humans, and attacks a human at most once per turn"' : ''}>${p.controller === 'ai' ? 'AI · ' + (p.difficulty === 'easy' ? 'Easy' : 'Normal') : 'Human'}</span>${netBadge(p.id)}<span class="turnbadge">▶ ${active && used ? used : 'TURN'}</span></div>
+      <div class="ph"><span class="nm">${esc(p.name)}</span><span class="gn">${esc(gen?.name ?? 'no general yet')}</span><span class="ctl ${p.controller === 'ai' ? 'ai' : ''}" ${p.controller === 'ai' && p.difficulty === 'easy' ? 'title="Easy: holds Revolt! and Assassin! back against humans, and attacks a human at most once per turn"' : p.controller === 'ai' && p.difficulty === 'hard' ? 'title="Hard: hunts the leader, holds Revolt! and Spy for the leader or an under-garrisoned province, attacks at better odds, and keeps minimum garrisons"' : ''}>${p.controller === 'ai' ? 'AI · ' + aiDifficultyLabel(p.difficulty) : 'Human'}</span>${netBadge(p.id)}<span class="turnbadge">▶ ${active && used ? used : 'TURN'}</span></div>
       <div class="pbody2">
         <div class="gcard" title="${attr(gen ? gen.name + ': ' + gen.text + ' (click for every perk in detail)' : 'General not chosen yet')}"><img src="${img(gen ? 'general.' + gen.id : 'back.blank')}" alt="${attr(gen?.name ?? '')}">${recalled ? '<div class="oldtext">recalled to Rome</div>' : ''}</div>
         <div class="pstats">

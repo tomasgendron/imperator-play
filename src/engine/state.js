@@ -1,5 +1,6 @@
 // State factory, invariants (validateState), clone, stateHash (PLAN 3, 13.1). Pure.
 import { createRng, shuffle, int } from './rng.js';
+import { AI_DIFFICULTIES } from './core.js';
 
 export const SCHEMA_VERSION = 2;   // 2 = rules update 2026-10-21: discards, players[].items/out/gameRollsTaken/startIncome, carthage.neutral
 export const PROVINCE_STATUSES = ['native', 'allied', 'conquered', 'starting', 'held'];
@@ -173,7 +174,7 @@ export function validateState(state, data, opts = {}) {
     if (pl.startProvince !== null && !data.provincesById[pl.startProvince]) err(`${pl.id}: startProvince ${pl.startProvince} unknown`);
     if (pl.startProvince !== null && data.provincesById[pl.startProvince]?.startingEligible === false) err(`${pl.id}: ineligible start province ${pl.startProvince}`);
     if (!isNat(pl.gold)) err(`${pl.id}: gold ${pl.gold}`);
-    if (pl.difficulty !== undefined && !['normal', 'easy'].includes(pl.difficulty)) err(`${pl.id}: difficulty ${pl.difficulty} (normal or easy, v31.12)`);
+    if (pl.difficulty !== undefined && !AI_DIFFICULTIES.includes(pl.difficulty)) err(`${pl.id}: difficulty ${pl.difficulty} (normal, easy or hard, v31.12 / v32.5)`);
     if (!isNat(pl.prestige)) err(`${pl.id}: prestige ${pl.prestige}`);
     if (pl.general && pl.general.at !== null && !data.provincesById[pl.general.at]) err(`${pl.id}: general at unknown ${pl.general.at}`);
     if (pl.general && !data.generalsById[pl.general.id]) err(`${pl.id}: unknown general ${pl.general.id}`);

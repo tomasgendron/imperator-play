@@ -1,5 +1,15 @@
 [
  {
+  "version": "32.5",
+  "date": "2026-11-24",
+  "title": "Hard AI, a garrison fix after conquests, and updated Coin Master art",
+  "bullets": [
+   "After the AI conquers a province it now keeps at least that province's minimum garrison there, instead of often leaving only 1 troop. It sends survivors home only if the home province is threatened, or if it still has an action left and needs the troops for another attack at decent odds.",
+   "A new Hard AI difficulty sits beside Easy and Normal on the setup screen (one choice per AI seat, including online). Hard plays fairly with public information only. It focuses on whoever is closest to winning, holds Revolt! and Spy in the Tent! for that leader or for a thinly held province, attacks only at better odds, always calls its general when adjacent, stacks battle cards in big fights, saves Gold Prestige when close to a win, and prefers border troops and early Roads toward Roma.",
+   "The Coin Master (Unused Actions) card face now reads \"+1 Extra Gold per Unused Action\", matching the bonus that already shipped in v32.4."
+  ]
+ },
+ {
   "version": "32.4",
   "date": "2026-11-24",
   "title": "AI will not flee a close win, and Coin Master pays +1 Gold per unused action",

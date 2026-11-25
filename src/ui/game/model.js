@@ -1,7 +1,7 @@
 // Pure model of the M5 game page: no DOM, so `node --test` drives exactly what the page shows and clicks.
 // The page keeps a console session (src/ui/consoleModel.js) and asks this module who looks at the screen, what a human may do
 // now (grouped for the phase bar, the map and the builder), what a card looks like, which sounds an event plays, and how a save file reads.
-import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, recallMoveTargets, fleeOptions, effectiveActionsPerTurn, canRevolt, isSmallEmpire, rewardNeed, cardSlotOpen, onlyExtraSlotLeft, forcedMarchAsSecondCard } from '../../engine/index.js';
+import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, recallMoveTargets, fleeOptions, effectiveActionsPerTurn, canRevolt, isSmallEmpire, rewardNeed, cardSlotOpen, onlyExtraSlotLeft, forcedMarchAsSecondCard, AI_DIFFICULTIES } from '../../engine/index.js';
 import { newSession, play, aiToMove, aiMove, stateOf, current, formatEvent, describePrompt } from '../consoleModel.js';
 
 export { newSession, play, aiToMove, aiMove, stateOf, describePrompt };
@@ -388,7 +388,7 @@ export function readSave(input, data) {
   if (!Array.isArray(state.ships)) state.ships = [];   // v31.5: saves from before Merchant ships
   if (!state.throwaway) state.throwaway = { game: [], resource: [], displeased: [] };   // v31.11: saves from before the throwaway pile
   if (!state.withheld) state.withheld = { game: [] };   // v31.30: saves from before the withheld pile load as already released — the 5 cards are in the deck/discards/hands already, so nothing is held back mid-game
-  for (const p of state.players) if (!['normal', 'easy'].includes(p.difficulty)) p.difficulty = 'normal';   // v31.12: saves from before AI difficulty
+  for (const p of state.players) if (!AI_DIFFICULTIES.includes(p.difficulty)) p.difficulty = 'normal';   // v31.12 / v32.5: saves from before AI difficulty (or an unknown value) default to Normal; Hard is kept
   for (const p of state.players) if (p.pendingStealToRoma === undefined) p.pendingStealToRoma = null;
   if (state.carthage && state.carthage.destroyedForGood === undefined) state.carthage.destroyedForGood = false;   // v31.36 (16.o): saves from before the flag load as not destroyed for good   // v31.24 (18.r, 18.x): saves from before the deferred steal
   if (!state.turn.aiHumanAttacks) state.turn.aiHumanAttacks = {};   // v31.12: saves from before the Easy attack budget

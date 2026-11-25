@@ -8,7 +8,7 @@
 import { loadGameData, datasetFor } from '../ui/loadData.js';
 import { resolveAsset } from '../ui/assets.js';
 import { setupChoices, checkSetup, current } from '../ui/consoleModel.js';
-import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces, sellGold } from '../engine/index.js';
+import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces, sellGold, aiDifficultyLabel } from '../engine/index.js';
 import * as G from '../ui/game/model.js';
 import { createSound } from '../ui/game/sound.js';
 import { createController } from '../ui/core/controller.js';
@@ -244,7 +244,7 @@ function renderStart() {
     return `<div class="seat" data-seat="${i}" style="--c:var(--p${i + 1})"><button class="gc${g ? '' : ' rnd'}" data-gen="${i}" ${g ? `style="background-image:url('${attr(img('general.' + g.id))}')"` : ''} aria-label="Choose seat ${i + 1}'s general">${g ? '' : '?'}</button>
       <div class="t">${x.controller === 'remote' ? `<span class="rname" data-rname="${i}">${remoteLabel(i)}</span>` : `<input name="name${i}" value="${attr(x.name)}" aria-label="Seat ${i + 1} name" autocomplete="off">`}<button type="button" class="gpick" data-gen="${i}">${g ? `${esc(g.name)} · ${esc(G.generalCaption(data, g.id))}` : 'Random free general'} ▾</button></div>
       ${playWhere === 'host' && i === 0 ? '<span class="ctl you" data-ctl-you="0">📱 You (host)</span>' : `<button class="ctl" data-ctl="${i}" aria-label="Seat ${i + 1}: played by">${x.controller === 'ai' ? '🤖 AI' : x.controller === 'remote' ? '🌐 Online' : '👤 Human'} ▾</button>`}
-      ${x.controller === 'ai' ? `<button type="button" class="difbtn" data-difbtn="${i}" aria-label="Seat ${i + 1} AI difficulty" title="Easy holds Revolt! and Assassin! back against humans, and attacks a human at most once per turn">${x.difficulty === 'easy' ? 'Easy' : 'Normal'} ▾</button>` : ''}</div>`; };
+      ${x.controller === 'ai' ? `<button type="button" class="difbtn" data-difbtn="${i}" aria-label="Seat ${i + 1} AI difficulty" title="Easy holds back against humans. Normal is the usual AI. Hard hunts the leader, holds key cards, and keeps garrisons.">${aiDifficultyLabel(x.difficulty)} ▾</button>` : ''}</div>`; };
   const online = playWhere === 'join';   // v30.4: the Host tab has the seats and the starts (the host chooses them)
   const r = checkSetup(data, engineSeats(), startMode); const errs = r.ok ? '' : r.errors.map(e => (e.seat !== null ? `Seat ${e.seat + 1}: ` : '') + e.message).join('\n');
   const auto = autosaveText(); let autoInfo = '';
@@ -391,8 +391,9 @@ function openDifficultyPick(i) {
   const cur = seats[i].difficulty ?? 'normal';
   openSheet('difficulty', `<div class="sh-head"><h2>${esc(seats[i].name || 'Seat ' + (i + 1))}'s AI skill<small>How this AI plays against you</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body"><div class="alist">
-      <button class="arow" data-dif="normal"><span class="ic">🤖</span><span class="t"><b>Normal${cur === 'normal' ? ' ✓' : ''}</b><small>The usual AI.</small></span><span class="go">›</span></button>
       <button class="arow" data-dif="easy"><span class="ic">🌱</span><span class="t"><b>Easy${cur === 'easy' ? ' ✓' : ''}</b><small>Holds Revolt! and Assassin! back against humans in the first 10 rounds, then half as often; attacks your provinces at most once per turn.</small></span><span class="go">›</span></button>
+      <button class="arow" data-dif="normal"><span class="ic">🤖</span><span class="t"><b>Normal${cur === 'normal' ? ' ✓' : ''}</b><small>The usual AI, including keeping a minimum garrison after a conquest.</small></span><span class="go">›</span></button>
+      <button class="arow" data-dif="hard"><span class="ic">⚔️</span><span class="t"><b>Hard${cur === 'hard' ? ' ✓' : ''}</b><small>Hunts the player closest to winning, holds Revolt! and Spy for the leader or an under-garrisoned province, attacks only at better odds, always summons an adjacent general, and builds Roads toward Roma early.</small></span><span class="go">›</span></button>
     </div></div>`);
   $$('#sheet [data-dif]').forEach(b => b.onclick = () => { seats[i].difficulty = b.dataset.dif; SND.play('button_click'); closeSheet(true); renderStart(); });
 }
@@ -1572,7 +1573,7 @@ function genActs(pid) {
 function openPlayer(pid, refresh = false) {
   const s = st(); const p = G.playerById(s, pid); const g = p.general ? G.generalView(data, p.general.id) : null;
   const gate = gateFor(pid); const btns = s.phase === 'finished' ? [] : genActs(pid);
-  const html = `<div class="sh-head"><span class="sw" style="--c:var(--${col(pid)});width:16px;height:16px"></span><h2>${esc(p.name)}<small>${p.controller === 'ai' ? 'AI · ' + (p.difficulty === 'easy' ? 'Easy' : 'Normal') : 'Human'} · ${p.gold} Gold · ${p.prestige}/${data.rules.winPrestige} Prestige · ${ownedBy(s, pid).length} provinces · ${totalTroops(s, pid)} troops · ${G.handCount(p)} cards</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+  const html = `<div class="sh-head"><span class="sw" style="--c:var(--${col(pid)});width:16px;height:16px"></span><h2>${esc(p.name)}<small>${p.controller === 'ai' ? 'AI · ' + aiDifficultyLabel(p.difficulty) : 'Human'} · ${p.gold} Gold · ${p.prestige}/${data.rules.winPrestige} Prestige · ${ownedBy(s, pid).length} provinces · ${totalTroops(s, pid)} troops · ${G.handCount(p)} cards</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body" id="genSheet" data-pid="${attr(pid)}" data-live="${gate.live ? '1' : ''}">
       ${btns.length ? `<div class="sec">Roll, draw and actions${gate.live ? '' : ''}</div>${gateNote(gate)}<div class="gvacts" id="gvActs">${btns.map((b, i) => `<button class="gvbtn${b.on && gate.live ? ' live' : ''}${b.k === 'roll' || b.k === 'draw' || b.k === 'answer' ? ' gold' : ''}" id="gv-${b.k}" data-gi="${i}"${b.on && gate.live ? '' : ` disabled title="${attr(b.why)}"`}><span class="ic">${b.ic}</span><span>${esc(b.t)}</span></button>`).join('')}</div>` : ''}
       ${g ? `<div class="cardrow"><img src="${attr(img('general.' + g.id))}" alt=""><div class="t"><b>${esc(g.name)} · ${esc(g.title)}</b>${esc(g.summary)}${p.general?.at ? `<div class="note">Now in ${esc(prov(p.general.at))}.</div>` : ''}</div></div>

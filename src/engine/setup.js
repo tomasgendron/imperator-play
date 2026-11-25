@@ -5,7 +5,7 @@
 import { createBlankState } from './state.js';
 import { createRng, shuffle, int } from './rng.js';
 import { applyAction } from './apply.js';
-import { fail, check, emit, roll, pushFrame, popFrame, makeCtx, mustPlayer, onSettle, settle, playerOf } from './core.js';
+import { fail, check, emit, roll, pushFrame, popFrame, makeCtx, mustPlayer, onSettle, settle, playerOf, AI_DIFFICULTIES } from './core.js';
 import { define, defineRoll } from './actions.js';
 import { distances } from './selectors.js';
 
@@ -98,7 +98,7 @@ export function validateSetup(data, { players = [], startProvinceMode = data.rul
   players.forEach((p, i) => {
     if (p.name !== undefined && !String(p.name).trim()) err(i, 'name', 'BAD_NAME', `Seat ${i + 1} needs a name.`);
     if (p.controller !== undefined && !CONTROLLERS.includes(p.controller)) err(i, 'controller', 'BAD_CONTROLLER', `Seat ${i + 1} is Human or AI.`);
-    if (p.difficulty !== undefined && !['normal', 'easy'].includes(p.difficulty)) err(i, 'difficulty', 'BAD_DIFFICULTY', `Seat ${i + 1}: an AI seat is Normal or Easy (v31.12).`);
+    if (p.difficulty !== undefined && !AI_DIFFICULTIES.includes(p.difficulty)) err(i, 'difficulty', 'BAD_DIFFICULTY', `Seat ${i + 1}: an AI seat is Easy, Normal or Hard (v31.12, v32.5).`);
     if (p.general && p.general !== 'random') {
       if (!data.generalsById[p.general]) err(i, 'general', 'UNKNOWN_GENERAL', `Unknown general "${p.general}".`);
       else if (gens.includes(p.general)) err(i, 'general', 'GENERAL_TAKEN', `Two players cannot have the same general: ${data.generalsById[p.general].name} is already taken (15.e).`);

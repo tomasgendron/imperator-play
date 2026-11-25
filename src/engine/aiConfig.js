@@ -32,5 +32,25 @@ export const AI_CONFIG = Object.freeze({
     cardCoinFlip: 0.5,         // after that, half the time it holds the card instead
     maxHumanAttacksPerTurn: 1, // at most one attack on a human-owned province per turn (one battle = one attack)
   }),
+  // v32.5 Hard (Vidi 2026-11-24): Normal plus tighter fight bars, Gold-Prestige threat math, and the scored biases below.
+  // Fair play only — these numbers never need a hidden hand or the deck order.
+  hard: Object.freeze({
+    attack: Object.freeze({
+      minWin: 0.62, minWinRival: 0.66, minWinRoma: 0.75, minWinCarthage: 0.75,
+    }),
+    threat: Object.freeze({
+      countGoldPrestige: true,   // "closest to winning" and the close-to-win spend checks count Gold Prestige (22.f)
+      leaderBias: 80,            // extra attack value against the prestige leader's provinces
+    }),
+    spend: Object.freeze({
+      surplusGold: 16,           // start buying troops a bit earlier when not close to a win
+      troopBias: 8,
+    }),
+    cardSwing: 0.04,             // commit battle cards when the odds move this much (Normal uses 0.1)
+    alwaysStackBig: true,        // in a fight vs a rival / Roma / Carthage, commit every battle card
+    roadEarlyBonus: 10,          // extra value for a Road that grows the Roma-reaching network
+    roadEarlyRounds: 12,         // "early" = through this round
+    borderBias: 6,               // prefer moving / buying troops on a province next to a strong rival
+  }),
 });
 export const aiConfig = (opts = {}) => (opts.config ? { ...AI_CONFIG, ...opts.config, attack: { ...AI_CONFIG.attack, ...(opts.config.attack ?? {}) } } : AI_CONFIG);

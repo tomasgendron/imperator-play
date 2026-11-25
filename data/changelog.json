@@ -1,5 +1,16 @@
 [
  {
+  "version": "32.6",
+  "date": "2026-11-25",
+  "title": "Elapsed time, a Roma hard mode, a stolen-cards list, and a Roads popup",
+  "bullets": [
+   "The top bar now shows how long the game has been running, in minutes — it keeps counting across reloads and rejoins.",
+   "New hard mode on the setup screen: \"Requires Roma to be Conquered\". When it is on, reaching the Prestige target is not enough — you must also have conquered Roma at least once. The game goes on until someone does, and the AI knows it: it treats Roma as the key to winning.",
+   "The Cards stat is now a button: it opens the full list of cards Spy in the Tent! stole from that player, with who took each one and on which turn. The hand popup lists your stolen cards too.",
+   "The Roads stat is now a button: it opens your expected Merchant Bonus (roads reaching Roma, in Gold a turn, Augustus +1 included) and the history of Gold Bandits on the Road! stole from you — including whether you lost Gold to Bandits this turn, and that you get no Merchant Bonus next turn."
+  ]
+ },
+ {
   "version": "32.5",
   "date": "2026-11-24",
   "title": "Hard AI, a garrison fix after conquests, and updated Coin Master art",

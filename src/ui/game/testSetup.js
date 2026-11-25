@@ -300,6 +300,7 @@ export function renderTestSetupPage(box, host) {
         condition: { kind: condKind.value, value: clamp(condValue.value, COND_VALUE[condKind.value].min, COND_VALUE[condKind.value].max) },
         place: Number($('#tsPlace').value),
         capTurn: Number($('#tsCap').value),
+        requiresRoma: host.requiresRoma?.() ?? false,   // v32.6 (12.o): a test game inherits the start screen's Roma requirement, like the win target
       }, p => { if (p.phase === 'running') $('#tsRunState').textContent = `Running… turn ${p.turn}, highest ${p.highest} Prestige.`; });
       run.capTurn = Number($('#tsCap').value);
       $('#tsRunState').textContent = run.finished ? 'Finished — the game ended before the handover.' : run.met ? `Done — condition met on turn ${run.metTurn}.` : 'Done — closest match.';

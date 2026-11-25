@@ -1,7 +1,7 @@
 // The turn machine and everything that happens inside a turn (PLAN 4.1 to 4.4; rules 16, 17, 18.k, 18.t, 19, 20).
 // Steps: resources -> gameRoll -> revoltRoll -> actions (17.a). The settle hook moves the turn along and stops whenever a frame
 // (a dice click, a deck click, a choice) is waiting. `turn.sub` records which step has already started this turn.
-import { fail, check, emit, roll, pushFrame, popFrame, topFrame, mustPlayer, playerOf, orderFrom, awardPrestige, toDiscard, drawTop, shuffleIn, onSettle } from './core.js';
+import { fail, check, emit, roll, pushFrame, popFrame, topFrame, mustPlayer, playerOf, orderFrom, awardPrestige, winEligible, toDiscard, drawTop, shuffleIn, onSettle } from './core.js';
 import { shuffle } from './rng.js';
 import { define, defineRoll } from './actions.js';
 import * as S from './selectors.js';
@@ -729,7 +729,7 @@ define('END_TURN', {
     const total = pl.prestige + gp;
     emit(ctx, 'goldPrestige', { actor: pid, rule: '22.f', pub: { player: pid, gold: pl.gold, goldPrestige: gp, board: pl.prestige, total, win: data.rules.winPrestige } });
     emit(ctx, 'turnEnded', { actor: pid, rule: '17.a', pub: { number: t.number, player: pid, actionsUsed: t.actionsUsed } });
-    if (total >= data.rules.winPrestige && state.winner === null) {
+    if (winEligible(state, data, pid, total) && state.winner === null) {   // v32.6 (12.o): the Roma gate also applies to a Gold Prestige win
       state.winner = pid; state.phase = 'finished'; state.pending = [];
       emit(ctx, 'gameWon', { actor: pid, rule: '22.f', pub: { player: pid, prestige: pl.prestige, goldPrestige: gp, gold: pl.gold, total } });
       return;

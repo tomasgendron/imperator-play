@@ -86,10 +86,10 @@ const logTweak = (state, text, actor = null) => {
  *   cleanHandover, moves, log, error }. `standings` is live-only (the seat pick); `allStandings` lists
  *   every seat, eliminated players marked `out`, for display.
  */
-export function speedRunSync(data, { seed, players = 3, difficulty = 'normal', condition = { kind: 'highest', value: 7 }, place = 1, capTurn = 60, maxMoves = 6000, onProgress = null } = {}) {
+export function speedRunSync(data, { seed, players = 3, difficulty = 'normal', condition = { kind: 'highest', value: 7 }, place = 1, capTurn = 60, maxMoves = 6000, onProgress = null, requiresRoma = false } = {}) {
   const names = TEST_SEAT_NAMES.slice(0, Math.max(2, Math.min(3, players)));
   const seats = names.map(name => ({ name, controller: 'ai', difficulty, general: 'random', startProvince: 'random' }));
-  let s = playRollOff(newSession(data, { seed, seats, mode: 'random' }));
+  let s = playRollOff(newSession(data, { seed, seats, mode: 'random', requiresRoma }));
   const log = [`Test run started — seed ${seed}, ${names.length} players, ${difficulty} AI.`];
   let moves = 0, met = false, metTurn = null, metBy = [], metMoves = 0, finished = false, error = null, cleanHandover = false;
   while (moves < maxMoves) {

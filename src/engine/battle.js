@@ -830,6 +830,7 @@ function conquer(ctx, b, after) {
   }
   if (t === 'roma') {                                             // 12.g, 12.l: held, fresh 10, Gold pile reset, +3
     gain = data.rules.prestige.roma;
+    pl.conqueredRoma = true;   // v32.6 (12.o): ever-conquered — the flag survives losing Roma later, and a flee from Roma counts too (resolveFlee runs through conquer())
     p.troops = data.rules.romaStartTroops;
     const stay = Math.min(own, data.rules.romaMaxTroops - p.troops); back = own - stay; p.troops += stay; own = stay;
     Object.assign(p, { owner: A, status: 'held', startingOf: null, healAtTurn: null });

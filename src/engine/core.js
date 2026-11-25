@@ -55,6 +55,17 @@ export function orderFrom(state, first) {
 }
 
 /**
+ * v32.6 (12.o): the win gate. A player at the Prestige target wins only when the game does not require Roma,
+ * or they have conquered Roma at least once (conqueredRoma is set by battle.js conquer() and survives losing Roma).
+ * `total` is the Prestige to compare: board Prestige for the 12.e check, board + Gold Prestige for 22.f.
+ */
+export function winEligible(state, data, pid, total) {
+  if (total < data.rules.winPrestige) return false;
+  if (!state.config?.requiresRoma) return true;
+  return !!state.players?.find(p => p.id === pid)?.conqueredRoma;
+}
+
+/**
  * Prestige change (floor 0, Q47). The game ends the instant a player reaches the winning Prestige (12.e, Q47); the first player
  * who reaches it wins (the acting player when one event would give it to two).
  */
@@ -66,6 +77,10 @@ export function awardPrestige(ctx, pid, delta, reason, rule = '12.f') {
   if (p.prestige === before) return;
   emit(ctx, 'prestigeChanged', { actor: pid, rule, pub: { player: pid, from: before, to: p.prestige, delta: p.prestige - before, reason } });
   if (p.prestige >= data.rules.winPrestige && state.winner === null) {
+    if (state.config?.requiresRoma && !p.conqueredRoma) {
+      if (before < data.rules.winPrestige) emit(ctx, 'winBlockedByRoma', { actor: pid, rule: '12.o', pub: { player: pid, prestige: p.prestige, win: data.rules.winPrestige } });   // v32.6: crossing the target without Roma — the game goes on, and the player is told why
+      return;
+    }
     state.winner = pid; state.phase = 'finished'; state.pending = [];
     emit(ctx, 'gameWon', { actor: pid, rule: '12.e', pub: { player: pid, prestige: p.prestige } });
   }

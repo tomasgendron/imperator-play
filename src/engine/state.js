@@ -1,6 +1,6 @@
 // State factory, invariants (validateState), clone, stateHash (PLAN 3, 13.1). Pure.
 import { createRng, shuffle, int } from './rng.js';
-import { AI_DIFFICULTIES } from './core.js';
+import { AI_DIFFICULTIES, winEligible } from './core.js';
 
 export const SCHEMA_VERSION = 2;   // 2 = rules update 2026-10-21: discards, players[].items/out/gameRollsTaken/startIncome, carthage.neutral
 export const PROVINCE_STATUSES = ['native', 'allied', 'conquered', 'starting', 'held'];
@@ -93,12 +93,15 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
   return {
     schemaVersion: SCHEMA_VERSION, gameId,
     config: { ruleset: data.ruleset.id, map: data.mapId ?? 'small1', winPrestige: data.rules.winPrestige, startGold: data.rules.startingGold, startTroops: data.rules.startingTroops,
-      actionsPerTurn: data.rules.actionsPerTurn, unusedActionGold: data.rules.unusedActionGold, seed, hideHandDefault: false },
+      actionsPerTurn: data.rules.actionsPerTurn, unusedActionGold: data.rules.unusedActionGold, seed, hideHandDefault: false, requiresRoma: false },   // v32.6 (12.o): "Requires Roma to be Conquered" — nobody wins without having conquered Roma (set by setup, false on old saves)
     rng, phase: 'setup',
     players: players.map(p => ({ id: p.id, name: p.name, color: p.color ?? null, controller: p.controller ?? 'human', difficulty: p.difficulty ?? 'normal', general: p.general ? { id: p.general, at: null } : null, startProvince: null,
       gold: data.rules.startingGold, prestige: 0, hand: [], inPlay: [], savedResources: [], generalRecalledThroughTurn: null,
       pendingStealToRoma: null,   // v31.24 (18.r, 18.x): a Bee-redirected steal waiting for this player's next turn: { def: 'steals_troops', redirectedBy } or null
       noMerchantBonus: false,   // v31.40 (18.ae): Bandits on the Road! — this player gets no Merchant Bonus on their next turn
+      conqueredRoma: false,   // v32.6 (12.o): set when this player conquers Roma; survives losing Roma (ever-conquered)
+      stolenCards: [],   // v32.6 (18.af): cards Spy in the Tent! stole from this player: { def, thief, turn }
+      banditsLosses: [],   // v32.6 (18.ae): Gold Bandits on the Road! stole from this player: { gold, thief, turn }
       items: { catapult: 0 }, out: false, gameRollsTaken: 0, startIncome: true })),
     turnOrder: [],
     turn: { number: 0, round: 0, activePlayerId: null, step: 'resources', actionsUsed: 0, forcedMarch: false, forcedMarchExtra: false, extraCardPlayed: false, nonBattleCardPlayed: false, gameCardBought: false, bonusTroopsGained: [], revoltRollsExtra: 0, generalMoved: false, aiHumanAttacks: {}, sub: {} },
@@ -260,11 +263,14 @@ export function validateState(state, data, opts = {}) {
       const w = playerById[state.winner];
       const per = data.rules.goldPrestigeGold ?? 20;
       const effective = w.prestige + (per > 0 ? Math.floor(w.gold / per) : 0);
-      if (effective < data.rules.winPrestige && !state.players.every(p => p.id === state.winner || p.out)) err(`winner has ${w.prestige} Prestige + Gold Prestige < ${data.rules.winPrestige} and is not the last player standing (12.m, 22.f)`);
+      const lastStanding = state.players.every(p => p.id === state.winner || p.out);
+      if (!lastStanding && !winEligible(state, data, state.winner, effective)) err(state.config?.requiresRoma && effective >= data.rules.winPrestige
+        ? `winner has not conquered Roma and "Requires Roma to be Conquered" is on (12.o)`
+        : `winner has ${w.prestige} Prestige + Gold Prestige < ${data.rules.winPrestige} and is not the last player standing (12.m, 22.f)`);
     }
     if (state.phase !== 'finished') err('winner set but phase is not finished');
   } else if (state.phase === 'finished') err('phase finished without a winner');
-  const top = state.players.filter(p => p.prestige >= data.rules.winPrestige);
+  const top = state.players.filter(p => winEligible(state, data, p.id, p.prestige));   // v32.6 (12.o): at the target without Roma is not a win, so several such players with no winner is fine
   if (top.length > 1 && state.winner === null) err('several players at the winning Prestige and no winner');
   return errs;
 }

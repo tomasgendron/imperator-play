@@ -9,11 +9,11 @@ const prov = (data, id) => data.provincesById[id]?.name ?? id;
  * A new console session. Either `names` (all Human) or `seats` = [{name, controller: 'human'|'ai', general?: id|'random', startProvince?}]
  * (M4 setup screen). mode = 'random' | 'selected' | 'pick' (v31: no general-based starts, 15.i, 21.h). Throws an EngineError-like Error when the setup is invalid.
  */
-export function newSession(data, { seed = 'console', names = ['Vidi', 'Boardicca'], seats = null, mode = 'random' } = {}) {
+export function newSession(data, { seed = 'console', names = ['Vidi', 'Boardicca'], seats = null, mode = 'random', requiresRoma = false } = {}) {
   // v29.1: 'random' and startSide are passed on (they were dropped: a "Random general" human was asked again, a chosen side was lost)
   const players = seats ? seats.map(x => ({ name: x.name, controller: x.controller ?? 'human', ...(x.difficulty ? { difficulty: x.difficulty } : {}), ...(x.general ? { general: x.general } : {}), ...(x.startProvince ? { startProvince: x.startProvince } : {}), ...(x.startSide ? { startSide: x.startSide } : {}) }))
     : names.map(name => ({ name }));
-  const { state, events } = createGame(data, { seed, players, options: { startProvinceMode: mode } });
+  const { state, events } = createGame(data, { seed, players, options: { startProvinceMode: mode, requiresRoma } });
   return { data, seed, steps: [{ state, events, action: null, error: null }] };
 }
 /** 'Elephants!, Moral boost! x2' from a list of card defs. */
@@ -215,6 +215,7 @@ const T = {
   coinMasterBonus: (e, st, d) => `${pn(st, e.pub.player)} shows ${d?.cardDefsById[e.pub.def]?.name ?? e.pub.def}: +${G(e.pub.gold)} ${e.pub.reason === 'sale' ? `for selling ${d?.cardDefsById[e.pub.sold]?.name ?? e.pub.sold}` : 'for unused actions'}, and keeps the card (${e.rule}).`,
   turnEnded: (e, st) => `${pn(st, e.pub.player)} ends turn ${e.pub.number}.`,
   gameWon: (e, st) => e.pub.lastStanding ? `*** ${pn(st, e.pub.player)} WINS as the last player standing ***` : e.pub.goldPrestige ? `*** ${pn(st, e.pub.player)} WINS with ${e.pub.prestige} Prestige + ${e.pub.goldPrestige} Gold Prestige (${e.pub.gold} Gold) = ${e.pub.total} ***` : `*** ${pn(st, e.pub.player)} WINS with ${e.pub.prestige} Prestige ***`,
+  winBlockedByRoma: (e, st) => `${pn(st, e.pub.player)} has ${e.pub.prestige} Prestige — the win target — but "Requires Roma to be Conquered" is on and they have not conquered Roma, so the game goes on (12.o).`,
   merchantBonus: (e, st) => `${pn(st, e.pub.player)}: Merchant Bonus, ${e.pub.roads} Roads reaching Roma, +${e.pub.gold} Gold (22.b).`,
   merchantBonusBlocked: (e, st) => `${pn(st, e.pub.player)} gets no Merchant Bonus this turn: Bandits on the Road! (18.ae).`,
   forcedMarchPlayed: (e, st) => e.pub.asSecondCard ? `${pn(st, e.pub.player)} plays Forced March! as the 2nd card this turn: 3 actions this turn instead of 2 (18.ad).` : `${pn(st, e.pub.player)} plays Forced March!: 3 actions this turn instead of 2, and 1 extra non-battle card play (18.ad).`,

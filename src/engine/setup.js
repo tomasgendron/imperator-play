@@ -158,6 +158,7 @@ export function createGame(data, { seed, players, options = {} }) {
   check(['random', 'pick'].includes(mode), 'BAD_OPTION', 'startProvinceMode must be "random" or "pick" (15.i, 21.h: no general-based starts).');
   if (options.map !== undefined) check(options.map === (data.mapId ?? 'small1'), 'BAD_OPTION', `options.map "${options.map}" does not match the rules data (map "${data.mapId ?? 'small1'}").`);
   state.config.startProvinceMode = mode; state.config.allowCloseStarts = !!options.allowCloseStarts; state.config.hideHandDefault = !!options.hideHand;
+  state.config.requiresRoma = !!options.requiresRoma;   // v32.6 (12.o): "Requires Roma to be Conquered" — a setup-time choice, carried in the save and to guests
   state.config.rewardMode = options.rerandomRewards ? 'random' : data.rules.rewardMode;
   if (options.rerandomRewards) {   // Q5: keeps the 7 Troop / 5 Gold split, every province gets a random reward
     const ids = data.provinces.filter(p => p.kind !== 'roma').map(p => p.id);

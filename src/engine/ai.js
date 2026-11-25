@@ -259,7 +259,7 @@ function attackValue(state, data, pid, action, base, cfg) {
   const gainP = action.target === 'roma' ? data.rules.prestige.roma : action.target === 'carthage' ? data.rules.prestige.carthage : data.rules.prestige.conquest;
   // Close to winning: hold the troops, unless this battle would win the game or a rival who is level or ahead is the target.
   if (selfClose) {
-    const clinch = meP.prestige + gainP >= data.rules.winPrestige;
+    const clinch = meP.prestige + gainP >= data.rules.winPrestige && (!state.config?.requiresRoma || meP.conqueredRoma || action.target === 'roma');   // v32.6 (12.o): a non-Roma attack does not clinch the win while the Roma gate is unmet; conquering Roma itself satisfies it
     const rivalAhead = threat && playerOf(state, t.owner).prestige >= meP.prestige;
     if (!clinch && !rivalAhead) return -Infinity;
   }
@@ -268,6 +268,7 @@ function attackValue(state, data, pid, action, base, cfg) {
   if (!s2 || !s2.battle) return -Infinity;
   const d = t.owner === null && action.target !== 'roma' ? (t.native.present ?? 0) : t.troops;
   let gain = gainP * W.prestige + W.province + W.bonusTroop;
+  if (action.target === 'roma' && state.config?.requiresRoma && !meP.conqueredRoma) gain += 2 * W.prestige;   // v32.6 (12.o): with the gate on, Roma is the key to winning, not just +3 Prestige
   if (t.owner) gain += 0.7 * (W.prestige * data.rules.prestige.loss + W.province + d * W.troop) / Math.max(1, state.players.filter(p => !p.out && p.id !== pid).length);
   if (earning) gain += cfg.threat?.attackBias ?? 180;
   else if (threat) gain += (cfg.threat?.attackBias ?? 180) * 0.35;

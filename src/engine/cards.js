@@ -459,6 +459,7 @@ TURN_PLAYS.bandits_on_the_road = {
     const { state } = ctx; const pl = mustPlayer(state, pid); const victim = mustPlayer(state, plan.victim);
     pl.gold += plan.gold;
     victim.noMerchantBonus = true;
+    (victim.banditsLosses ??= []).push({ gold: plan.gold, thief: pid, turn: state.turn.number });   // v32.6: the Roads popup's history of Gold stolen from this player
     emit(ctx, 'banditsPlayed', { actor: pid, rule: '18.ae', pub: { player: pid, victim: plan.victim, gold: plan.gold } });
   },
 };
@@ -479,6 +480,7 @@ TURN_PLAYS.spy_in_the_tent = {
     const [stolen] = pool.splice(int(state.rng, pool.length) - 1, 1);
     victim.hand.splice(victim.hand.findIndex(c => c.uid === stolen.uid), 1);
     thief.hand.push(stolen);
+    (victim.stolenCards ??= []).push({ def: state.cards[stolen.uid].def, thief: pid, turn: state.turn.number });   // v32.6: the Cards popup's list of cards stolen from this player
     emit(ctx, 'spyPlayed', { actor: pid, rule: '18.af', pub: { player: pid, victim: plan.victim, def: state.cards[stolen.uid].def } });
   },
 };

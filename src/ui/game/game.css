@@ -104,6 +104,7 @@ h1,h2,h3,h4{margin:0}
 .gcard .oldtext{position:absolute;left:0;right:0;bottom:0;background:rgba(138,31,34,.88);color:#fff;font-size:.6em;text-align:center;padding:1px 2px}
 .pstats{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;font-size:.95em;overflow:hidden}
 .prest .lbl{display:flex;justify-content:space-between;font-weight:700}
+.prest .romaneed{font-size:11px;font-weight:700;color:#8a6d1b;background:#fff3c4;border:1px solid #d9b64a;border-radius:3px;padding:1px 4px;margin:2px 0;text-align:center}
 .pips{display:grid;grid-template-columns:repeat(8,1fr);gap:2px}
 .pip{height:.9em;border-radius:3px;background:#e6dec7;border:1px solid #cfc4a6;position:relative}
 .pip.on{background:var(--pc);border-color:rgba(0,0,0,.25)}
@@ -111,6 +112,15 @@ h1,h2,h3,h4{margin:0}
 .pip.win::after{content:"\2605";position:absolute;inset:0;font-size:.7em;line-height:1.3em;text-align:center;color:var(--gold2)}
 .res{display:grid;grid-template-columns:1fr 1fr;gap:3px}
 .res div{background:var(--parch);border:1px solid var(--line);border-radius:5px;padding:1px 4px;font-size:.86em;gap:2px;display:flex;justify-content:space-between;gap:4px}
+.res button.statbtn{background:var(--parch);border:1px solid var(--line);border-radius:5px;padding:1px 4px;font:inherit;font-size:.86em;color:inherit;cursor:pointer;display:flex;justify-content:space-between;gap:4px;text-align:left}   /* v32.6: the Cards and Roads stats are buttons (stolen-cards list, Merchant Bonus + Bandits history) */
+.res button.statbtn:hover{outline:2px solid var(--gold2)}
+.res button.statbtn span:first-child{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.res button.statbtn b{flex:none}
+.res .stolen-n{color:#a33;font-size:.8em;font-weight:700;flex:none}
+.stolenlist{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.stolenrow{display:flex;align-items:center;gap:8px}
+.stolenrow img{height:40px;border-radius:4px}
+.stolen-sec h3{margin:4px 0 0}
 .res div>*{min-width:0}   /* v31.29: a cell's label/number may shrink inside its cell, never push out of it */
 .res div span:first-child{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .res div b{flex:none}

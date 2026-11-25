@@ -8,7 +8,7 @@
 import { loadGameData, datasetFor } from '../ui/loadData.js';
 import { resolveAsset } from '../ui/assets.js';
 import { setupChoices, checkSetup, current } from '../ui/consoleModel.js';
-import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, shipSegments, roadNetwork, goldPrestige, shipBuyProvinces, sellGold, aiDifficultyLabel } from '../engine/index.js';
+import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, shipSegments, roadNetwork, merchantBonusFor, goldPrestige, shipBuyProvinces, sellGold, aiDifficultyLabel } from '../engine/index.js';
 import * as G from '../ui/game/model.js';
 import { createSound } from '../ui/game/sound.js';
 import { createController } from '../ui/core/controller.js';
@@ -185,9 +185,22 @@ const mapWanted = () => mapPick ?? autoMap(seats.length);
 // A custom pick is kept when the map changes — only the *default* follows the map — and it is the host's choice for an
 // online game; a loaded save plays at its own recorded target instead (G.saveWinPrestige).
 let winPick = null;
+let romaReq = false;   // v32.6 (12.o): the start screen's "Requires Roma to be Conquered" checkbox; the host's choice for an online game, like the win target
 const mapDefaultWin = id => datasets[id]?.rules.winPrestige ?? 8;
 const winTarget = () => winPick ?? mapDefaultWin(data.mapId);
 const winTargetFor = id => winPick ?? mapDefaultWin(id);
+
+// v32.6: elapsed game time, in minutes, shown in the top summary. Kept in localStorage, keyed by the game seed, so a reload
+// or a rejoin keeps counting (the seed is unique per game). Old saves (no record yet) start at 0. UI-only: the engine never sees it.
+const elapsedKey = () => `imperator.elapsed.${st()?.seed ?? seed}`;
+const elapsedRec = () => { try { return JSON.parse(localStorage.getItem(elapsedKey()) ?? 'null'); } catch { return null; } };
+function elapsedStart() { const rec = elapsedRec() ?? { accum: 0, since: null }; if (!rec.since) { rec.since = Date.now(); try { localStorage.setItem(elapsedKey(), JSON.stringify(rec)); } catch { /* */ } } }
+function elapsedStop() { const rec = elapsedRec(); if (rec?.since) { rec.accum += Date.now() - rec.since; rec.since = null; try { localStorage.setItem(elapsedKey(), JSON.stringify(rec)); } catch { /* */ } } }
+function elapsedMinutes() { const rec = elapsedRec(); if (!rec) return 0; return Math.floor(((rec.accum ?? 0) + (rec.since ? Date.now() - rec.since : 0)) / 60000); }
+let elapsedTimer = null;
+/** The header line, shared by render() and the 30-second elapsed tick (which must not re-render the whole screen and disturb open sheets). */
+const topInfoText = s => `${s.phase === 'setup' ? 'Setup' : s.phase === 'finished' ? 'Game over' : `Turn ${s.turn.number}`}${s.phase === 'turn' || s.phase === 'finished' ? ` · ${elapsedMinutes()} min` : ''} · ${isHost() ? '🌐 ' + C.NET.code : C.uiLabel.split(' · ')[0]}${C.S.test ? ` · 🧪 TEST · seed ${C.S.seed.split('#')[0]}` : ''}`;   // v31.33: a test game is never confused with a real one; v32.6: elapsed game time in minutes
+function elapsedTick() { const t = $('#topInfo'); if (!t || !C.S) return; const s = st(); if (s) t.textContent = topInfoText(s); }
 /** Plays/draws on dataset `d`. Returns true when the dataset changed. */
 function setData(d) {
   if (!d || data === d) return false;
@@ -210,6 +223,7 @@ function mapGrpHtml() {
 function winGrpHtml() {
   const opts = Array.from({ length: 13 }, (_, k) => k + 8).map(n => `<option value="${n}" ${winTarget() === n ? 'selected' : ''}>${n}</option>`).join('');
   return `<div class="grp" id="winGrp"><h3>Prestige to win</h3><label class="fld">First to <select id="mWin" aria-label="Prestige needed to win">${opts}</select> Prestige wins</label>
+    <label class="fld" title="Hard mode: nobody can win without conquering Roma first (12.o)"><input type="checkbox" id="mRomaReq" ${romaReq ? 'checked' : ''}> Requires Roma to be Conquered</label>
     <p class="note" style="margin:6px 2px 0">Applies to everyone in the game — human, AI and online seats.${winPick === null ? ` Default for this map is ${mapDefaultWin(data.mapId)}.` : ' Your pick is kept when you change maps.'}</p></div>`;
 }
 
@@ -285,6 +299,7 @@ function renderStart() {
   $$('[data-mode]', el).forEach(b => b.onclick = () => { startMode = b.dataset.mode; renderStart(); });
   $$('[data-map]', el).forEach(b => b.onclick = () => { if (b.dataset.map === data.mapId) return; mapPick = b.dataset.map; SND.play('button_click'); renderStart(); });
   const mw = $('#mWin'); if (mw) mw.onchange = () => { winPick = +mw.value; SND.play('button_click'); renderStart(); };   // v31.39: adjustable Prestige to win (8–20)
+  const mq = $('#mRomaReq'); if (mq) mq.onchange = () => { romaReq = mq.checked; SND.play('button_click'); };   // v32.6 (12.o): "Requires Roma to be Conquered" — no re-render needed, the checkbox keeps its own state
   $$('[data-deck]', el).forEach(b => b.onclick = () => openDeck(b.dataset.deck));
   if ($('#mAdv')) $('#mAdv').onclick = () => { advOpen = !advOpen; renderStart(); };
   const sd = $('#mSeed'); if (sd) sd.oninput = () => { seed = sd.value; };
@@ -423,7 +438,7 @@ function startGame() {
   if (host && !NETH.readiness(seats).ok) { SND.play('error_denied'); toast(NETH.readiness(seats).why); renderStart(); return; }
   // v30.4 (as the desktop's seedNow): an online game's seed has the room's secret salt, so a guest cannot replay the dice
   setMap(data.mapId, winTarget());   // v31.39: the session is built on the dataset with the chosen win target, so config.winPrestige records it
-  try { C.S = G.newSession(data, { seed: (seed.trim() || 'game') + (host ? '#' + C.NET.salt : ''), mode: startMode, seats: engineSeats() }); }
+  try { C.S = G.newSession(data, { seed: (seed.trim() || 'game') + (host ? '#' + C.NET.salt : ''), mode: startMode, seats: engineSeats(), requiresRoma: romaReq }); }
   catch (e) { $('#mErr').textContent = e.message; return; }
   if (host) NETH.started(0);
   SND.play('deck_shuffle'); enterGame(true);
@@ -434,6 +449,7 @@ const testHost = () => ({
   dataForMap: id => datasetFor(id, winTargetFor(id)) ?? data,   // v31.39: a test game plays at the start screen's win target (or the map default)
   mapIds: Object.keys(datasets ?? {}),
   mapId: data.mapId,
+  requiresRoma: () => romaReq,   // v32.6 (12.o): a test game inherits the start screen's Roma requirement, like the win target
   img: id => img(id),
   toast: m => toast(m),
   sound: id => SND.play(id),
@@ -576,8 +592,9 @@ function enterGame(fresh) {
   requestAnimationFrame(() => { MV.start(0.45, 0.5); });
   $('#maphint').hidden = !fresh; if (fresh) setTimeout(() => { $('#maphint').hidden = true; }, 4000);
   autosave(); render(); schedule(); guard();
+  elapsedStart(); if (elapsedTimer) clearInterval(elapsedTimer); elapsedTimer = setInterval(elapsedTick, 30000);   // v32.6: keep the elapsed minutes in the top summary ticking while the game runs
 }
-function toStart() { unguard(); clearTimeout(C.aiTimer); if (C.NET) leaveNet(); C.S = null; seed = freshSeed();   // v31.11: every return to setup starts a fresh game, so roll a fresh seed — a leftover seed silently replayed the same game. A seed typed afterwards still sticks.
+function toStart() { elapsedStop(); if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; } unguard(); clearTimeout(C.aiTimer); if (C.NET) leaveNet(); C.S = null; seed = freshSeed();   // v31.11: every return to setup starts a fresh game, so roll a fresh seed — a leftover seed silently replayed the same game. A seed typed afterwards still sticks.
   renderStart(); renderNetBar(); }
 // ------------------------------------------------------------------ v30.5 (Q181, Vidi via Boardicca): leave-protection while a game runs
 // The browser's back button and the iPhone's swipe-back stay on the game (a history entry this page pushed) and ask "Leave this game?"
@@ -621,7 +638,7 @@ function render() {
   document.body.dataset.frame = topFrame(s)?.kind ?? (s.phase === 'turn' ? 'free' : s.phase);
   document.body.dataset.viewer = C.viewer ?? '';
   document.body.dataset.humanTurn = legal.length ? '1' : '';
-  $('#topInfo').textContent = `${s.phase === 'setup' ? 'Setup' : s.phase === 'finished' ? 'Game over' : `Turn ${s.turn.number}`} · ${isHost() ? '🌐 ' + C.NET.code : C.uiLabel.split(' · ')[0]}${C.S.test ? ` · 🧪 TEST · seed ${C.S.seed.split('#')[0]}` : ''}`;   // v31.33: a test game is never confused with a real one
+  $('#topInfo').textContent = topInfoText(s);
   const bt = $('#bTestSetup'); if (bt) bt.hidden = !C.S.test;   // v31.33: the tweak panel's button, only in a test game
   $('#dieVal').textContent = lastRoll ? lastRoll.value : '–';
   const t0 = performance.now();
@@ -1162,7 +1179,7 @@ function openCards() {
       <div class="btns">${plays.length ? `<button class="btn gold" data-play="${c.uid}">${plays.length === 1 ? 'Play it' : `Play: choose (${plays.length})`}</button>` : ''}${sell ? `<button class="btn" data-sell="${c.uid}">Sell +${sellGold(s, data, whoActs(s), c.uid)} Gold</button>` : ''}</div></div></div>`;
   };
   openSheet('cards', `<div class="sh-head"><h2>${p ? `${esc(p.name)}'s hand` : 'Hands'}<small>${p ? `Only ${esc(p.name)} may look · ${h.cards.length} card(s)` : 'AI hands are always hidden'}</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
-    <div class="sh-body">${G.cardSlotNote(s) ? `<p class="note" id="extraPlayNote"><b>${esc(G.cardSlotNote(s))}</b></p>` : ''}${h.cards.length ? h.cards.map(c => row(c)).join('') : '<p class="note">No cards in hand.</p>'}${h.saved.map(c => row(c, 'saved: ')).join('')}${h.inPlay.map(c => row(c, 'in play: ')).join('')}
+    <div class="sh-body">${G.cardSlotNote(s) ? `<p class="note" id="extraPlayNote"><b>${esc(G.cardSlotNote(s))}</b></p>` : ''}${h.cards.length ? h.cards.map(c => row(c)).join('') : '<p class="note">No cards in hand.</p>'}${h.saved.map(c => row(c, 'saved: ')).join('')}${h.inPlay.map(c => row(c, 'in play: ')).join('')}${p ? stolenSection(p) : ''}
     <p class="note">${s.players.filter(x => x.id !== h.owner).map(x => `${esc(x.name)}: ${G.handCount(x)} card(s), hidden`).join(' · ')}</p></div>`);
   $$('#sheet .cardrow').forEach(row => row.onclick = ev => {
     if (ev.target.closest('button')) return;
@@ -1570,14 +1587,30 @@ function genActs(pid) {
     B('end', '✓', 'End turn', free && c.end.length, () => act(c.end[0]), no(f ? 'Finish the current step first.' : 'You cannot end the turn now.')),
   ];
 }
+/** v32.6: the "Cards that were stolen" section — every card Spy in the Tent! stole from this player (18.af), not just the most recent. */
+function stolenSection(p) {
+  const stolen = (p.stolenCards ?? []);
+  return `<div class="sec">Cards stolen from ${esc(p.name)}</div>${stolen.length ? stolen.map(r => `<div class="cardrow"><img src="${attr(img('card.' + r.def))}" alt=""><div class="t"><b>${esc(data.cardDefsById[r.def]?.name ?? r.def)}</b><div class="note" style="margin-top:4px">stolen by ${esc(pn(r.thief))} · turn ${r.turn}</div></div></div>`).join('') : '<p class="note">No card has been stolen from them yet.</p>'}`;
+}
+/** v32.6: the Merchant Bonus + Bandits history section — the desktop's Roads popup, inline in the player sheet (22.b, 18.ae). */
+function merchantSection(s, p) {
+  const roads = roadNetwork(s, data, p.id).roads;
+  const bonus = merchantBonusFor(s, data, p.id, roads);
+  const losses = (p.banditsLosses ?? []);
+  const lostThisTurn = losses.filter(l => l.turn === s.turn.number).reduce((a, l) => a + l.gold, 0);
+  return `<div class="sec">Merchant Bonus</div>
+    <p class="note">${roads} Road${roads === 1 ? '' : 's'} reaching Roma — expected Merchant Bonus <b>+${bonus} Gold</b> a turn (22.b)${p.general?.id === 'augustus' && bonus > 0 ? ' (includes Augustus +1)' : ''}.${p.noMerchantBonus ? ' <b>No Merchant Bonus next turn</b> — Bandits on the Road! was played on them.' : ''}${lostThisTurn ? ` <b>Lost ${lostThisTurn} Gold to Bandits on the Road! this turn.</b>` : ''}</p>
+    ${losses.length ? losses.map(l => `<p class="note"><b>${l.gold} Gold</b> — stolen by ${esc(pn(l.thief))} · turn ${l.turn}${l.turn === s.turn.number ? ' · <b>this turn</b>' : ''}</p>`).join('') : '<p class="note">No Gold has been stolen by Bandits on the Road! yet.</p>'}`;
+}
 function openPlayer(pid, refresh = false) {
   const s = st(); const p = G.playerById(s, pid); const g = p.general ? G.generalView(data, p.general.id) : null;
   const gate = gateFor(pid); const btns = s.phase === 'finished' ? [] : genActs(pid);
   const html = `<div class="sh-head"><span class="sw" style="--c:var(--${col(pid)});width:16px;height:16px"></span><h2>${esc(p.name)}<small>${p.controller === 'ai' ? 'AI · ' + aiDifficultyLabel(p.difficulty) : 'Human'} · ${p.gold} Gold · ${p.prestige}/${data.rules.winPrestige} Prestige · ${ownedBy(s, pid).length} provinces · ${totalTroops(s, pid)} troops · ${G.handCount(p)} cards</small></h2><div class="spacer"></div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="sh-body" id="genSheet" data-pid="${attr(pid)}" data-live="${gate.live ? '1' : ''}">
+      ${s.config?.requiresRoma && p.prestige + goldPrestige(p.gold, data) >= data.rules.winPrestige && !p.conqueredRoma ? `<p class="note" style="color:#8a6d1b">🏛 At the win target, but Roma has not been conquered — the game goes on (12.o).</p>` : ''}
       ${btns.length ? `<div class="sec">Roll, draw and actions${gate.live ? '' : ''}</div>${gateNote(gate)}<div class="gvacts" id="gvActs">${btns.map((b, i) => `<button class="gvbtn${b.on && gate.live ? ' live' : ''}${b.k === 'roll' || b.k === 'draw' || b.k === 'answer' ? ' gold' : ''}" id="gv-${b.k}" data-gi="${i}"${b.on && gate.live ? '' : ` disabled title="${attr(b.why)}"`}><span class="ic">${b.ic}</span><span>${esc(b.t)}</span></button>`).join('')}</div>` : ''}
       ${g ? `<div class="cardrow"><img src="${attr(img('general.' + g.id))}" alt=""><div class="t"><b>${esc(g.name)} · ${esc(g.title)}</b>${esc(g.summary)}${p.general?.at ? `<div class="note">Now in ${esc(prov(p.general.at))}.</div>` : ''}</div></div>
-      ${g.perks.map(x => `<div class="gvperk"><h3>${esc(x.name)}</h3><div class="note" style="margin:0 0 4px">When: ${esc(x.when)}</div><ul>${x.detail.map(l => `<li>${esc(l.text)} <small>(${esc(l.rules)})</small></li>`).join('')}</ul></div>`).join('')}` : '<p class="note">No general yet.</p>'}</div>`;
+      ${g.perks.map(x => `<div class="gvperk"><h3>${esc(x.name)}</h3><div class="note" style="margin:0 0 4px">When: ${esc(x.when)}</div><ul>${x.detail.map(l => `<li>${esc(l.text)} <small>(${esc(l.rules)})</small></li>`).join('')}</ul></div>`).join('')}` : '<p class="note">No general yet.</p>'}${merchantSection(s, p)}${stolenSection(p)}</div>`;
   if (refresh) { $('#sheet').innerHTML = '<div class="handle"><i></i></div>' + html; $$('#sheet [data-close]').forEach(b => b.onclick = () => closeSheet()); }
   else openSheet('player', html);
   $$('#gvActs [data-gi]').forEach(el => el.onclick = () => { const b = btns[+el.dataset.gi]; if (!b?.on || !gateFor(pid).live) { SND.play('error_denied'); toast(b?.why || gateFor(pid).why); return; } SND.play('button_click'); if (!['roll', 'draw', 'end'].includes(b.k)) closeSheet(true); b.go(); });
@@ -1927,6 +1960,7 @@ async function playEvents(events, before = null) {
       }
       case 'merchantBonus': toast(`${pn(e.pub.player)}: Merchant Bonus, ${e.pub.roads} Roads reaching Roma, +${e.pub.gold} Gold`); break;
       case 'goldPrestige': if (e.pub.goldPrestige) toast(`${pn(e.pub.player)}: Gold Prestige ${e.pub.goldPrestige} from ${e.pub.gold} Gold`); break;
+      case 'winBlockedByRoma': toast(`${pn(e.pub.player)} is at ${e.pub.prestige} Prestige but has not conquered Roma — the game goes on`); break;
       case 'generalSummoned': {
         if (bv) {
           const name = data.generalsById[e.pub.general]?.name ?? 'General';

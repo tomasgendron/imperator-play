@@ -1,5 +1,14 @@
 [
  {
+  "version": "32.4",
+  "date": "2026-11-24",
+  "title": "AI will not flee a close win, and Coin Master pays +1 Gold per unused action",
+  "bullets": [
+   "An AI defender will no longer flee when the attacker is within 3 Prestige of winning (board Prestige plus Gold Prestige). That stops the AI handing a close rival a free province and the Prestige that goes with it.",
+   "Coin Master (Unused Actions): you now get +1 bonus Gold for each unused action, on top of the normal unused-action Gold. 1 unused action pays 2 Gold in all, 2 unused pay 4, and 3 unused after Forced March! pay 6. (It used to be a flat +1 if you had any unused action.)"
+  ]
+ },
+ {
   "version": "32.3",
   "date": "2026-11-24",
   "title": "Forced March! always lets you play 2 cards, and clearer rules",

@@ -345,9 +345,16 @@ export function chooseAction(state, data, opts = {}) {
         // 0.30 continue bar, because fleeing concedes the province and the Prestige outright.
         const flee = byType('FLEE_BATTLE')[0];
         if (flee) {
-          const horn0 = byType('CALL_REINFORCEMENTS');
-          const hornBest = horn0.length ? Math.max(...horn0.map(x => x.action.troops)) : 0;
-          if (defenderHoldOdds(state, data, b, me, hornBest) < (cfg.attack?.fleeBar ?? 0.15)) return flee.action;
+          // v32.4 (17.aa, Vidi 2026-11-24): never flee when the attacker is within 3 Prestige of the win
+          // (prestigeThreatLine = win − 3), counting Gold Prestige (22.f). Background: an AI that flees
+          // near a close win hands the attacker a free conquest and the Prestige.
+          const att = playerOf(state, b.att.player);
+          const toward = att.prestige + S.goldPrestige(att.gold, data);
+          if (toward < prestigeThreatLine(data, cfg)) {
+            const horn0 = byType('CALL_REINFORCEMENTS');
+            const hornBest = horn0.length ? Math.max(...horn0.map(x => x.action.troops)) : 0;
+            if (defenderHoldOdds(state, data, b, me, hornBest) < (cfg.attack?.fleeBar ?? 0.15)) return flee.action;
+          }
         }
         const horn = byType('CALL_REINFORCEMENTS');
         if (!horn.length) return byType('PASS')[0]?.action ?? legal[0].action;
@@ -383,7 +390,7 @@ export function chooseAction(state, data, opts = {}) {
   const scored = [];
   for (const d of legal) {
     let a = d.action; let v;
-    // the Gold an action gives up from the unused-action bonus (17.o); v31.37 (18.ab): with Coin Master (Unused Actions) the last unused action is worth 2
+    // the Gold an action gives up from the unused-action bonus (17.o); v32.4 (18.ab): with Coin Master (Unused Actions) each unused action is worth 2
     const cost = ACTION_COST.has(d.type) && inActions ? -(S.unusedGold(state, data, me).gold - S.unusedGold(state, data, me, state.turn.actionsUsed + 1).gold) * W.gold : ACTION_COST.has(d.type) ? -data.rules.unusedActionGold * W.gold : 0;
     switch (d.type) {
       case 'END_TURN': v = 0.5; break;

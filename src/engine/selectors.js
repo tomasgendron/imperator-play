@@ -66,13 +66,14 @@ export function sellGold(state, data, pid, uid) {
   const base = data.rules.sellCard.gold;
   return base + (state.cards[uid]?.def !== 'coin_master_selling' && holdsInHand(state, pid, 'coin_master_selling') ? 1 : 0);
 }
-/** v31.37 (17.o, 18.ab): the unused-action Gold for ending the Actions step with `used` actions taken — +1 per unused action, and
- * +1 once more while holding Coin Master (Unused Actions) if any action is unused (0 taken = 3, 1 = 2, 2 = 0; v31.40 (18.ad):
- * with a played Forced March! the cap is 3, so 2 taken leaves 1 unused and pays +1, +1 more with the Coin Master). */
+/** v31.37 / v32.4 (17.o, 18.ab): unused-action Gold for ending the Actions step with `used` actions taken —
+ * +1 per unused action (17.o), and while holding Coin Master (Unused Actions) +1 bonus Gold per unused action on top
+ * (Vidi 2026-11-24; was a flat +1 if any action was unused). So 1 unused = 2, 2 unused = 4, and a Forced March! 3rd
+ * unused action (18.ad) counts the same way: 3 unused = 6. */
 export function unusedGold(state, data, pid, used = state.turn.actionsUsed) {
   const unused = Math.max(0, effectiveActionsPerTurn(state, data) - used);
   if (!unused) return { unused, gold: 0, coinMaster: 0 };
-  const cm = holdsInHand(state, pid, 'coin_master_unused') ? 1 : 0;
+  const cm = holdsInHand(state, pid, 'coin_master_unused') ? unused : 0;
   return { unused, gold: unused * data.rules.unusedActionGold + cm, coinMaster: cm };
 }
 export const hasGarrisonCard = (state, pid) => state.players.find(x => x.id === pid)?.inPlay.some(c => state.cards[c.uid].def === 'garrison_requirement') ?? false;

@@ -214,8 +214,8 @@ export function legalActions(state, data) {
   } else if (state.phase === 'turn' && state.turn.step === 'actions') {
     const mine = S.provincesOf(state, who);
     const unused = Math.max(0, S.effectiveActionsPerTurn(state, data) - state.turn.actionsUsed);
-    const ug = S.unusedGold(state, data, who);   // v31.37 (18.ab): includes the Coin Master (Unused Actions) +1
-    add({ type: 'END_TURN' }, unused ? `End Turn (+${ug.gold} Gold for ${unused} unused action${unused > 1 ? 's' : ''}${ug.coinMaster ? ', Coin Master +1' : ''})` : 'End Turn');
+    const ug = S.unusedGold(state, data, who);   // v31.37 / v32.4 (18.ab): includes Coin Master +1 per unused action
+    add({ type: 'END_TURN' }, unused ? `End Turn (+${ug.gold} Gold for ${unused} unused action${unused > 1 ? 's' : ''}${ug.coinMaster ? `, Coin Master +${ug.coinMaster}` : ''})` : 'End Turn');
     // cheap pruning before the dry runs (M3, for the M4 AI): every action below costs one of the actions (17.e; 3 with a played Forced March!, 18.ad) and the buys have
     // fixed Gold prices (data.rules.costs), so candidates that must fail are not generated at all. The dry run still has the last word.
     const me = state.players.find(p => p.id === who); const gold = me.gold; const c = data.rules.costs;

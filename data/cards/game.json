@@ -440,7 +440,7 @@
     "18.a"
    ],
    "onDraw": "keep",
-   "text": "Hold it as a lasting bonus; never played. At the end of your Actions, +1 Gold once if you have any unused action (0 actions taken = 3 Gold, 1 = 2 Gold, 2 = nothing).",
+   "text": "Hold it as a lasting bonus; never played. At the end of your Actions, +1 bonus Gold per unused action, on top of the normal unused-action Gold (1 unused = 2 Gold in all, 2 unused = 4, 3 unused after Forced March! = 6).",
    "art": {
     "front": "cards/game/coin_master_unused.png"
    },
@@ -448,8 +448,7 @@
     {
      "stat": "unusedActionGold",
      "delta": 1,
-     "appliesTo": "anyUnusedAction",
-     "oncePerTurn": true
+     "appliesTo": "perUnusedAction"
     }
    ]
   },

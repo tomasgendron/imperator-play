@@ -1,7 +1,7 @@
 // Pure model of the M5 game page: no DOM, so `node --test` drives exactly what the page shows and clicks.
 // The page keeps a console session (src/ui/consoleModel.js) and asks this module who looks at the screen, what a human may do
 // now (grouped for the phase bar, the map and the builder), what a card looks like, which sounds an event plays, and how a save file reads.
-import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, recallMoveTargets, fleeOptions, effectiveActionsPerTurn, canRevolt, isSmallEmpire, rewardNeed, cardSlotOpen, onlyExtraSlotLeft, forcedMarchAsSecondCard, AI_DIFFICULTIES } from '../../engine/index.js';
+import { legalActions, whoActs, topFrame, validateState, SCHEMA_VERSION, battlefieldImperatorCopies, redactEvents, minGarrison, cardBlock, attackBlock, attackOriginBlock, roadNetwork, shipSegments, goldPrestige, alliedRewardNeed, roadCost, shuffleIn, attForce, defForce, generalPerksActive, generalRecalled, generalMoveTargets, recallMoveTargets, fleeOptions, effectiveActionsPerTurn, canRevolt, isSmallEmpire, rewardNeed, cardSlotOpen, onlyExtraSlotLeft, forcedMarchAsSecondCard, AI_DIFFICULTIES } from '../../engine/index.js';
 import { newSession, play, aiToMove, aiMove, stateOf, current, formatEvent, describePrompt } from '../consoleModel.js';
 
 export { newSession, play, aiToMove, aiMove, stateOf, describePrompt };
@@ -329,7 +329,10 @@ export function backfillNewCards(state, data) {
   for (const deck of ['game', 'resource', 'displeased']) {
     const prefix = deck[0];
     for (const def of data.decks[deck]) {
-      const missing = def.copies - (have[def.id] ?? 0);
+      // v32.7 (18.w): a 3-player save from before the 3rd copy gains it here, shuffled into the draw pile — so a game
+      // in progress is unblocked by reloading it (the autosave loads through readSave below).
+      const want = def.id === 'battlefield_imperator' ? battlefieldImperatorCopies(data, state.players.length) : def.copies;
+      const missing = want - (have[def.id] ?? 0);
       for (let i = 0; i < missing; i++) {
         const uid = prefix + String((nextNum[prefix] = (nextNum[prefix] ?? 0) + 1)).padStart(2, '0');
         state.cards[uid] = { def: def.id, deck };

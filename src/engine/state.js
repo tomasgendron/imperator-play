@@ -50,6 +50,12 @@ export function stateHash(state) {
 /** v31 (21.a): the map a state is on; states and saves from before v31 have none and are Small Map 1. */
 export const mapOfState = state => state?.config?.map ?? 'small1';
 
+/** v32.7 (18.w): Battlefield Imperator! copies in a game — one per player. The card def's `copies` (2) is the 2-player
+ *  count; a 3-player game holds a 3rd copy, so a rival hoarding the only copies can never lock the third player out
+ *  of Roma for good. Hold at most 1 each still applies (turn.js drawCard reshuffles a duplicate). */
+export const battlefieldImperatorCopies = (data, nPlayers) => Math.max(
+  data.decks.game.find(d => d.id === 'battlefield_imperator')?.copies ?? 2, nPlayers);
+
 export function createBlankState(data, { seed, players = [], gameId = 'g-' + seed } = {}) {
   const rng = createRng(seed);
   const cards = {};
@@ -57,15 +63,20 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
   let n = 0;
   for (const deck of ['game', 'resource', 'displeased']) {
     const prefix = deck[0];
-    for (const def of data.decks[deck]) for (let i = 0; i < def.copies; i++) {
-      const uid = prefix + String(++n).padStart(2, '0');
-      cards[uid] = { def: def.id, deck };
-      decks[deck].push(uid);
+    for (const def of data.decks[deck]) {
+      // v32.7 (18.w): one Battlefield Imperator! per player — see battlefieldImperatorCopies.
+      const copies = def.id === 'battlefield_imperator' ? battlefieldImperatorCopies(data, players.length) : def.copies;
+      for (let i = 0; i < copies; i++) {
+        const uid = prefix + String(++n).padStart(2, '0');
+        cards[uid] = { def: def.id, deck };
+        decks[deck].push(uid);
+      }
     }
   }
   for (const deck of Object.keys(decks)) decks[deck] = shuffle(rng, decks[deck]);
   // v31.30 (18.a): 3 Elephants! and both Sneak Attack from the Sea! cards are withheld until the Game deck has gone through
-  // once — cycle 1 starts with 38 cards (2 Elephants, no Sneak Attack; both Coin Masters are in from the start, v31.37). They sit aside in `withheld.game`, not drawable,
+  // once — cycle 1 starts with 38 cards (39 in a 3-player game, v32.7: the 3rd Battlefield Imperator! is in the deck)
+  // (2 Elephants, no Sneak Attack; both Coin Masters are in from the start, v31.37). They sit aside in `withheld.game`, not drawable,
   // and join the draw pile at the first reshuffle (core.js drawTop). Taken out AFTER the shuffle, so the remaining 36 keep
   // their shuffled order and no extra RNG is drawn: nothing else about setup changes.
   const withheld = { game: [] };
@@ -195,7 +206,10 @@ export function validateState(state, data, opts = {}) {
   }
   // cards: conserved across decks + hands + inPlay + savedResources
   const uids = Object.keys(state.cards);
-  const expected = data.rules.deckSizes.game + data.rules.deckSizes.resource + data.rules.deckSizes.displeased;
+  const baseBattlefield = data.decks.game.find(d => d.id === 'battlefield_imperator')?.copies ?? 2;
+  // v32.7 (18.w): a 3-player game holds a 3rd Battlefield Imperator! — one per player — so the registry is 75, not 74.
+  const expected = data.rules.deckSizes.game + data.rules.deckSizes.resource + data.rules.deckSizes.displeased
+    + Math.max(0, state.players.length - baseBattlefield);
   if (uids.length !== expected) err(`card registry has ${uids.length} cards, expected ${expected}`);
   const seen = new Map();
   const see = (uid, where) => { seen.set(uid, [...(seen.get(uid) || []), where]); };

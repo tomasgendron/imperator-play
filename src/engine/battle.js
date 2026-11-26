@@ -84,7 +84,7 @@ export function attackBlock(state, data, pid, from, target, opts = {}) {
     const c = pl.hand.find(x => state.cards[x.uid].def === data.rules.romaAttackNeedsCard);
     if (!c) return B('NEED_BATTLEFIELD_IMPERATOR', 'Attacking Roma needs a Battlefield Imperator card (12.h, 18.w).', '18.w');
     if (c.drawnOnTurn + data.rules.holdCardTurns > state.turn.number) return B('HOLD_A_TURN', 'The Battlefield Imperator must be held until the turn after it was drawn (18.w).', '18.w');
-    if (state.turn.nonBattleCardPlayed && !opts.sneak) return B('CARD_SLOT_USED', 'You already played your one non-battle card this turn (18.h).', '18.h');
+    if (!opts.sneak && !S.cardSlotOpen(state, data.rules.romaAttackNeedsCard)) return B('CARD_SLOT_USED', `You already played your one non-battle card this turn (18.h)${state.turn.forcedMarch ? `, and Forced March!'s extra play is used too (18.ad)` : ''}.`, '18.h');   // v32.7: the Imperator use IS a card play (18.w) — it takes the normal slot, or Forced March!'s extra play when that is open; only a closed slot blocks it
   }
   if (state.turn.actionsUsed >= S.effectiveActionsPerTurn(state, data)) return B('NO_ACTIONS_LEFT', `You have already used your ${S.effectiveActionsPerTurn(state, data)} actions this turn (17.e).`, '17.e');
   return null;
@@ -197,7 +197,11 @@ export function declareAttack(ctx, pid, a, opts = {}) {
   if (a.perk !== undefined && a.perk !== null) check(withGeneral && perksOn(state, pid, 'scipio') && a.perk === 'extraDie', 'BAD_PERK', a.perk === 'plusOne' ? "Scipio's +1 perk was removed (15.c, Vidi 2026-10-24): he only rolls an extra die." : 'Only Scipio, attacking with the army, has a perk to choose: extraDie (15.c).', '15.c');
   spendAction(ctx, 'attack');
   if (bfi) {
-    const i = pl.hand.findIndex(x => x.uid === bfi); pl.hand.splice(i, 1); toDiscard(state, bfi); state.turn.nonBattleCardPlayed = true;
+    const i = pl.hand.findIndex(x => x.uid === bfi); pl.hand.splice(i, 1); toDiscard(state, bfi);
+    // 18.w: the Imperator use IS the turn's card play — the normal slot, or Forced March!'s extra play (18.ad) when the normal
+    // slot is already used. Same bookkeeping as useCardSlot (cards.js); battle.js cannot import it (cards.js imports attackBlock from here).
+    if (!state.turn.nonBattleCardPlayed) state.turn.nonBattleCardPlayed = true;
+    else if (state.turn.forcedMarchExtra) { state.turn.forcedMarchExtra = false; state.turn.extraCardPlayed = true; }
     emit(ctx, 'cardPlayed', { actor: pid, rule: '18.w', pub: { player: pid, def: data.rules.romaAttackNeedsCard, uid: bfi, source: 'attackRoma' } });
   }
   changeTroops(ctx, a.from, -n);

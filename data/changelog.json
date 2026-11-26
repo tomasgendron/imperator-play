@@ -1,5 +1,15 @@
 [
  {
+  "version": "32.7",
+  "date": "2026-11-26",
+  "title": "One Battlefield Imperator per player",
+  "bullets": [
+   "Battlefield Imperator! now comes one per player: 2 copies in a 2-player game, 3 in a 3-player game — so no one can be locked out of Roma because rivals are holding the only copies. You can still hold at most one each.",
+   "A 3-player game already in progress gains the third copy when you reload it: it is shuffled into the Game Card draw pile.",
+   "Fixed: playing Forced March! no longer blocks attacking Roma with a Battlefield Imperator! — the attack counts as the extra card play."
+  ]
+ },
+ {
   "version": "32.6",
   "date": "2026-11-25",
   "title": "Elapsed time, a Roma hard mode, a stolen-cards list, and a Roads popup",

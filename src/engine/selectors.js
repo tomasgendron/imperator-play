@@ -9,7 +9,7 @@ export { effectiveActionsPerTurn };
  * card play. Never the extra: battle cards (Elephants!, Moral boost!: never in a turn slot anyway), Battlefield Imperator (a
  * battle-committed attack on Roma, 18.w), Sneak Attack from the Sea! (it launches a battle, 18.z) and Forced March! itself.
  */
-export const FORCED_MARCH_EXTRA_CARDS = Object.freeze(['revolt', 'assassin', 'bribe_the_ally', 'bandits_on_the_road', 'spy_in_the_tent', 'busy_little_bee']);
+export const FORCED_MARCH_EXTRA_CARDS = Object.freeze(['revolt', 'assassin', 'bribe_the_ally', 'bandits_on_the_road', 'spy_in_the_tent', 'busy_little_bee', 'battlefield_imperator']);   // v32.7 (18.w): attacking Roma with a Battlefield Imperator counts as the turn's one non-battle card, so it can be the extra play too
 /** Is the turn's card slot open for `def` right now: the normal one-card slot (18.h), or Forced March!'s extra play (18.ad)? */
 export const cardSlotOpen = (state, def) => !state.turn?.nonBattleCardPlayed || (!!state.turn?.forcedMarchExtra && FORCED_MARCH_EXTRA_CARDS.includes(def))
   || (def === 'forced_march' && forcedMarchAsSecondCard(state));

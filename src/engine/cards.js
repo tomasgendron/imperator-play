@@ -64,7 +64,15 @@ export const assassinKills = (state, data, pid) => Math.min(data.rules.assassin?
 export const banditTargets = (state, data, pid) => rivals(state, pid).map(id => ({ player: id, bonus: S.merchantBonusFor(state, data, id, S.roadNetwork(state, data, id).roads) })).filter(t => t.bonus > 0);
 /** Spy in the Tent! targets (18.af): rivals holding at least 1 Game Card in hand. Resource cards live in savedResources and
  * Displeased cards never sit in a hand, so the hand IS the Game Cards; the deck filter in apply is a safety net. */
-export const spyTargets = (state, data, pid) => rivals(state, pid).filter(id => playerOf(state, id).hand.some(c => state.cards[c.uid].deck === 'game'));
+/** Cards a Spy may steal from `victim` (18.af, v32.8): any Game card, except a max-1-held card the thief already holds —
+ * the same hold-at-most-1 rule the draw enforces (18.t, 18.w, 18.y) — so a Spy can never hand you a second
+ * Battlefield Imperator, Garrison Requirement or Horn of Titus Pullus. A victim whose only Game cards are thus
+ * excluded is not a target at all. */
+const spyStealable = (state, data, pid, victim) => playerOf(state, victim).hand.filter(c => {
+  const def = state.cards[c.uid].def;
+  return state.cards[c.uid].deck === 'game' && !(data.rules.uniqueHeldCards.includes(def) && S.holdsUnique(state, pid, def));
+});
+export const spyTargets = (state, data, pid) => rivals(state, pid).filter(id => spyStealable(state, data, pid, id).length);
 /** Bribe the Ally! targets (18.v, Q32): a province allied to a rival (never Carthage), with the Gold cost = its native count,
  * and never a province of a player with 2 or fewer provinces (small-empire protection, 18.v, v31.23). */
 export const bribeTargets = (state, data, pid) => Object.keys(state.provinces).sort().filter(id => {
@@ -475,13 +483,13 @@ TURN_PLAYS.spy_in_the_tent = {
     return { victim: a.targetPlayer };
   },
   apply(ctx, pid, plan) {
-    const { state } = ctx; const thief = mustPlayer(state, pid); const victim = mustPlayer(state, plan.victim);
-    const pool = victim.hand.filter(c => state.cards[c.uid].deck === 'game');
+    const { state, data } = ctx; const thief = mustPlayer(state, pid); const victim = mustPlayer(state, plan.victim);
+    const pool = spyStealable(state, data, pid, plan.victim);
     check(pool.length, 'NO_GAME_CARD', 'The victim holds no Game Card to steal (18.af).', '18.af');
     const [stolen] = pool.splice(int(state.rng, pool.length) - 1, 1);
     victim.hand.splice(victim.hand.findIndex(c => c.uid === stolen.uid), 1);
     thief.hand.push(stolen);
-    (victim.stolenCards ??= []).push({ def: state.cards[stolen.uid].def, thief: pid, turn: state.turn.number });   // v32.6: the Cards popup's list of cards stolen from this player
+    (victim.stolenCards ??= []).push({ def: state.cards[stolen.uid].def, thief: pid, turn: state.turn.number, source: 'spy' });   // v32.6: the Cards popup's list of cards lost from this player (v32.8: tax losses share the list, marked source 'tax')
     emit(ctx, 'spyPlayed', { actor: pid, rule: '18.af', pub: { player: pid, victim: plan.victim, def: state.cards[stolen.uid].def } });
   },
 };

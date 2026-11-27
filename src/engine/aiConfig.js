@@ -6,7 +6,7 @@ export const AI_CONFIG = Object.freeze({
     minWinRoma: 0.7,        // a higher bar for Roma (Walls on all sides, Ingrained Loyalty, 12.i, 12.j) ... (Q108, Vidi 2026-10-22: 70%, was 80%)
     minWinCarthage: 0.7,    // ... and for Carthage (Walls on all sides, 16.n) (Q108: 70%, was 75%)
     minWinRival: 0.6,       // a rival's province: the same 60% as natives (Q108: "keep 60% for everything else"; was 62%)
-    exposedOrigin: 0.08,    // + this when the attack leaves the origin under its minimum garrison (17.q) ...
+    exposedOrigin: 0.25,    // + this when the attack leaves the origin under its minimum garrison (17.q) — v32.8 (#7): was 0.08, too weak to stop the drain (9–18 attacks/game left the origin at 1 troop); a rival attack now needs ~85% odds to drain, so the AI only empties a province for a near-certain win
     revoltRisk: 0.05,       // + this when it leaves a conquered origin open to a revolt (under 10 troops, 2+ conquered, 17.c, 19.h) ...
     counterAttack: 0.08,    // + this when a rival army next door (with a Road, 19.b) would then outnumber what stays behind
     maxBar: 0.92,           // the bar never goes above this

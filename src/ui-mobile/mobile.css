@@ -88,7 +88,7 @@ button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:poin
 .tok.neutral{--c:#5b5148}
 .tok.ally{border:3px double #f3e7c4}
 .tok .nn{position:absolute;left:-7px;top:-7px;min-width:19px;height:19px;border-radius:10px;background:#1b1512;color:var(--gold2);border:1px solid var(--gold);font-size:10.5px;display:flex;align-items:center;justify-content:center;padding:0 3px}
-.tok .natb{position:absolute;right:-8px;bottom:-6px;min-width:19px;height:19px;border-radius:10px;background:var(--native);color:#fff;border:1.5px solid #f3e7c4;font-size:10.5px;display:flex;align-items:center;justify-content:center;padding:0 3px}
+.tok .minb{position:absolute;right:-8px;bottom:-6px;min-width:19px;height:19px;border-radius:10px;background:var(--gold);color:#2b211b;border:1.5px solid #f3e7c4;font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 3px}
 .tok .gen{position:absolute;right:-12px;top:-12px;width:24px;height:24px;border-radius:50%;border:2px solid var(--gold2);background:#000 center/cover;box-shadow:0 1px 4px #000}
 .tok .lowb{position:absolute;right:-14px;top:11px;font-size:12px;line-height:1;color:#ffb347;filter:drop-shadow(0 1px 1px #000);pointer-events:none}   /* v32.1 (Q233): under-garrisoned icon */
 .tok .wall{position:absolute;left:-9px;bottom:-5px;font-size:12px;filter:drop-shadow(0 1px 1px #000)}

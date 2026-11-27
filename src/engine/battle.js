@@ -408,6 +408,10 @@ define('SUMMON_GENERAL', {
     const from = pl.general.at;
     pl.general.at = opt.dest;
     b[opt.side].general = true;
+    // v32.8 (15.k): a summoned general brings his battle-start perks with him — Caesar's flee (15.b) and
+    // Germanicus's Disciplined Advance (15.h) apply now, not only when he was there at the declaration.
+    applyCaesarFlee(ctx, b, opt.side);
+    applyGermanicusWall(ctx, b);
     if (opt.side === 'att' && !b.rounds.length && perksOn(state, a.playerId, 'scipio') && (b.att.perk === null || b.att.perk === 'none')) {
       b.att.perk = 'extraDie';
       emit(ctx, 'perkChosen', { actor: a.playerId, rule: '15.c', pub: { battleId: b.id, player: a.playerId, perk: 'extraDie', auto: true } });
@@ -579,6 +583,47 @@ onSettle(ctx => {
   return false;
 });
 
+/** Caesar's flee (15.b, Q19, Q68): one ENEMY troop flees, never from a force of 1. Runs once per battle — at the start
+ * (startBattle) or when a Caesar is summoned mid-battle (15.k, v32.8: a Caesar summoned after the battle has started
+ * brings his flee with him — Tomas's ruling 2026-11-26, reversing the 2026-11-24 decision that the flee was start-only).
+ * Returns true when this side's Caesar was present (a flee, or the lone-troop 'none' line), so the other side is never
+ * tried — and never runs twice (b.fled is already set when the summon happened before the start). */
+function applyCaesarFlee(ctx, b, side) {
+  const { state, data } = ctx;
+  if (b.fled) return false;
+  const pid = side === 'att' ? b.att.player : b.def.player;
+  const withGeneral = side === 'att' ? b.att.general : b.def.general;
+  if (!withGeneral || !pid || !perksOn(state, pid, 'caesar')) return false;
+  const min = perkFns.caesarFlee.minEnemy(data);
+  if (side === 'att') {
+    if (defForce(state, b) >= min) { setDefForce(state, b, defForce(state, b) - 1); b.fled = { side: 'def', from: 'own' }; emit(ctx, 'enemyFled', { actor: pid, rule: '15.b', pub: { battleId: b.id, side: 'defender', owner: b.def.player, province: b.target, n: 1 } }); }
+    else emit(ctx, 'generalPerkTriggered', { actor: pid, rule: '15.b', pub: { battleId: b.id, general: 'caesar', effect: 'none', reason: 'the enemy has a lone troop: no one flees' } });
+  } else {
+    if (attForce(b) >= min) {
+      // Q88 (Vidi 2026-10-21): a borrowed troop flees first, an own one only when no borrowed troop is left. A fled borrowed troop is
+      // not a death (no native-count drop, no extra Revolt Roll): it stays home if Caesar loses and joins him if he wins.
+      // ('ownFirst', the old default: own first, but never the last own troop while borrowed ones fight.)
+      const fromOwn = data.rules.caesarFledFromAttacker === 'ownFirst' ? (b.att.own >= 2 || b.att.borrowed < 1) : b.att.borrowed < 1;
+      if (fromOwn) b.att.own -= 1; else b.att.borrowed -= 1;
+      b.fled = { side: 'att', from: fromOwn ? 'own' : 'borrowed' };
+      emit(ctx, 'enemyFled', { actor: pid, rule: '15.b', pub: { battleId: b.id, side: 'attacker', owner: b.att.player, province: b.att.from, n: 1 } });
+    } else emit(ctx, 'generalPerkTriggered', { actor: pid, rule: '15.b', pub: { battleId: b.id, general: 'caesar', effect: 'none', reason: 'the enemy has a lone troop: no one flees' } });
+  }
+  return true;
+}
+
+/** Germanicus's Disciplined Advance (15.h): the defender's Wall bonus is ignored for the whole battle. Recorded once —
+ * at the start (startBattle) or when a Germanicus is summoned mid-battle (15.k, v32.8: the same summoned-perk gap as
+ * Caesar's flee — the wall ignore was only ever recorded at the start). */
+function applyGermanicusWall(ctx, b) {
+  const { state, data } = ctx;
+  if (b.mode !== 'attack' || !b.att.general || !perksOn(state, b.att.player, 'germanicus')) return;
+  if (!wallsActive(state, data, b)) return;
+  if (b.wallSources.some(s => s.includes('Disciplined Advance'))) return;
+  b.wallRollsIgnored += perkFns.disciplinedAdvance.rolls(data);
+  b.wallSources.push('Germanicus: Disciplined Advance, the whole battle (15.h)');
+}
+
 function startBattle(ctx, b) {
   const { state, data } = ctx;
   b.round = 1;
@@ -589,24 +634,10 @@ function startBattle(ctx, b) {
     if (wallsActive(state, data, b)) {
       const cat = mustPlayer(state, b.att.player).items.catapult;
       if (cat) { b.wallRollsIgnored += cat * data.rules.catapult.wallRollsIgnoredEach; b.wallSources.push(`${cat} Catapult${cat > 1 ? 's' : ''} (19.u)`); }
-      if (b.mode === 'attack' && b.att.general && perksOn(state, b.att.player, 'germanicus')) { b.wallRollsIgnored += perkFns.disciplinedAdvance.rolls(data); b.wallSources.push('Germanicus: Disciplined Advance, the whole battle (15.h)'); }
+      applyGermanicusWall(ctx, b);
     }
     // Caesar (15.b, Q19, Q68): one ENEMY troop flees, never from a force of 1
-    const min = perkFns.caesarFlee.minEnemy(data);
-    if (b.att.general && perksOn(state, b.att.player, 'caesar')) {
-      if (defForce(state, b) >= min) { setDefForce(state, b, defForce(state, b) - 1); b.fled = { side: 'def', from: 'own' }; emit(ctx, 'enemyFled', { actor: b.att.player, rule: '15.b', pub: { battleId: b.id, side: 'defender', owner: b.def.player, province: b.target, n: 1 } }); }
-      else emit(ctx, 'generalPerkTriggered', { actor: b.att.player, rule: '15.b', pub: { battleId: b.id, general: 'caesar', effect: 'none', reason: 'the enemy has a lone troop: no one flees' } });
-    } else if (b.def.general && b.def.player && perksOn(state, b.def.player, 'caesar')) {
-      if (attForce(b) >= min) {
-        // Q88 (Vidi 2026-10-21): a borrowed troop flees first, an own one only when no borrowed troop is left. A fled borrowed troop is
-        // not a death (no native-count drop, no extra Revolt Roll): it stays home if Caesar loses and joins him if he wins.
-        // ('ownFirst', the old default: own first, but never the last own troop while borrowed ones fight.)
-        const fromOwn = data.rules.caesarFledFromAttacker === 'ownFirst' ? (b.att.own >= 2 || b.att.borrowed < 1) : b.att.borrowed < 1;
-        if (fromOwn) b.att.own -= 1; else b.att.borrowed -= 1;
-        b.fled = { side: 'att', from: fromOwn ? 'own' : 'borrowed' };
-        emit(ctx, 'enemyFled', { actor: b.def.player, rule: '15.b', pub: { battleId: b.id, side: 'attacker', owner: b.att.player, province: b.att.from, n: 1 } });
-      } else emit(ctx, 'generalPerkTriggered', { actor: b.def.player, rule: '15.b', pub: { battleId: b.id, general: 'caesar', effect: 'none', reason: 'the enemy has a lone troop: no one flees' } });
-    }
+    if (!applyCaesarFlee(ctx, b, 'att')) applyCaesarFlee(ctx, b, 'def');
   }
   b.def.startForce = defForce(state, b);
   emit(ctx, 'battleStarted', { actor: b.att.player, rule: '17.e', pub: { battleId: b.id, mode: b.mode, target: b.target, attacker: attForce(b), borrowed: b.att.borrowed, defender: b.def.startForce, wallRollsIgnored: b.wallRollsIgnored, perk: b.att.perk } });
@@ -618,7 +649,10 @@ defineRoll('loyalty', (ctx, f) => {
   const v = roll(ctx, data.rules.dice.loyalty, 'loyalty', f.player);
   popFrame(ctx); b.loyaltyDone = true;
   const force = attForce(b);
-  const n = Math.min(v, data.rules.romaLoyaltyMaxDefect, force);
+  // v32.8 (12.k): Roma caps at 20 troops — only as many defect as Roma can take. (The cap hole was exposed by the
+  // fold-in's summoned-Caesar flee changing the seeded fuzz games: a defection plus a fled-troop return together
+  // pushed a 19-troop Roma to 21. The same cap applies to the fled troop below.)
+  const n = Math.min(v, data.rules.romaLoyaltyMaxDefect, force, S.romaRoom(state, data));
   const own = Math.min(n, b.att.own); const borrowed = n - own;   // own troops first, then borrowed (12.j, Q66)
   b.att.own -= own; b.att.borrowed -= borrowed;
   if (borrowed) loseBorrowed(ctx, b, borrowed, 'loyalty');
@@ -743,11 +777,14 @@ function finish(ctx, outcome) {
     const caesarSide = b.fled.side === 'def' ? 'att' : 'def';
     const caesarWon = caesarSide === 'att' ? outcome === 'conquered' : outcome !== 'conquered';
     if (caesarWon) {
-      if (caesarSide === 'att') b.att.own += 1; else changeTroops(ctx, t, 1, 'fledTroop');
+      // v32.8 (12.k): the fled troop joins the winning Caesar army — but Roma caps at 20, so a fled troop cannot
+      // join a full Roma (it is lost instead, like the excess in a Roma conquest, which goes back home — here there
+      // is no home to go back to). The attacker-side join goes into b.att.own and is already capped by conquer().
+      if (caesarSide === 'att') b.att.own += 1; else if (t !== 'roma' || S.romaRoom(state, data) > 0) changeTroops(ctx, t, 1, 'fledTroop');
       emit(ctx, 'fledTroopJoined', { rule: '15.b', pub: { battleId: b.id, to: caesarSide === 'att' ? A : D, province: caesarSide === 'att' ? t : t } });
     } else {
-      if (b.fled.side === 'def') setDefForce(state, b, defForce(state, b) + 1);
-      else if (b.fled.from === 'own') changeTroops(ctx, b.att.from, 1, 'fledTroop');
+      if (b.fled.side === 'def') setDefForce(state, b, t === 'roma' ? Math.min(defForce(state, b) + 1, data.rules.romaMaxTroops) : defForce(state, b) + 1);
+      else if (b.fled.from === 'own' && (b.att.from !== 'roma' || S.romaRoom(state, data) > 0)) changeTroops(ctx, b.att.from, 1, 'fledTroop');
       emit(ctx, 'fledTroopReturned', { rule: '15.b', pub: { battleId: b.id, owner: b.fled.side === 'def' ? D : A, province: b.fled.side === 'def' ? t : b.att.from } });
     }
   }

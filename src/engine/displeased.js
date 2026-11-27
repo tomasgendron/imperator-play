@@ -201,6 +201,7 @@ function loseCards(ctx, pid, uids) {
   for (const uid of uids) {
     for (const k of ['hand', 'savedResources', 'inPlay']) { const i = pl[k].findIndex(c => c.uid === uid); if (i >= 0) pl[k].splice(i, 1); }
     toDiscard(state, uid);
+    (pl.stolenCards ??= []).push({ def: defOf(state, uid), source: 'tax', turn: state.turn.number });   // v32.8 (Update 5): the Cards popup also shows cards lost to Rome — the same list as Spy thefts, marked with their source
   }
   emit(ctx, 'cardsTaxed', { actor: pid, rule: '18.u', pub: { player: pid, defs: uids.map(u => defOf(state, u)), n: uids.length, random: true } });   // v31.37: always taken at random (18.u)
 }

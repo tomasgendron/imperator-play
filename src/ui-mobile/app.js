@@ -801,15 +801,15 @@ function renderTokens(s, legal) {
     else { val = p.troops; if (p.status === 'allied') cls += ' ally'; if (G.displayUnderGarrisoned(s, data, id)) cls += ' low'; }
     if (selected === id) cls += ' sel'; if (picks.has(id)) cls += ' pick'; if (tg.has(id)) cls += ' tgt';
     const nd = nudge[id];
-    const nat = p.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
     const gs = gensAt[id] ?? [];
     const num = G.provNumberLabel(s, id);   // v31.30 (Update 5): the number badge only shows while "Show Prov Numbers" is on (off by default)
-    const minLbl = G.minGarrisonLabel(s, id);   // v31.31 (Update 1): the "min N" label, on by default; Menu → View turns it off
+    const natLbl = G.nativesLabel(s, data, id);   // v32.8 (Update 8): the natives moved out of the corner badge into this label; the badge now shows the minimum garrison
+    const m = G.shownMin(s, data, id);   // v32.8 (Update 8): the corner badge shows the minimum garrison (null for Roma held / unowned)
     // v31.34 (Bug 2): one portrait per general here; when several share the province they fan out across the top of the
     // token (20 px apart, each with its own data-gen) so every one stays visible and tappable — a lone general keeps the
     // old top-right spot exactly.
     const genHtml = gs.map((g, i) => `<span class="gen" data-gen="${attr(g)}" style="background-image:url('${attr(img('general.' + g))}');background-position:center 15%${gs.length > 1 ? `;left:calc(50% - 12px + ${(i - (gs.length - 1) / 2) * 20}px);right:auto;top:-14px` : ''}"></span>`).join('');
-    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${num ? `<span class="nn">${num}</span>` : ''}${nat ? `<span class="natb">${nat}</span>` : ''}${genHtml}${G.displayUnderGarrisoned(s, data, id) ? `<span class="lowb" title="${attr(G.underGarrisonTip(s, data, id))}">⚠</span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}${id === 'carthage' && s.carthage?.neutral ? ' · Under Roma\'s control' : ''}${minLbl ? ` · ${minLbl}` : ''}</span></button>`;
+    return `<button class="${cls}" data-id="${id}" style="left:${def.token.x / sp.w * 100}%;top:${def.token.y / sp.h * 100}%;${nd ? `translate:${nd[0]}px ${nd[1]}px;` : ''}${p.owner ? `--c:var(--${col(p.owner)})` : ''}" aria-label="${attr(def.name)}">${val}${num ? `<span class="nn">${num}</span>` : ''}${m?.min ? `<span class="minb">${m.min}</span>` : ''}${genHtml}${G.displayUnderGarrisoned(s, data, id) ? `<span class="lowb" title="${attr(G.underGarrisonTip(s, data, id))}">⚠</span>` : ''}${p.walls?.length ? '<span class="wall">🧱</span>' : ''}${p.road ? '<span class="rd">🛣</span>' : ''}<span class="lbl">${esc(def.name)}${p.status === 'allied' ? ' · ally' : ''}${id === 'carthage' && s.carthage?.neutral ? ' · Under Roma\'s control' : ''}${natLbl ? ` · ${natLbl}` : ''}</span></button>`;
   }).join(''));
 }
 function tokenTap(id) {
@@ -1587,10 +1587,11 @@ function genActs(pid) {
     B('end', '✓', 'End turn', free && c.end.length, () => act(c.end[0]), no(f ? 'Finish the current step first.' : 'You cannot end the turn now.')),
   ];
 }
-/** v32.6: the "Cards that were stolen" section — every card Spy in the Tent! stole from this player (18.af), not just the most recent. */
+/** v32.6: the "Cards lost" section — every card Spy in the Tent! stole from this player (18.af) and every card the Emperor's tax took (18.u), not just the most recent. */
 function stolenSection(p) {
   const stolen = (p.stolenCards ?? []);
-  return `<div class="sec">Cards stolen from ${esc(p.name)}</div>${stolen.length ? stolen.map(r => `<div class="cardrow"><img src="${attr(img('card.' + r.def))}" alt=""><div class="t"><b>${esc(data.cardDefsById[r.def]?.name ?? r.def)}</b><div class="note" style="margin-top:4px">stolen by ${esc(pn(r.thief))} · turn ${r.turn}</div></div></div>`).join('') : '<p class="note">No card has been stolen from them yet.</p>'}`;
+  const line = r => r.source === 'tax' ? `taken by the Emperor's tax · turn ${r.turn}` : `stolen by ${esc(pn(r.thief))} · turn ${r.turn}`;
+  return `<div class="sec">Cards lost by ${esc(p.name)}</div>${stolen.length ? stolen.map(r => `<div class="cardrow"><img src="${attr(img('card.' + r.def))}" alt=""><div class="t"><b>${esc(data.cardDefsById[r.def]?.name ?? r.def)}</b><div class="note" style="margin-top:4px">${line(r)}</div></div></div>`).join('') : '<p class="note">No card has been lost by them yet.</p>'}`;
 }
 /** v32.6: the Merchant Bonus + Bandits history section — the desktop's Roads popup, inline in the player sheet (22.b, 18.ae). */
 function merchantSection(s, p) {
@@ -2056,8 +2057,9 @@ function maybeWithheldCardsPopup(events) {
   openPop('withheld', `<div class="sh-head"><h2>The withheld cards join the deck!</h2></div><div class="sh-body"><p>The Game deck has gone through once, so the cards held back at the start are shuffled in: <b>${esc(parts)}</b> — from now on the full deck is in play.</p><p class="note">Closes by itself in 10 s — tap OK, or outside, to dismiss it now.</p></div><div class="sh-foot"><button class="btn gold wide" data-popok id="withheldOk">OK</button></div>`, { sticky: false, autoMs: 10000 });
 }
 /** v31.7: the desktop's AI turn summary. Offline only, so an online guest is not held up and the host does not stall the room.
- *  v31.28: online too, but never blocking: the same sheet, non-sticky, so it closes itself after spd(9000) (openPop's
- *  non-sticky default is spd(5200); a summary has more to read than a roll popup, so it gets the desktop's 9 s) and
+ *  v31.28: online too, but never blocking: the same sheet, non-sticky, so it closes itself after a FIXED 10 s (v32.8,
+ *  Update 6: the old spd(9000) was ~450 ms at instant speed, so the sheet flashed by unreadably — the same bug class
+ *  as the v31.32 Draw popup and the v31.34 withheld-cards popup) and
  *  playEvents never awaits it, so the host's apply loop and a guest's drain run on while the sheet is up. Both screens
  *  see it (host and guest); only AI turns are summarised, never another human's. */
 async function maybeAiTurnSummary(events) {
@@ -2069,7 +2071,7 @@ async function maybeAiTurnSummary(events) {
   if (sum.skip) return;
   const body = sum.sections.map(sec => `<div class="sec">${esc(sec.title)}</div><ul class="poplines">${sec.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>`).join('');
   if (C.NET) {   // v31.28: online, never wait for OK — the sheet closes itself; playEvents does not await it
-    openPop('aiTurn', `<div class="sh-head"><h2>${esc(sum.name)}<small>Turn ${sum.turn ?? ''} · what the AI did</small></h2></div><div class="sh-body">${body}<p class="note">Closes on its own — tap OK, or outside, to dismiss it now.</p></div><div class="sh-foot"><button class="btn gold wide" data-popok id="aiSumOk">OK</button></div>`, { sticky: false, autoMs: spd(9000) });
+    openPop('aiTurn', `<div class="sh-head"><h2>${esc(sum.name)}<small>Turn ${sum.turn ?? ''} · what the AI did</small></h2></div><div class="sh-body">${body}<p class="note">Closes by itself in 10 s — tap OK, or outside, to dismiss it now.</p></div><div class="sh-foot"><button class="btn gold wide" data-popok id="aiSumOk">OK</button></div>`, { sticky: false, autoMs: 10000 });
     return;
   }
   await openPop('aiTurn', `<div class="sh-head"><h2>${esc(sum.name)}<small>Turn ${sum.turn ?? ''} · what the AI did</small></h2></div><div class="sh-body">${body}<p class="note">OK, or tap outside, to go on.</p></div><div class="sh-foot"><button class="btn gold wide" data-popok id="aiSumOk">OK</button></div>`, { sticky: true });

@@ -1,8 +1,8 @@
 {
- "milestone": "M20.7",
- "stamp": "2026-11-26 1:56 PM MT",
- "base": "ee4b1f0",
- "label": "build M20.7 \u00b7 2026-11-26 1:56 PM MT",
- "uiVersion": "32.7",
- "uiLabel": "v32.7 \u00b7 Nov 26 2026 1:56 PM MT"
+ "milestone": "M20.8",
+ "stamp": "2026-11-26 5:43 PM MT",
+ "base": "b0d58d7",
+ "label": "build M20.8 · 2026-11-26 5:43 PM MT",
+ "uiVersion": "32.8",
+ "uiLabel": "v32.8 · Nov 26 2026 5:43 PM MT"
 }

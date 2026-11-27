@@ -111,7 +111,7 @@ export function createBlankState(data, { seed, players = [], gameId = 'g-' + see
       pendingStealToRoma: null,   // v31.24 (18.r, 18.x): a Bee-redirected steal waiting for this player's next turn: { def: 'steals_troops', redirectedBy } or null
       noMerchantBonus: false,   // v31.40 (18.ae): Bandits on the Road! — this player gets no Merchant Bonus on their next turn
       conqueredRoma: false,   // v32.6 (12.o): set when this player conquers Roma; survives losing Roma (ever-conquered)
-      stolenCards: [],   // v32.6 (18.af): cards Spy in the Tent! stole from this player: { def, thief, turn }
+      stolenCards: [],   // v32.6 (18.af) / v32.8 (18.u): cards this player LOST from their hand — Spy thefts { def, thief, turn, source: 'spy' } and Emperor's-tax losses { def, source: 'tax', turn }; old saves have no source and read as Spy thefts. Shown in the Cards popup.
       banditsLosses: [],   // v32.6 (18.ae): Gold Bandits on the Road! stole from this player: { gold, thief, turn }
       items: { catapult: 0 }, out: false, gameRollsTaken: 0, startIncome: true })),
     turnOrder: [],

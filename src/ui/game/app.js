@@ -1013,8 +1013,9 @@ function maybeWithheldCardsPopup(events) {
 /** v31.7: after an AI turn, a short summary the human dismisses with OK or a click outside. Offline only, so an online host must not
  *  wait here (guests would stall), and a guest must not pause on a stream of updates. Node tests never call this.
  *  v31.28: online too, but never blocking. The same content, on both the host's and the guests' screens (only AI turns are
- *  summarised, never another human's — humans narrate their own turns), shown with autoMs spd(9000) like a non-sticky roll
- *  popup and NOT awaited: playEvents returns at once, so the host's apply loop (controller.js: apply awaits playEvents)
+ *  summarised, never another human's — humans narrate their own turns), shown with a FIXED autoMs of 10000 (v32.8, Update 6:
+ *  the old spd(9000) was ~450 ms at instant speed, so the summary flashed by unreadably — the same bug class as the
+ *  v31.32 Draw popup and the v31.34 withheld-cards popup) and NOT awaited: playEvents returns at once, so the host's apply loop (controller.js: apply awaits playEvents)
  *  and a guest's drain run on while the popup is up, and a later popup may replace it. OK / click outside still dismisses it early. */
 async function maybeAiTurnSummary(events) {
   if (!events?.some(e => e.type === 'turnEnded')) return;
@@ -1025,7 +1026,7 @@ async function maybeAiTurnSummary(events) {
   if (sum.skip || !$('#ovModal')) return;
   const body = sum.sections.map(sec => `<div class="sec">${esc(sec.title)}</div><ul class="rolllines">${sec.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>`).join('');
   if (C.NET) {   // v31.28: online, the popup must never wait for an OK tap (v31.7's reason still holds) — show it and let it close itself
-    openModal(`<div class="ask aiturn" id="aiSum"><h2>${esc(sum.name)} · turn ${sum.turn ?? ''}</h2><p class="small">What the AI did this turn. It closes on its own — OK, or click outside, to dismiss it now.</p>${body}<div class="foot"><span class="spacer"></span><button class="btn gold" data-close id="aiSumOk">OK</button></div></div>`, { cls: 'aiturn', autoMs: spd(9000) });
+    openModal(`<div class="ask aiturn" id="aiSum"><h2>${esc(sum.name)} · turn ${sum.turn ?? ''}</h2><p class="small">What the AI did this turn. Closes by itself in 10 s — OK, or click outside, to dismiss it now.</p>${body}<div class="foot"><span class="spacer"></span><button class="btn gold" data-close id="aiSumOk">OK</button></div></div>`, { cls: 'aiturn', autoMs: 10000 });
     return;
   }
   await openModal(`<div class="ask aiturn" id="aiSum"><h2>${esc(sum.name)} · turn ${sum.turn ?? ''}</h2><p class="small">What the AI did this turn. OK, or click outside, to go on.</p>${body}<div class="foot"><span class="spacer"></span><button class="btn gold" data-close id="aiSumOk">OK</button></div></div>`, { cls: 'aiturn' });
@@ -1575,14 +1576,15 @@ function openShips() {
 }
 
 // ------------------------------------------------------------------ v32.6: the Cards and Roads stat buttons (renderPlayers)
-// The Cards stat opens the full list of cards Spy in the Tent! stole from that player (18.af) — every card, not just the most
+// The Cards stat opens the full list of cards lost by that player (18.af Spy thefts, and since v32.8 the Emperor's tax losses, 18.u) — every card, not just the most
 // recent. The Roads stat opens the expected Merchant Bonus (22.b) and the history of Gold Bandits on the Road! stole (18.ae).
 function openStolenCards(pid) {
   const s = st(); const p = G.playerById(s, pid); const rows = (p.stolenCards ?? []);
   const face = def => `<img src="${img('card.' + def)}" alt="" style="height:40px;border-radius:4px;vertical-align:middle;margin-right:6px">`;
-  openModal(`<div class="ask" style="max-width:460px"><h2>Cards stolen from ${esc(p.name)}</h2>
-    ${rows.length ? `<div class="stolenlist">${rows.map(r => `<div class="stolenrow">${face(r.def)}<span><b>${esc(data.cardDefsById[r.def]?.name ?? r.def)}</b> — stolen by ${esc(pn(r.thief))} · turn ${r.turn}</span></div>`).join('')}</div>` : `<p class="small">No card has been stolen from ${esc(p.name)} yet.</p>`}
-    <p class="small dim">Spy in the Tent! (18.af) is the only card that steals — Bandits on the Road! takes Gold, and the Emperor's tax is not a steal.</p>
+  const line = r => r.source === 'tax' ? `taken by the Emperor's tax · turn ${r.turn}` : `stolen by ${esc(pn(r.thief))} · turn ${r.turn}`;   // v32.8 (Update 5): the list also shows cards lost to Rome (18.u)
+  openModal(`<div class="ask" style="max-width:460px"><h2>Cards lost by ${esc(p.name)}</h2>
+    ${rows.length ? `<div class="stolenlist">${rows.map(r => `<div class="stolenrow">${face(r.def)}<span><b>${esc(data.cardDefsById[r.def]?.name ?? r.def)}</b> — ${line(r)}</span></div>`).join('')}</div>` : `<p class="small">No card has been lost by ${esc(p.name)} yet.</p>`}
+    <p class="small dim">Spy in the Tent! (18.af) steals a card from a rival — the Emperor's tax (18.u) takes cards at random when Rome Is Displeased. Bandits on the Road! takes Gold, not cards.</p>
     <button class="btn gold" data-close>Close</button></div>`);
 }
 function openRoadsInfo(pid) {
@@ -1611,8 +1613,9 @@ function openCardMenu(legal) {
   const rows = Object.entries(byUid).map(([uid, ds]) => { const def = s.cards[uid].def; return `<button class="btn" data-card="${uid}">${face(def)}${esc(data.cardDefsById[def]?.name ?? def)} <span class="small">(${ds.length} target${ds.length === 1 ? '' : 's'})</span></button>`; }).join('')
     + hand.filter(x => !byUid[x.uid]).filter((x, i, a) => a.findIndex(y => s.cards[y.uid].def === s.cards[x.uid].def) === i).map(x => { const def = s.cards[x.uid].def; if (Object.keys(byUid).some(u => s.cards[u].def === def)) return ''; const why = G.cardBlockReason(s, data, me, x.uid) || 'not playable right now'; return `<div class="btn off cardoff" data-off="${x.uid}">${face(def, true)}${esc(data.cardDefsById[def]?.name ?? def)} <span class="small whynot">${esc(why)}</span></div>`; }).join('');
   const slot = G.cardSlotNote(s);
-  const stolen = (s.players.find(p => p.id === me)?.stolenCards ?? []);   // v32.6: the hand popup also lists the cards stolen from you, so the theft is noticed where you look at cards
-  openModal(`<div class="ask menu" id="handMenu" style="display:flex;flex-direction:column;gap:8px;min-width:380px"><h2>Your hand (${hand.length} card${hand.length === 1 ? '' : 's'})</h2>${slot ? `<p class="small" id="extraPlayNote"><b>${esc(slot)}</b></p>` : ''}<div class="opts">${rows || '<p class="small">No card in your hand.</p>'}</div>${stolen.length ? `<div class="stolen-sec"><h3>Cards that were stolen from you</h3><div class="stolenlist">${stolen.map(r => `<div class="stolenrow">${face(r.def)}<span><b>${esc(data.cardDefsById[r.def]?.name ?? r.def)}</b> — stolen by ${esc(pn(r.thief))} · turn ${r.turn}</span></div>`).join('')}</div></div>` : ''}<div class="foot"><span class="small">Playing a card is not an action; one such card per turn (18.h), plus one more non-battle card after Forced March! (18.ad).</span><button class="btn" data-close>Close</button></div></div>`);
+  const stolen = (s.players.find(p => p.id === me)?.stolenCards ?? []);   // v32.6: the hand popup also lists the cards lost from you, so the loss is noticed where you look at cards (v32.8: thefts and tax losses)
+  const lostLine = r => r.source === 'tax' ? `taken by the Emperor's tax · turn ${r.turn}` : `stolen by ${esc(pn(r.thief))} · turn ${r.turn}`;
+  openModal(`<div class="ask menu" id="handMenu" style="display:flex;flex-direction:column;gap:8px;min-width:380px"><h2>Your hand (${hand.length} card${hand.length === 1 ? '' : 's'})</h2>${slot ? `<p class="small" id="extraPlayNote"><b>${esc(slot)}</b></p>` : ''}<div class="opts">${rows || '<p class="small">No card in your hand.</p>'}</div>${stolen.length ? `<div class="stolen-sec"><h3>Cards lost from your hand</h3><div class="stolenlist">${stolen.map(r => `<div class="stolenrow">${face(r.def)}<span><b>${esc(data.cardDefsById[r.def]?.name ?? r.def)}</b> — ${lostLine(r)}</span></div>`).join('')}</div></div>` : ''}<div class="foot"><span class="small">Playing a card is not an action; one such card per turn (18.h), plus one more non-battle card after Forced March! (18.ad).</span><button class="btn" data-close>Close</button></div></div>`);
   $$('#modalBox [data-card]').forEach(b => b.onclick = () => { SND.play('card_flip'); openCardTargets(b.dataset.card); });
   $$('#modalBox [data-off]').forEach(b => b.onclick = () => { SND.play('error_denied'); toast(b.querySelector('.whynot')?.textContent || "Can't play that card now."); });
 }
@@ -1855,7 +1858,7 @@ function renderPlayers() {
         <div class="pstats">
           <div class="prest"><div class="lbl"><span>Prestige</span><span data-prestige title="${goldPrestige(p.gold, data) ? `+${goldPrestige(p.gold, data)} Gold Prestige at end of turn from ${p.gold} Gold (22.f)` : 'Prestige'}">${p.prestige}${goldPrestige(p.gold, data) ? ' +' + goldPrestige(p.gold, data) : ''} / ${data.rules.winPrestige}</span></div>${needsRoma ? `<div class="romaneed" title="Requires Roma to be Conquered (12.o): at the win target, but Roma has not been conquered, so the game goes on">🏛 needs Roma to win</div>` : ''}<div class="pips">${pips}</div></div>
           <div class="pgold" title="Gold"><span class="coin"></span><span>Gold</span><b data-gold>${p.gold}</b></div>
-          <div class="res"><div><span>Troops</span><b>${totalTroops(s, p.id)}</b></div><div><span>Provinces</span><b>${ownedBy(s, p.id).length}</b></div><button class="statbtn" data-stolen="${p.id}" title="Cards that were stolen from ${attr(p.name)} — Spy in the Tent! (18.af)"><span>Cards</span><b>${G.handCount(p)}</b>${(p.stolenCards?.length ?? 0) ? `<span class="stolen-n" title="${p.stolenCards.length} card${p.stolenCards.length === 1 ? '' : 's'} stolen from ${attr(p.name)}">−${p.stolenCards.length}</span>` : ''}</button><button class="statbtn" data-roads="${p.id}" title="Roads and expected Merchant Bonus (22.b): click for the breakdown and Bandits history"><span>Roads</span><b data-roads>${roadNetwork(s, data, p.id).roads}</b></button></div>
+          <div class="res"><div><span>Troops</span><b>${totalTroops(s, p.id)}</b></div><div><span>Provinces</span><b>${ownedBy(s, p.id).length}</b></div><button class="statbtn" data-stolen="${p.id}" title="Cards lost by ${attr(p.name)} — stolen by Spy in the Tent! (18.af) or taken by the Emperor's tax (18.u)"><span>Cards</span><b>${G.handCount(p)}</b>${(p.stolenCards?.length ?? 0) ? `<span class="stolen-n" title="${p.stolenCards.length} card${p.stolenCards.length === 1 ? '' : 's'} lost by ${attr(p.name)}">−${p.stolenCards.length}</span>` : ''}</button><button class="statbtn" data-roads="${p.id}" title="Roads and expected Merchant Bonus (22.b): click for the breakdown and Bandits history"><span>Roads</span><b data-roads>${roadNetwork(s, data, p.id).roads}</b></button></div>
           <div class="sv"><div class="small">Saved resources · in play · items</div><div class="tagrow">${tags || '<span class="small">none</span>'}</div></div>
           <div class="trayhost">${p.id === trayPid ? trayHtml(p.id) : ''}</div>
           ${turnActsHtml(p.id)}
@@ -1864,7 +1867,7 @@ function renderPlayers() {
       </div></div>`;
   }).join('');
   $$('#players [data-toai]').forEach(b => b.onclick = () => seatToAI(+b.dataset.toai));
-  $$('#players [data-stolen]').forEach(b => b.onclick = () => { SND.play('button_click'); openStolenCards(b.dataset.stolen); });   // v32.6: the Cards stat is a button — the full list of cards stolen from that player
+  $$('#players [data-stolen]').forEach(b => b.onclick = () => { SND.play('button_click'); openStolenCards(b.dataset.stolen); });   // v32.6: the Cards stat is a button — the full list of cards lost by that player (v32.8: thefts and tax losses)
   $$('#players [data-roads]').forEach(b => b.onclick = () => { SND.play('button_click'); openRoadsInfo(b.dataset.roads); });   // v32.6: the Roads stat is a button — expected Merchant Bonus and Bandits history
   $$('#players [data-seatback]').forEach(b => b.onclick = () => seatBack(+b.dataset.seatback));
   renderNetBanner();
@@ -1992,12 +1995,13 @@ function renderMap(legal) {
     if (id === 'roma' && !p.owner) { cls += 'roma'; txt = p.troops; }
     else if (!p.owner) { cls += 'native'; txt = p.native.present ?? '?'; }
     else { cls += col(p.owner) + (p.status === 'allied' ? ' allied' : ''); txt = p.troops; if (G.displayUnderGarrisoned(s, data, id)) cls += ' low'; }
-    // v27 (Vidi 9:12 PM): a held province shows troops/natives, the natives lighter ("5/3"); no natives (0 or not known): troops only
+    // v32.8 (Update 8): a held province shows troops/minimum garrison, the minimum lighter ("4/4"); the natives move to the small label below. No minimum (Roma held, unowned): troops only
     const nat = p.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
+    const m = G.shownMin(s, data, id);   // the minimum the map shows (null for Roma held / unowned)
     const tip = `${def.name}: ${!p.owner && id !== 'roma' ? `${p.native.present ?? '?'} natives` : `${p.troops} troop${p.troops === 1 ? '' : 's'}${nat ? `, ${nat} native${nat === 1 ? '' : 's'}` : ''}`}${id === 'carthage' && s.carthage?.neutral ? " — Under Roma's control" : ''}`;
     // v32.1 (Q233 / Q239): the token tooltip says what an under-garrisoned province needs, and warns when rivals can Revolt! it
     const tipX = [G.underGarrisonTip(s, data, id), G.revoltRiskTip(s, data, id)].filter(Boolean).join(' ');
-    if (nat) { cls += ' wn'; txt = `${p.troops}<span class="nat">/${nat}</span>`; }
+    if (m?.min) { cls += ' wn'; txt = `${p.troops}<span class="nat">/${m.min}</span>`; }
     if (selected === id) cls += ' sel';
     if (builder) cls += ab.from === id ? ' ab-origin' : ab.to === id ? ' ab-tgt' : picks.has(id) ? ' ab-ok' : ' ab-dim';
     else if (picks.has(id)) cls += ' pick';
@@ -2005,7 +2009,7 @@ function renderMap(legal) {
     if (p.road) mk('road', 'R', x + (LM ? 2.9 : 2.4), y + (LM ? 0 : 3.9), 'Road', LM ? ` data-at="${id}" data-side="r"` : '');
     if (p.walls?.length) mk('wall', 'W', x - (LM ? 2.9 : 2.4), y, 'Wall — defends from all sides (19.k)');   // v31.30: one W badge per walled province, mid-left (gen is above-left, road below-right, "!" top-right, number above-right)
     { const num = G.provNumberLabel(s, id); if (num) mk('lbl', num, x + (LM ? 2.9 : 2.4), y - 5.7, 'Game Roll number'); }   // v31.30 (Update 5): above-right, clear of the min label below and the general above-left
-    if (showMin) { const m = G.shownMin(s, data, id); if (m?.min) mk('lbl', 'min ' + m.min, x, y + 5.7, 'Minimum garrison'); }
+    if (showMin && nat) mk('lbl', 'Natives: ' + nat, x, y + 5.7, 'Native count');   // v32.8 (Update 8): the natives moved out of the badge into this label; the badge now shows troops/minimum garrison
     if (!p.owner && id !== 'roma' && p.native.present !== null && p.native.count !== null && p.native.present < p.native.count) mk('lbl', p.native.present + '/' + p.native.count, x, y + 5.7, 'natives present / count (depleted)');
   }
   const canMoveGen = legal.some(x => x.type === 'MOVE_GENERAL' || x.type === 'RECALL_MOVE_GENERAL');   // v31.13: the viewer's own token is clickable when the free move is available; v31.38: the recall placement too

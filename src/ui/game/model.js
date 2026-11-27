@@ -1223,6 +1223,13 @@ export function minGarrisonLabel(state, data, id, on = showMinGarrisonOn()) {
   const m = shownMin(state, data, id);
   return m?.min ? `min ${m.min}` : null;
 }
+/** v32.8 (Update 8): the "Natives: N" label for the map token — the natives moved out of the badge, so they live in the small label instead. Same toggle as the old "min N" label; nothing when the province has no natives. */
+export function nativesLabel(state, data, id, on = showMinGarrisonOn()) {
+  if (!on) return null;
+  const p = state.provinces[id];
+  const nat = p?.owner && id !== 'roma' && p.native?.count ? p.native.count : 0;
+  return nat ? `Natives: ${nat}` : null;
+}
 /**
  * v31.34 (Bug 2): stacked general tokens — when several generals share a province (Roma after a recall, or any
  * other stack), fan their tokens out so every letter stays visible and clickable. One general keeps the exact old

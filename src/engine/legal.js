@@ -36,8 +36,9 @@ export function attackSendNote(state, data, id) {
 }
 /**
  * v32.1 (Q236): what summoning the general would add to THIS battle, read from the general data (generals.json perk params)
- * and the battle's own state, e.g. "+1 die" (Scipio attacking, before the first roll). Start-of-battle perks (Caesar's flee,
- * Scipio's die, Germanicus's Disciplined Advance) only count while the battle has not started; per-roll perks always do.
+ * and the battle's own state, e.g. "+1 die" (Scipio attacking, before the first roll). Scipio's die only counts while the
+ * battle has not started (no round rolled yet); Caesar's flee and Germanicus's Disciplined Advance count whenever he is
+ * summoned (15.k, v32.8: a summoned general brings his battle-start perks with him); per-roll perks always do.
  */
 export function summonBonusText(state, data, pid, side) {
   const b = state.battle; const pl = state.players.find(p => p.id === pid);
@@ -47,12 +48,12 @@ export function summonBonusText(state, data, pid, side) {
   const out = [];
   for (const pk of g.perks ?? []) {
     const pr = pk.params ?? {};
-    if (pk.id === 'enemy_flees' && !started) out.push(`−${pr.enemyLoses ?? 1} enemy troop (flees)`);
+    if (pk.id === 'enemy_flees') out.push(`−${pr.enemyLoses ?? 1} enemy troop (flees)`);
     if (pk.id === 'extra_die' && att && !started) out.push(`+${pr.extraDice ?? 1} die`);
     if (pk.id === 'sea_master' && att && b.sea) out.push(`+${Math.max(1, (R.pompeyDiceSea ?? 3) - (R.attackerDiceSea ?? 2))} die at sea`);
     if (pk.id === 'fight_to_the_death') out.push(`+${pr.delta ?? 2} per die at ${pr.whenOwnTroops ?? 1} troop`);
     if (pk.id === 'die_floor') out.push(`dice count at least ${pr.min ?? 2}`);
-    if (pk.id === 'disciplined_advance' && att && !started && b.mode === 'attack' && state.provinces[b.target]?.walls?.length) out.push('ignores the Wall');
+    if (pk.id === 'disciplined_advance' && att && b.mode === 'attack' && state.provinces[b.target]?.walls?.length) out.push('ignores the Wall');
   }
   return out.join(', ');
 }

@@ -73,7 +73,7 @@ function playerScore(state, data, pid, cache) {
     if (S.earnsBonusTroop(state, data, id)) s += W.bonusTroop;
     if (S.earnsReward(state, data, id)) s += W.reward;
     s += Math.min(t, 10) * W.troop + Math.max(0, t - 10) * W.troopOver10;
-    if (S.isUnderGarrisoned(state, data, id)) s -= W.under;
+    if (S.isUnderGarrisoned(state, data, id)) s -= W.under * (S.minGarrison(state, data, id).min - t);   // v32.8 (#7): the penalty scales with the shortfall — a province 3 short costs 18, not a flat 6 — so the AI prefers the attack count that leaves the minimum behind, and a move/buy that tops a province back up is worth taking
     if (pr.status === 'conquered' && conquered >= 2 && t < data.rules.revoltImmuneAtTroops) s -= W.revolt;
     if (pr.status === 'allied') s += W.revolt;   // v31.14: an ally never revolts (17.r) — the mirror of the conquered revolt-risk penalty above
     const nb = S.neighbours(data, id);
@@ -589,7 +589,7 @@ export function chooseAction(state, data, opts = {}) {
         // v31.12: an Easy seat attacks a human-owned province at most once per turn (neutral provinces and AI rivals are unaffected)
         if (level === 'easy' && isHumanSeat(state, state.provinces[a.target]?.owner) && humanAttacksUsed(state, me) >= (cfg.easy?.maxHumanAttacksPerTurn ?? 1)) { v = -Infinity; break; }
         const max = d.range?.max ?? a.troops;
-        const keep = Math.max(0, S.minGarrison(state, data, a.from).min - 1);
+        const keep = S.minGarrison(state, data, a.from).min;   // v32.8 (#7): the middle try leaves exactly the minimum garrison, not one below it (was min - 1)
         const tries = [...new Set([max, Math.max(1, max - keep), Math.max(1, Math.ceil(max * 0.75))])];
         let best = -Infinity, bestN = max;
         for (const n of tries) { const val = attackValue(st, data, me, { ...a, troops: n }, base, cfg); if (val > best) { best = val; bestN = n; } }
@@ -683,7 +683,7 @@ export function chooseAction(state, data, opts = {}) {
             if (!COSTLY.has(d2.type)) continue;
             if (d2.type === 'ATTACK') {
               const max = d2.range?.max ?? d2.action.troops;
-              const keep = Math.max(0, S.minGarrison(s, data, d2.action.from).min - 1);
+              const keep = S.minGarrison(s, data, d2.action.from).min;   // v32.8 (#7): the middle try leaves exactly the minimum garrison, not one below it (was min - 1)
               for (const n of [...new Set([max, Math.max(1, max - keep), Math.max(1, Math.ceil(max * 0.75))])]) {
                 best = Math.max(best, attackValue(st2, data, me, { ...d2.action, troops: n }, base, cfg));
               }

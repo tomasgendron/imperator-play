@@ -1,5 +1,18 @@
 [
  {
+  "version": "32.8",
+  "date": "2026-11-26",
+  "title": "Tax losses in the Cards list, a readable AI summary, better AI garrisons, and the badge swap",
+  "bullets": [
+   "The Cards button now also shows cards the Emperor's tax took from a player — \"taken by the Emperor's tax · turn N\" next to the Spy thefts — and the −N badge counts them too.",
+   "In online games the AI turn summary now stays up for a fixed 10 seconds instead of flashing by at instant speed.",
+   "The AI leaves its provinces garrisoned far better: it now prefers to leave the full minimum garrison behind when it attacks, and it tops under-garrisoned provinces back up. Measured in test games, the worst case fell from about 3 under-garrisoned provinces per player to about 1.",
+   "The map badge now shows troops over the minimum garrison (\"4/4\") instead of troops over natives, and the small label under a province reads \"Natives: 5\".",
+   "Spy in the Tent! can no longer hand you a second Battlefield Imperator (or Garrison Requirement, or Horn): it skips a card you may hold at most one of if you already hold one.",
+   "A general summoned into a battle now brings his battle perks with him: Caesar makes one enemy troop flee when he joins, even mid-battle, and Germanicus ignores the defender's Wall."
+  ]
+ },
+ {
   "version": "32.7",
   "date": "2026-11-26",
   "title": "One Battlefield Imperator per player",

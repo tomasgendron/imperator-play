@@ -1,5 +1,5 @@
 {
- "_comment": "Large Map 2, 20 provinces (rules 21.a-21.i). Links from the Drive sheet \"Large Map Province Connections\" (/workspace/largemap/large_links.json, 34 links: 20 land, 14 sea; 21.b) + v32.0: Illyrium land links to Germanica, Dalmacia, Parthia and the Caledonia-Mauretania sea link (38 links: 23 land, 15 sea). Token centres from LargeMap1_centers.json x 819/1280 (Roma on the eagle at 633,385, Q8); Illyrium's token (669.7, 80.5) measured from the Large Map 2 art — dot centre image (1046.6, 125.7) in 1280x720, verified with a crosshair overlay 2026-11-22. Rewards 21.d. startingEligible false for Roma, Carthage and Swiss (4.b, 21.f, 21.g). `rules` overrides ruleset.json values on this map only.",
+ "_comment": "Large Map 2, 20 provinces (rules 21.a-21.i). Links from the Drive sheet \"Large Map Province Connections\" (/workspace/largemap/large_links.json, 34 links: 20 land, 14 sea; 21.b) + v32.0: Illyrium land links to Germanica, Dalmacia, Parthia and the Caledonia-Mauretania sea link (38 links: 23 land, 15 sea) + v32.9: the Egypt-Roma sea link (39 links: 23 land, 16 sea). Token centres from LargeMap1_centers.json x 819/1280 (Roma on the eagle at 633,385, Q8); Illyrium's token (669.7, 80.5) measured from the Large Map 2 art — dot centre image (1046.6, 125.7) in 1280x720, verified with a crosshair overlay 2026-11-22. Rewards 21.d. startingEligible false for Roma, Carthage and Swiss (4.b, 21.f, 21.g). `rules` overrides ruleset.json values on this map only. `linkCurves` (v32.9): sea links drawn as a cubic curve instead of a straight line — key is the sorted province pair, c1/c2 are cubic control points in token-space coordinates, measured from the map art (the Caledonia-Mauretania curve sweeps around Iberia, staying on the sea).",
  "map": {
   "id": "large1",
   "name": "Large Map 2",
@@ -9,6 +9,12 @@
   "tokenSpace": {
    "w": 819,
    "h": 461
+  }
+ },
+ "linkCurves": {
+  "caledonia|mauretania": {
+   "c1": [18, 165],
+   "c2": [22, 330]
   }
  },
  "provinces": [
@@ -464,7 +470,8 @@
     "judea"
    ],
    "sea": [
-    "greece"
+    "greece",
+    "roma"
    ],
    "defaultReward": "gold",
    "startingEligible": true,
@@ -493,7 +500,8 @@
     "carthage",
     "macedonia",
     "thrace",
-    "greece"
+    "greece",
+    "egypt"
    ],
    "startingEligible": false,
    "hit": {

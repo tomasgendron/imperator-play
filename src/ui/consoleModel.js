@@ -209,7 +209,7 @@ const T = {
   generalRecalled: (e, st, d) => `${pn(st, e.pub.player)}'s general is recalled to Rome${e.pub.from ? ` from ${prov(d, e.pub.from)}` : ''}: no general perks through turn ${e.pub.throughTurn}.`,
   recallEnded: (e, st) => `${pn(st, e.pub.player)}'s recall is over: the general is free to move again (recalled through turn ${e.pub.throughTurn}, 18.o).`,
   goldConfiscated: (e, st) => `The Emperor confiscates ${G(e.pub.lost)} from ${pn(st, e.pub.player)} (${e.pub.left} left)${e.pub.poverty ? '; poverty costs 1 Prestige' : ''}.`,
-  provinceRemoved: (e, st, d) => `The Emperor removes ${pn(st, e.pub.player)} from ${prov(d, e.pub.province)}: it is unconquered again (no Prestige lost)${e.pub.carthageRegainedSpirit ? '; Carthage regains its spirit' : ''}.`,
+  provinceRemoved: (e, st, d) => `The Emperor removes ${pn(st, e.pub.player)} from ${prov(d, e.pub.province)}: it is unconquered again${e.pub.carthageRegainedSpirit ? '; Carthage regains its spirit' : ''}.`,
   troopsStolen: (e, st) => `The Emperor steals ${e.pub.total} bonus troop(s) from ${pn(st, e.pub.player)}: ${e.pub.toRoma} go to Roma.`,
   cardsTaxed: (e, st, d) => `The Emperor taxes ${pn(st, e.pub.player)}: ${e.pub.n} card(s) taken at random (${e.pub.defs.map(x => d?.cardDefsById[x]?.name ?? x).join(', ')}).`,
   coinMasterBonus: (e, st, d) => `${pn(st, e.pub.player)} shows ${d?.cardDefsById[e.pub.def]?.name ?? e.pub.def}: +${G(e.pub.gold)} ${e.pub.reason === 'sale' ? `for selling ${d?.cardDefsById[e.pub.sold]?.name ?? e.pub.sold}` : 'for unused actions'}, and keeps the card (${e.rule}).`,

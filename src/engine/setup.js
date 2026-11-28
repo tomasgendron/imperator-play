@@ -36,7 +36,7 @@ export const startAllowed = (data, n, id) => !!data.provincesById[id]?.startingE
 /** "West (Britain, Gaul, ...)" for this map (4.g, 21.g). */
 export const sideLabel = (data, side) => `${SIDE_NAMES[side]} (${sideProvinces(data, side).map(x => data.provincesById[x].name).join(', ')})`;
 
-/** Shortest-path distance matrix over the whole map graph (Roma and Carthage may be passed through, Q55). */
+/** Shortest-path distance matrix over the whole map graph (Roma is a wall and is never passed through, Carthage may be passed; ruled by Vidi 2026-11-27, Q55). */
 export function distanceMatrix(data) {
   return Object.fromEntries(data.provinceIds.map(id => [id, distances(data, id)]));
 }

@@ -8,7 +8,7 @@
 import { loadGameData, datasetFor } from '../ui/loadData.js';
 import { resolveAsset } from '../ui/assets.js';
 import { setupChoices, checkSetup, current } from '../ui/consoleModel.js';
-import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, shipSegments, roadNetwork, merchantBonusFor, goldPrestige, shipBuyProvinces, sellGold, aiDifficultyLabel } from '../engine/index.js';
+import { topFrame, whoActs, totalTroops, provincesOf as ownedBy, shipSegments, mapLinkSvg, roadNetwork, merchantBonusFor, goldPrestige, shipBuyProvinces, sellGold, aiDifficultyLabel } from '../engine/index.js';
 import * as G from '../ui/game/model.js';
 import { createSound } from '../ui/game/sound.js';
 import { createController } from '../ui/core/controller.js';
@@ -847,7 +847,7 @@ function renderLinks() {
   svg.setAttribute('viewBox', `0 0 ${sp.w} ${sp.h}`);
   if (linksBuiltFor !== data.mapId) {
     let links = ''; const seen = new Set();
-    for (const p of data.provinces) for (const kind of ['land', 'sea']) for (const b of p[kind]) { const k = [p.id, b].sort().join('|') + kind; if (seen.has(k)) continue; seen.add(k); const A = p.token, B = data.provincesById[b].token; links += `<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${kind === 'sea' ? '#bde3ff' : '#fff'}" stroke-width="1.6" ${kind === 'sea' ? 'stroke-dasharray="5 4"' : ''} opacity=".85"/>`; }
+    for (const p of data.provinces) for (const kind of ['land', 'sea']) for (const b of p[kind]) { const k = [p.id, b].sort().join('|') + kind; if (seen.has(k)) continue; seen.add(k); links += mapLinkSvg(data, p.id, b, kind); }
     svg.innerHTML = links; linksBuiltFor = data.mapId;
   }
   svg.classList.toggle('on', G.showLinksOn());

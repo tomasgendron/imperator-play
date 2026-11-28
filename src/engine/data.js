@@ -29,10 +29,10 @@ export function mergedRuleValues(raw) {
   return out;
 }
 
-// shortest path over land + sea (the same graph as selectors.distances, Roma and Carthage may be passed, Q55)
+// shortest path over land + sea (the same graph as selectors.distances; Roma is a wall, Carthage may be passed, Q55 — ruled by Vidi 2026-11-27)
 function bfs(provinces, from) {
   const by = Object.fromEntries(provinces.map(p => [p.id, p])); const d = { [from]: 0 }; const q = [from];
-  while (q.length) { const x = q.shift(); for (const y of [...(by[x]?.land || []), ...(by[x]?.sea || [])]) if (d[y] === undefined) { d[y] = d[x] + 1; q.push(y); } }
+  while (q.length) { const x = q.shift(); if (x === 'roma' && x !== from) continue; for (const y of [...(by[x]?.land || []), ...(by[x]?.sea || [])]) if (d[y] === undefined) { d[y] = d[x] + 1; q.push(y); } }
   return d;
 }
 
@@ -105,6 +105,14 @@ export function validateData(raw, opts = {}) {
       for (const [i, a] of ids.entries()) { const d = bfs(provinces, a); for (const b of ids.slice(i + 1)) if (!(d[b] >= minD)) err(mapFile, null, `fixedStarts.${n}: ${a}-${b} is ${d[b]} step(s) apart, 20.o needs ${minD}`); }
     }
     if (R('fixedStartPickOrder') !== undefined && !['rollOffHighestFirst', 'reverseTurnOrder'].includes(R('fixedStartPickOrder'))) err(mapFile, null, 'fixedStartPickOrder must be rollOffHighestFirst or reverseTurnOrder');
+    // v32.9: linkCurves — each key must be a real symmetric sea link, each control point [x, y] inside the token space
+    const sp = raw.map?.map?.tokenSpace ?? { w: 819, h: 461 };
+    for (const [key, c] of Object.entries(raw.map?.linkCurves || {})) {
+      const [a, b] = key.split('|');
+      const pa = provinces.find(x => x.id === a), pb = provinces.find(x => x.id === b);
+      if (!pa || !pb || !(pa.sea || []).includes(b) || !(pb.sea || []).includes(a)) err(mapFile, null, `linkCurves "${key}" is not a sea link`);
+      for (const k of ['c1', 'c2']) { const pt = c?.[k]; if (!Array.isArray(pt) || pt.length !== 2 || pt.some(v => typeof v !== 'number') || pt[0] < 0 || pt[0] > sp.w || pt[1] < 0 || pt[1] > sp.h) err(mapFile, null, `linkCurves "${key}".${k} must be [x, y] inside the token space`); }
+    }
   }
 
   // ---- generals

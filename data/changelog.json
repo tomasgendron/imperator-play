@@ -1,5 +1,16 @@
 [
  {
+  "version": "32.9",
+  "date": "2026-11-27",
+  "title": "The Emperor's removal costs Prestige, the sea link curves around Iberia, and Egypt sails to Roma",
+  "bullets": [
+   "Emperor removes you from a Province! now costs 1 Prestige — 2 if it is Carthage, and 1 for an allied province too. The troops still move elsewhere, unlike a revolt, so the card still has its upside.",
+   "The sea link from Caledonia to Mauretania now curves around Iberia, following the coast instead of cutting through the land.",
+   "Egypt and Roma are now joined by sea in both directions, like the other sea links — one of the busiest routes of the ancient Romans, and now a real way to reach Roma by sea.",
+   "Roma no longer counts as a shortcut when measuring how far apart starting provinces are — it is a wall, so distances are measured around it. That leaves 60 of the 63 possible West–East starting pairs legal in a 2-player game."
+  ]
+ },
+ {
   "version": "32.8",
   "date": "2026-11-26",
   "title": "Tax losses in the Cards list, a readable AI summary, better AI garrisons, and the badge swap",

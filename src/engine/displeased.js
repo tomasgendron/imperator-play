@@ -2,7 +2,7 @@
 // turn.js drawCard calls turnHooks.displeased(ctx, pid, defId) when a Rome Is Displeased card is drawn. If the drawer may play a
 // Busy Little Bee! (held a turn, card slot free, 1 Gold, a rival to aim at) the window displeasedResponse opens first (PLAY_CARD / PASS).
 // Defaults (PLAN 11): Q42 recall = all perks off through the victim's next own turn; Q45 poverty tested before halving;
-// Q40 removed = conquered or allied (never a start province, never Roma), owner picks it and where its troops go, no Prestige;
+// Q40 removed = conquered or allied (never a start province, never Roma), owner picks it and where its troops go, costs 1 Prestige (2 for Carthage, v32.9);
 // Q41 stolen = this turn's bonus troops + Resource Card troops, each province keeps 1; Q44 taxed = hand + saved Resources + the
 // Garrison card in play, 5 or more lose 2 (v31.37: taken at random, no longer the victim's choice). New defaults (Q89-Q92): the Bee is played by the drawer only, a
 // redirected card cannot be redirected again, the Bee's Gold follows the Rome Roll tax route (holder of Roma, else the pile).
@@ -123,6 +123,10 @@ function removeProvince(ctx, pid, id) {
   }
   emit(ctx, 'provinceRemoved', { actor: pid, rule: '18.q', pub: { player: pid, province: id, troops, carthageRegainedSpirit: regained } });
   if (regained) emit(ctx, 'carthageRegainedSpirit', { rule: '16.n', pub: {} });
+  // v32.9 (18.q, ruled by Vidi 2026-11-27): the removal costs Prestige like any other territory loss — 1, or 2 for Carthage (12.f).
+  // The troops still move elsewhere (unlike a revolt); the 12.n floor (never below 0) is enforced by awardPrestige.
+  const e = data.cardDefsById.removed_from_province.effect.params;
+  awardPrestige(ctx, pid, -(id === 'carthage' ? data.rules.prestige.carthage : (e.prestigeLoss ?? data.rules.prestige.loss)), 'removedProvince', '18.q');
   if (!troops && !general) return;
   const dest = S.provincesOf(state, pid).filter(x => x !== 'roma' || S.romaRoom(state, data) > 0);
   if (!dest.length) { emit(ctx, 'survivorsLost', { actor: pid, rule: '18.q', pub: { player: pid, from: id, n: troops, reason: 'no other province to move to' } }); if (general) pl.general.at = null; return; }

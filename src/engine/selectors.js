@@ -36,10 +36,10 @@ export const totalTroops = (state, pid) => provincesOf(state, pid).reduce((t, id
 export const romaHolder = state => state.provinces.roma.owner;
 export const hasStartingProvince = (state, pid) => provincesOf(state, pid).some(id => state.provinces[id].status === 'starting');
 
-/** Shortest path length over ALL land and sea links of the map graph (13 or 20 provinces; Roma and Carthage may be passed, Q55). */
+/** Shortest path length over ALL land and sea links of the map graph (13 or 20 provinces; Roma is a wall — never passed through when counting distances, Carthage may be passed; ruled by Vidi 2026-11-27, Q55). Distances TO Roma still count (a neighbour is 1 away); only routes THROUGH Roma are excluded. */
 export function distances(data, from) {
   const dist = { [from]: 0 }; const q = [from];
-  while (q.length) { const c = q.shift(); for (const n of neighbours(data, c)) if (dist[n] === undefined) { dist[n] = dist[c] + 1; q.push(n); } }
+  while (q.length) { const c = q.shift(); if (c === 'roma' && c !== from) continue; for (const n of neighbours(data, c)) if (dist[n] === undefined) { dist[n] = dist[c] + 1; q.push(n); } }
   return dist;
 }
 
@@ -370,6 +370,19 @@ export function shipSegments(state, data) {
     });
   }
   return out;
+}
+/** v32.9: the SVG for one map link — a straight line, or the cubic curve in data.map.linkCurves when the link has one
+ *  (key: the sorted "a|b" pair; c1/c2 are cubic control points in token-space coordinates, so the line can bend around
+ *  land instead of cutting through it — the Caledonia–Mauretania sea link curves around Iberia). Sea links are dashed
+ *  light blue, land links solid white, as before. */
+export function mapLinkSvg(data, a, b, kind) {
+  const A = data.provincesById[a]?.token, B = data.provincesById[b]?.token;
+  if (!A || !B) return '';
+  const stroke = kind === 'sea' ? '#bde3ff' : '#fff';
+  const dash = kind === 'sea' ? ' stroke-dasharray="5 4"' : '';
+  const curve = kind === 'sea' ? data.map?.linkCurves?.[[a, b].sort().join('|')] : null;
+  if (curve) return `<path d="M ${A.x} ${A.y} C ${curve.c1[0]} ${curve.c1[1]}, ${curve.c2[0]} ${curve.c2[1]}, ${B.x} ${B.y}" fill="none" stroke="${stroke}" stroke-width="1.6"${dash} opacity=".85"/>`;
+  return `<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${stroke}" stroke-width="1.6"${dash} opacity=".85"/>`;
 }
 
 export const holdsCard = (state, pid, defId) => state.players.find(p => p.id === pid).hand.some(c => state.cards[c.uid].def === defId);

@@ -57,7 +57,7 @@
    "rule": [
     "18.q"
    ],
-   "text": "Choose a conquered province (never a held Roma) to restore to unconquered and move its troops elsewhere. No Prestige is lost.",
+   "text": "Choose a conquered or allied province (never a held Roma) to restore to unconquered and move its troops elsewhere. You lose 1 Prestige (2 if it is Carthage).",
    "art": {
     "front": "cards/displeased/removed_from_province.png"
    },
@@ -65,7 +65,7 @@
     "handler": "removeFromProvince",
     "params": {
      "neverRoma": true,
-     "prestigeLoss": 0,
+     "prestigeLoss": 1,
      "carthageRegainsSpirit": true,
      "mayReachZero": true
     }
